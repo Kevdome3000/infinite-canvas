@@ -1,3 +1,4 @@
 packages:
   - 'packages/*'
+  - '!packages/site'
   - '__tests__/*'
