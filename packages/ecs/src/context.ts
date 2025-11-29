@@ -47,6 +47,7 @@ export interface AppState {
     RoughAttributes & StrokeAttributes & FillAttributes
   >;
   penbarPencil: Partial<StrokeAttributes>;
+  penbarBrush: Partial<StrokeAttributes>;
   penbarText: Partial<
     TextSerializedNode & {
       fontFamilies: string[];
@@ -189,6 +190,12 @@ export const getDefaultAppState: () => AppState = () => {
       fill: 'none',
       stroke: TRANSFORMER_ANCHOR_STROKE_COLOR,
       strokeWidth: 1,
+      strokeOpacity: 1,
+    },
+    penbarBrush: {
+      fill: 'none',
+      stroke: TRANSFORMER_ANCHOR_STROKE_COLOR,
+      strokeWidth: 10,
       strokeOpacity: 1,
     },
     penbarText: {
