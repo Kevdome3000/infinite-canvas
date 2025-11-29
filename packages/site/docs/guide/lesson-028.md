@@ -24,19 +24,9 @@ Recraft is also testing chat functionality. In my observation, canvas and chat a
 
 ![Recraft chat](/recraft-chat.png)
 
-In this lesson, we'll first review traditional image processing methods based on Shader post-processing, then combine with Nano banana to enrich our image editing functionality.
+In this lesson, we'll combine with Nano banana to enrich our image editing functionality.
 
 <WhenCanvasMeetsChat />
-
-## Post-processing Effects {#post-processing}
-
-Based on Shaders, common image processing effects can be achieved, such as Gaussian blur, Perlin noise, Glitch, and of course, the recently popular "liquid glass":
-
-![source: https://help.figma.com/hc/en-us/articles/360041488473-Apply-effects-to-layers](/figma-liquid-glass.png)
-
-![Adjust in Photoshop Web](/adjust-ps-web.png)
-
-### Brightness {#brightness}
 
 ## Integrating Models {#client-sdk}
 
@@ -62,6 +52,29 @@ The image edit API also accepts a set of image URLs as parameters. Even when pas
 ### Chatbox {#chatbox}
 
 The chat box provides another starting point beyond the canvas.
+
+### Remove background {#remove-background}
+
+Double click image to enter edit mode:
+
+```ts
+private async removeBackground() {
+    this.removingBackground = true;
+    const { images } = await createOrEditImage(
+        true,
+        'Remove background from the image',
+        [this.node.fill],
+    );
+    if (images.length > 0) {
+        this.api.runAtNextTick(() => {
+        this.api.updateNode(newImage, { fill: images[0].url });
+
+        this.api.record();
+        this.removingBackground = false;
+        });
+    }
+}
+```
 
 ## Inpainting {#inpainting}
 
@@ -120,7 +133,60 @@ Currently, GPT 4o only supports three fixed sizes, while Nano banana needs some 
 
 ## Layer separation {#layer-separation}
 
-[Editing Text in Images with AI]: https://medium.com/data-science/editing-text-in-images-with-ai-03dee75d8b9c
+-   [Editing Text in Images with AI]
+-   [Move Anything with Layered Scene Diffusion]
+
+### Raster to vector {#raster-to-vector}
+
+Many online and open-source tools offer solutions based on traditional image processing:
+
+-   Recraft [AI image vectorizer]
+-   Lottiefiles [Raster to Vector converter]
+-   [vtracer]
+
+However, this approach does not yield satisfactory results for text processing:
+
+![Raster to vector in lottiefiles. source: https://lottiefiles.com/tools/raster-to-vector](/lottiefiles-raster-vector.png)
+
+The reason is that this algorithm is typically divided into the following stages, with the first stage not distinguishing between text and graphics suitable for vectorization:
+
+1. “Path walking” converts pixels into paths
+2. Paths are simplified into polygons
+3. Attempts are made to smooth the polygons
+
+![source: https://www.visioncortex.org/vtracer-docs#path-walking](https://www.visioncortex.org/public/vtracer/WalkerOptim.svg)
+
+### Split background and text {#split-background-text}
+
+First, use an OCR-like tool to identify text regions and generate a mask. Then, remove the mask and have the model regenerate the image through a standard inpainting process to obtain a background image without text.
+
+[FLUX-Text: A Simple and Advanced Diffusion Transformer Baseline for Scene Text Editing]
+
+![text editing with flux-text](/flux-text.png)
+
+### Font recognition {#font-recognition}
+
+Next, we need to identify the style attributes such as font and font size within the text area.
+
+[TextStyleBrush: Transfer of Text Aesthetics from a Single Example]
+
+Adobe Photoshop provides [Match fonts]:
+
+![Select a font from the list of similar fonts in the Match Fonts dialog box](https://helpx-prod.scene7.com/is/image/HelpxProd/A-sample-document-showing-an-image-with-the-text-s?$pjpeg$&jpegSize=300&wid=1600)
+
+[whatfontis] provides a public API that matches the closest font in its font library to a specified area within an image.
+
+```json
+[
+    {
+        "title": "Abril Fatface",
+        "url": "https://www.whatfontis.com/FF_Abril-Fatface.font",
+        "image": "https://www.whatfontis.com/img16/A/B/FF_Abril-FatfaceA.png"
+    }
+]
+```
+
+Finally, overlay all the layers.
 
 ## MCP
 
@@ -128,7 +194,7 @@ Currently, GPT 4o only supports three fixed sizes, while Nano banana needs some 
 
 > Instead of only having a GUI or API that humans use, you get an AI interface “for free.” This idea has led to the concept of “MCP-first development”, where you build the MCP server for your app before or alongside the GUI.
 
-[Figma MCP Server] 可以操作 [Figma API]
+[Figma MCP Server] can manipulate [Figma API].
 
 [Lesson 21 - Transformer]: /guide/lesson-021
 [UI for AI]: https://medium.com/ui-for-ai
@@ -141,8 +207,15 @@ Currently, GPT 4o only supports three fixed sizes, while Nano banana needs some 
 [generative-ai]: https://cloud.google.com/vertex-ai/generative-ai/docs/learn/model-versions
 [Lesson 26 - Selection tool]: /guide/lesson-026#marquee-selection
 [Lesson 25 - Drawing mode and brush]: /guide/lesson-025#brush-mode
-[Paper Shaders]: https://shaders.paper.design/
 [MCP: What It Is and Why It Matters]: https://addyo.substack.com/p/mcp-what-it-is-and-why-it-matters
 [Figma MCP Server]: https://github.com/GLips/Figma-Context-MCP
 [Figma API]: https://www.figma.com/developers/api
 [Editing Text in Images with AI]: https://medium.com/data-science/editing-text-in-images-with-ai-03dee75d8b9c
+[whatfontis]: https://www.whatfontis.com/API-identify-fonts-from-image.html#font_Examples_good
+[Match fonts]: https://helpx.adobe.com/photoshop/desktop/text-typography/select-manage-fonts/match-fonts.html
+[FLUX-Text: A Simple and Advanced Diffusion Transformer Baseline for Scene Text Editing]: https://arxiv.org/pdf/2505.03329
+[TextStyleBrush: Transfer of Text Aesthetics from a Single Example]: https://arxiv.org/pdf/2106.08385
+[Move Anything with Layered Scene Diffusion]: https://openaccess.thecvf.com/content/CVPR2024/papers/Ren_Move_Anything_with_Layered_Scene_Diffusion_CVPR_2024_paper.pdf
+[Raster to Vector converter]: https://lottiefiles.com/tools/raster-to-vector
+[AI image vectorizer]: https://www.recraft.ai/ai-image-vectorizer
+[vtracer]: https://github.com/visioncortex/vtracer

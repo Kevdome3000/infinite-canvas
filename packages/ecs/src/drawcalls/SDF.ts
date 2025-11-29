@@ -11,17 +11,19 @@ import {
   CompareFunction,
   TextureUsage,
   BindingsDescriptor,
-  AddressMode,
-  FilterMode,
-  MipmapFilterMode,
   TransparentBlack,
   Texture,
   StencilOp,
+  TransparentWhite,
+  RenderTarget,
+  Bindings,
 } from '@antv/g-device-api';
 import { mat3 } from 'gl-matrix';
 import { Entity } from '@lastolivegames/becsy';
 import { Drawcall, ZINDEX_FACTOR } from './Drawcall';
 import { vert, frag, Location } from '../shaders/sdf';
+import { vert as postProcessingVert } from '../shaders/post-processing/fullscreen';
+import { frag as brightness } from '../shaders/post-processing/brightness';
 import { paddingMat3, parseColor, parseGradient } from '../utils';
 import {
   Circle,
@@ -41,6 +43,7 @@ import {
   SizeAttenuation,
   StrokeAttenuation,
   Stroke,
+  Filter,
 } from '../components';
 
 const strokeAlignmentMap = {
@@ -54,6 +57,11 @@ export class SDF extends Drawcall {
 
   #uniformBuffer: Buffer;
   #texture: Texture;
+
+  #inputRenderTarget: RenderTarget;
+  #prePassBindings: Bindings;
+  #inputRenderTargetWidth: number;
+  #inputRenderTargetHeight: number;
 
   static useDash(shape: Entity) {
     const { dasharray } = shape.has(Stroke)
@@ -93,6 +101,10 @@ export class SDF extends Drawcall {
     }
 
     if (SDF.useDash(shape) !== SDF.useDash(this.shapes[0])) {
+      return false;
+    }
+
+    if (this.shapes[0].has(Filter) || shape.has(Filter)) {
       return false;
     }
 
@@ -279,6 +291,8 @@ export class SDF extends Drawcall {
     });
     this.device.setResourceName(this.pipeline, 'SDFPipeline');
 
+    const hasFilter = this.shapes[0].has(Filter);
+
     const bindings: BindingsDescriptor = {
       pipeline: this.pipeline,
       uniformBufferBindings: [
@@ -299,6 +313,42 @@ export class SDF extends Drawcall {
       }
 
       const instance = this.shapes[0];
+
+      let outputTexture: Texture;
+      let outputRenderTarget: RenderTarget;
+
+      if (hasFilter) {
+        let width = 0;
+        let height = 0;
+        if (this.shapes[0].has(Rect)) {
+          const { minX, minY, maxX, maxY } = Rect.getGeometryBounds(
+            this.shapes[0].read(Rect),
+          );
+          width = maxX - minX;
+          height = maxY - minY;
+        }
+        this.#inputRenderTargetWidth = width;
+        this.#inputRenderTargetHeight = height;
+
+        const inputTexture = this.device.createTexture({
+          format: Format.U8_RGBA_NORM,
+          width,
+          height,
+          usage: TextureUsage.RENDER_TARGET,
+        });
+        this.#inputRenderTarget =
+          this.device.createRenderTargetFromTexture(inputTexture);
+
+        const { texture, renderTarget } = this.createPostProcessing(
+          postProcessingVert,
+          brightness,
+          inputTexture,
+          width,
+          height,
+        );
+        outputTexture = texture;
+        outputRenderTarget = renderTarget;
+      }
 
       if (instance.has(FillGradient) || instance.has(FillPattern)) {
         const { minX, minY, maxX, maxY } =
@@ -340,21 +390,38 @@ export class SDF extends Drawcall {
         this.#texture = texture;
       }
 
-      const sampler = this.renderCache.createSampler({
-        addressModeU: AddressMode.CLAMP_TO_EDGE,
-        addressModeV: AddressMode.CLAMP_TO_EDGE,
-        minFilter: FilterMode.POINT,
-        magFilter: FilterMode.BILINEAR,
-        mipmapFilter: MipmapFilterMode.LINEAR,
-        lodMinClamp: 0,
-        lodMaxClamp: 0,
-      });
       bindings.samplerBindings = [
         {
-          texture: this.#texture,
-          sampler,
+          texture: outputTexture ?? this.#texture,
+          sampler: this.createSampler(),
         },
       ];
+
+      if (hasFilter) {
+        const bindings: BindingsDescriptor = {
+          pipeline: this.pipeline,
+          uniformBufferBindings: [
+            {
+              buffer: uniformBuffer,
+            },
+          ],
+        };
+        if (!this.instanced) {
+          bindings.uniformBufferBindings!.push({
+            buffer: this.#uniformBuffer,
+          });
+        }
+        if (this.#texture) {
+          bindings.samplerBindings = [
+            {
+              texture: this.#texture,
+              sampler: this.createSampler(),
+            },
+          ];
+        }
+
+        this.#prePassBindings = this.renderCache.createBindings(bindings);
+      }
     }
 
     this.bindings = this.renderCache.createBindings(bindings);
@@ -364,10 +431,12 @@ export class SDF extends Drawcall {
     renderPass: RenderPass,
     sceneUniformLegacyObject: Record<string, unknown>,
   ) {
+    const hasFilter = this.shapes[0].has(Filter);
+
     if (this.instanced) {
       const instancedData: number[] = [];
       this.shapes.forEach((shape, i, total) => {
-        const [buffer] = this.generateBuffer(shape, i, total.length);
+        const [buffer] = this.generateBuffer(shape, i, total.length, false);
         instancedData.push(...buffer);
       });
       this.vertexBufferDatas[1] = new Float32Array(instancedData);
@@ -397,7 +466,12 @@ export class SDF extends Drawcall {
       );
     } else {
       const { matrix } = this.shapes[0].read(GlobalTransform);
-      const [buffer, legacyObject] = this.generateBuffer(this.shapes[0], 0, 1);
+      const [buffer, legacyObject] = this.generateBuffer(
+        this.shapes[0],
+        0,
+        1,
+        hasFilter,
+      );
       const u_ModelMatrix = [
         matrix.m00,
         matrix.m01,
@@ -409,13 +483,6 @@ export class SDF extends Drawcall {
         matrix.m21,
         matrix.m22,
       ] as mat3;
-
-      // if (this.shapes[0].has(Rect)) {
-      //   const { x, width } = this.shapes[0].read(Rect);
-      //   const { children } = (this.shapes[0].has(Parent) &&
-      //     this.shapes[0].read(Parent)) || { children: [] };
-      //   console.log(children.length, x, width, matrix.m20);
-      // }
 
       this.#uniformBuffer.setSubData(
         0,
@@ -438,6 +505,37 @@ export class SDF extends Drawcall {
 
     if (this.useWireframe && this.geometryDirty) {
       this.generateWireframe();
+    }
+
+    if (hasFilter) {
+      const { width, height } = this.swapChain.getCanvas();
+
+      // Render to input RenderTarget
+      const prePassRenderPass = this.device.createRenderPass({
+        colorAttachment: [this.#inputRenderTarget],
+        colorResolveTo: [null],
+        colorClearColor: [TransparentWhite],
+        colorStore: [true],
+        depthStencilAttachment: null,
+        depthStencilResolveTo: null,
+      });
+      prePassRenderPass.setViewport(0, 0, width, height);
+      this.program.setUniformsLegacy(sceneUniformLegacyObject);
+      prePassRenderPass.setPipeline(this.pipeline);
+      const vertexBuffers = this.vertexBuffers.map((buffer) => ({ buffer }));
+      if (this.useWireframe) {
+        vertexBuffers.push({ buffer: this.barycentricBuffer });
+      }
+      prePassRenderPass.setVertexInput(this.inputLayout, vertexBuffers, {
+        buffer: this.indexBuffer,
+      });
+      prePassRenderPass.setBindings(this.#prePassBindings);
+      prePassRenderPass.drawIndexed(6, this.shapes.length);
+      this.device.submitPass(prePassRenderPass);
+
+      this.renderPostProcessing();
+
+      renderPass.setViewport(0, 0, width, height);
     }
 
     this.program.setUniformsLegacy(sceneUniformLegacyObject);
@@ -468,6 +566,7 @@ export class SDF extends Drawcall {
     shape: Entity,
     index: number,
     total: number,
+    usePostProcessing: boolean,
   ): [number[], Record<string, unknown>] {
     const globalRenderOrder = shape.has(GlobalRenderOrder)
       ? shape.read(GlobalRenderOrder).value
@@ -553,7 +652,12 @@ export class SDF extends Drawcall {
       type;
     const u_Opacity = [opacity, fillOpacity, strokeOpacity, compressed];
     const u_InnerShadowColor = [isr / 255, isg / 255, isb / 255, iso];
-    const u_InnerShadow = [offsetX, offsetY, blurRadius, 0];
+    const u_InnerShadow = [
+      offsetX,
+      offsetY,
+      blurRadius,
+      usePostProcessing ? 1 : 0,
+    ];
 
     return [
       [

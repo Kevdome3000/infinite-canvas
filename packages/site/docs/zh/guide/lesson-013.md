@@ -1,28 +1,27 @@
 ---
 outline: deep
-description: 'Learn to draw complex paths and implement hand-drawn styles. Experiment with SDF for paths, use triangulation methods for fills, and create sketchy rendering effects with rough.js.'
+description: '学习绘制复杂路径并实现手绘风格。使用SDF试验路径绘制，采用三角化方法处理填充，配合rough.js创建草图风格效果。'
 head:
-    - [
-          'meta',
-          {
-              property: 'og:title',
-              content: 'Lesson 13 - Drawing path and sketchy style',
-          },
-      ]
+    - - meta
+      - name: description
+        content: draw path & sketchy rendering
+    - - meta
+      - name: keywords
+        content: webgl webgpu infinite-canvas path-rendering
 ---
 
 <script setup>
-import Holes from '../components/Holes.vue';
-import FillRule from '../components/FillRule.vue';
+import Holes from '../../components/Holes.vue';
+import FillRule from '../../components/FillRule.vue';
 </script>
 
-# Lesson 13 - Drawing path and sketchy style
+# 课程 13 - 绘制 Path & 手绘风格
 
-In the previous lesson we introduced the drawing of a polyline, the stroke part of a Path can theoretically be converted to a polyline by sampling, [p5js - bezierDetail()] does this, but for a smooth effect you need to add more sampling points. But the fill part still needs to be implemented. We'll cover that in this lesson:
+在上一节课中我们介绍了折线的绘制方法，Path 的描边部分理论上可以通过采样转换成折线的绘制，[p5js - bezierDetail()] 就是这么做的，如果要实现平滑的效果就需要增加采样点。但填充部分仍需要实现。在本节课中我们将介绍：
 
--   Experimenting with SDF
--   Trying to draw fills using some triangulating methods and strokes using polylines.
--   Draw some hand-drawn shapes
+-   尝试使用 SDF 绘制
+-   通过三角化后的网格绘制填充部分，使用折线绘制描边部分
+-   实现一些手绘风格图形
 
 ```js eval code=false
 $icCanvas = call(() => {
@@ -113,33 +112,33 @@ call(() => {
 });
 ```
 
-## Some basic concepts {#basic-concepts}
+## 一些基础概念 {#basic-concepts}
 
-### Differences with Polyline {#diff-with-polyline}
+### 与 Polyline 的区别 {#diff-with-polyline}
 
-First of all, let's clarify the definition of [Paths] in SVG, especially the difference between it and `<polyline>` from MDN.
+首先来明确一下 SVG 中对于 [Paths] 的定义，尤其是它和 `<polyline>` 的区别，来自 MDN：
 
 > The \<path\> element is the most powerful element in the SVG library of basic shapes. It can be used to create lines, curves, arcs, and more.
 >
 > While \<polyline\> and \<path\> elements can create similar-looking shapes, \<polyline\> elements require a lot of small straight lines to simulate curves and don't scale well to larger sizes.
 
-Therefore, there is a lack of smoothing when the curve is represented by `<polyline>`, as shown in the figure below: [Draw arcs, arcs are not smooth ISSUE]
+因此用 `<polyline>` 表现曲线时会存在不够平滑的现象，下图来自：[Draw arcs, arcs are not smooth ISSUE]
 
 ![polyline - not smooth arc](https://user-images.githubusercontent.com/89827437/191234694-5d5637f8-c59a-42a7-84ce-c319c470629f.png)
 
-But using Path the other way around, it is possible to realize a line with something like `d=“M 100 100 L 200 200 L 200 100”`.
+但反过来使用 Path 却可以通过类似 `d="M 100 100 L 200 200 L 200 100"` 实现折线。
 
-### SubPath {#subpath}
+### 子路径 {#subpath}
 
-In addition to simple paths such as a line or curve, a single `<path>` can also contain a series of lines or curves, which can be called subpaths.
+除了简单的路径例如一条线、一段曲线，单个 `<path>` 也可以包含一系列的线或者曲线，也可以称作子路径（subpath）。
 
-Each subpath begins with a moveto command, usually M or m, which tells the drawing tool to move to a new position in the coordinate system without drawing a line. This can be followed by a series of drawing commands, such as line segments (L or l), horizontal line segments (H or h), vertical line segments (V or v), curves (C, S, Q, T, etc.), and arcs (A or a).
+每个子路径都以一个移动到（moveto）命令开始，通常是 M 或 m，这告诉绘图工具移动到坐标系中的一个新位置，而不会画线。随后可以跟随一系列的绘制命令，比如线段（L 或 l）、水平线段（H 或 h）、垂直线段（V 或 v）、曲线（C、S、Q、T 等）和弧线（A 或 a）。
 
-## Using SDF {#sdf-path}
+## 使用 SDF 绘制 {#sdf-path}
 
-We've used SDF to draw Circle Ellipse and Rect before, can we do the same for Path?
+之前我们使用 SDF 绘制了 Circle Ellipse 和 Rect，能否针对 Path 也这么做呢？
 
-It seems to work for simple paths, for example [Quadratic Bezier - distance 2D] on shadertoy as mentioned in the original author's PPT in the previous lesson, but it does work for individual Bezier curves, but it doesn't work for complex paths, and the performance can be affected by overly complex mathematical operations in the Fragment Shader. math in the Fragment Shader can also affect performance.
+对于简单的 Path 似乎可行，例如在上节课中原作者的 PPT 中也提到了 shadertoy 上的 [Quadratic Bezier - distance 2D]，对一段单独的贝塞尔曲线确实可行，但对于复杂 Path 就无能为力了，而且在 Fragment Shader 中进行过于复杂的数学运算也会影响性能。
 
 ![SDF path](/sdf-line.png)
 
@@ -147,11 +146,11 @@ It seems to work for simple paths, for example [Quadratic Bezier - distance 2D] 
 
 ### Path2D {#path2d}
 
-Another idea is given by [svg-path-sdf] , and interestingly it is almost identical to the idea of drawing text that we will introduce later. there is an online example on OB: [SDF Points with regl]
+[svg-path-sdf] 给出了另一种思路，有趣的是它和后续我们将要介绍的文本绘制思路几乎完全相同。OB 上有一个在线示例：[SDF Points with regl]
 
 ![svg-path-sdf](https://github.com/dy/svg-path-sdf/raw/master/preview.png?raw=true)
 
-The `fill()` and `stroke()` in the Canvas2D API can take [Path2D] as an argument, the latter can be created directly from SVG path definitions. The Canvas2D API is then used to generate an SDF to be passed as a texture, see [tiny-sdf] for details on how to do this, and we'll talk more about it later when we introduce text drawing.
+Canvas2D API 中的 `fill()` 和 `stroke()` 可以接受 [Path2D] 作为参数，后者可以通过 SVG 路径定义直接创建。随后使用 Canvas2D API 生成 SDF 作为纹理传入，具体生成方式可以参考 [tiny-sdf]，我们会在后续介绍文本绘制时详细介绍它。
 
 ```ts
 // @see https://github.com/dy/svg-path-sdf/blob/master/index.js#L61C3-L63C31
@@ -162,11 +161,11 @@ ctx.stroke(path2d);
 var data = bitmapSdf(ctx);
 ```
 
-Of course, Path2D is a natively supported API for browser environments, so if you want to use it for server-side rendering, you'll need to use polyfill, as described in more detail here: [Support Path2D API]。
+当然 Path2D 是浏览器环境才原生支持的 API，如果想在服务端渲染中使用，需要使用 polyfill，详见：[Support Path2D API]。
 
-## Using mesh {#use-mesh}
+## 使用网格绘制 {#use-mesh}
 
-So the usual way to triangulate a Path, either in 2D or 3D, is the following example from: [SVG loader in three.js]. The SVG text is first converted to a set of `ShapePath`s, then a set of `ShapeGeometry`s is created and rendered:
+因此对于 Path 常规的方式还是三角化，无论是 2D 还是 3D。下面的示例来自：[SVG loader in three.js]。首先将 SVG 文本转换成一组 `ShapePath`，然后创建一组 `ShapeGeometry` 并渲染：
 
 ```ts
 const shapes = SVGLoader.createShapes(path);
@@ -179,16 +178,16 @@ for (const shape of shapes) {
 }
 ```
 
-Let's implement our own version below:
+下面让我们来实现自己的版本：
 
--   Normalize path definitions to absolute commands
--   Sampling on curves
--   Drawing strokes with Polyline
--   Use earcut and libtess triangulation to draw fills.
+-   将路径定义规范到绝对命令
+-   在曲线上采样
+-   使用 Polyline 绘制描边
+-   使用 earcut 和 libtess 三角化，绘制填充
 
-### Normalize to absolute commands {#convert-to-absolute-commands}
+### 转换成绝对路径 {#convert-to-absolute-commands}
 
-SVG path commands are both absolute and relative, e.g. `M 100 100 L 200 100` is equivalent to `M 100 100 l 100 0`. For ease of processing, we'll convert all relative commands to absolute first. For ease of processing, we first convert all relative commands to absolute commands, and the Canvas2D API also uses this style, similar to [lineTo], we refer to the [ShapePath] implementation of Three.js, which implements a series of [CanvasRenderingContext2D] methods such as `moveTo / lineTo / bezierCurveTo` and so on.
+SVG 路径命令包含绝对和相对两种，例如：`M 100 100 L 200 100` 和 `M 100 100 l 100 0` 是等价的。为了便于后续处理，我们先将相对命令都转换成绝对命令。Canvas2D API 也采用这种风格，类似 [lineTo]，我们参考 Three.js 的 [ShapePath] 实现，它实现了一系列 [CanvasRenderingContext2D] 的方法例如 `moveTo / lineTo / bezierCurveTo` 等等。
 
 ```ts
 import { path2Absolute } from '@antv/util';
@@ -208,7 +207,7 @@ commands.forEach((command) => {
 });
 ```
 
-Let's briefly introduce the methods provided by [ShapePath], which consists of a set of subPaths corresponding to multiple commands in the path definition. Take `moveTo` and `lineTo` for example, the former creates a new subPath and sets the starting point, the latter completes the line to the next point.
+下面我们简单介绍下 [ShapePath] 提供的方法，它包含一组 subPath 对应路径定义中的多条命令。以 `moveTo` 和 `lineTo` 为例，前者会创建一条新的 subPath 并设置起点，后者完成到下一个点的连线。
 
 ```ts
 export class ShapePath {
@@ -229,15 +228,15 @@ export class ShapePath {
 }
 ```
 
-Here's a look at the structure of each subPath.
+下面来看每一个 subPath 的结构。
 
 ```ts
 export class Path extends CurvePath {}
 ```
 
-### Sampling on a curve {#sample-on-curve}
+### 在曲线上采样 {#sample-on-curve}
 
-Sample straight lines and bezier curves with different precision. This is understandable: for Bezier curves, the only way to make the line look smoother is to add more samples; for straight lines, there is no need to add any additional samples.
+针对直线、贝塞尔曲线进行不同精度的采样。这也很好理解：对于贝塞尔曲线，只有增加更多的采样点才能让折线看起来更平滑；对于直线没必要额外增加任何采样点。
 
 ```ts
 export class CurvePath extends Curve {
@@ -253,7 +252,7 @@ export class CurvePath extends Curve {
 }
 ```
 
-Taking a third-order Bessel curve as an example, given the normalized `t`, the sampling points can be obtained by its definition: [Bézier_curve]
+以三阶贝塞尔曲线为例，给定归一化后的 `t`，采样点就可以通过其定义得到 [Bézier_curve]：
 
 ```ts
 export class CubicBezierCurve extends Curve {
@@ -272,7 +271,7 @@ export class CubicBezierCurve extends Curve {
 }
 ```
 
-Here is an example of a circular Path with the following list of sampled vertices:
+这里有一个圆形 Path 的例子，采样后的顶点列表如下：
 
 ```js eval
 points = call(() => {
@@ -285,25 +284,25 @@ points = call(() => {
 });
 ```
 
-### Drawing strokes with polyline {#use-polyline-to-draw-stroke}
+### 使用 Polyline 绘制描边 {#use-polyline-to-draw-stroke}
 
-Now that we have all the sampled points on the subPath, we can draw fills and strokes, respectively. We'll get to the former in a moment, and the latter can be done directly using the Polyline implemented in the previous lesson, [polyline with multiple segments] which just so happens to support a range of subPaths.
+现在我们已经有了所有 subPath 上的采样点，可以分别绘制填充和描边。前者我们马上就会介绍到，而后者可以直接使用上一节课实现的 Polyline，[包含多段的折线]刚好可以支持一系列的 subPath。
 
 ```ts
 SHAPE_DRAWCALL_CTORS.set(Path, [Mesh, SmoothPolyline]);
 ```
 
-### Triangulation with earcut {#earcut}
+### 使用 earcut 三角化 {#earcut}
 
 ![RTR 3rd - Tessellation](https://picx.zhimg.com/80/v2-f38400d225d0397f99563c96ce45053d_1440w.webp?source=d16d100b)
 
-So how do you split a triangle? One common method is called `ear clipping`. A vertex is `ear` if the line connecting two of its neighboring vertices does not intersect any side of the polygon.
-Let's take the left-hand side of the figure below as an example. Under this criterion, v2 v4 and v5 are `ear`. We then remove the found `ear` such as v4 and proceed to determine its neighbors v5 and v3, where v5 constitutes an `ear`. Eventually all `ear`s are removed, and the polygon is eventually split into triangles.
+那么如何分割三角形呢？一种常见的方法叫做「ear clipping」。如果一个顶点相邻的两个顶点连线不与多边形的任何一边相交，那么这个顶点就构成了「ear」。
+我们以下图左侧为例，在这个判断标准下，v2 v4 和 v5 就是「ear」。然后移除找到的 ear 如 v4，继续判定其相邻的顶点 v5 和 v3，其中 v5 构成了 ear。以此类推最终所有的 ear 都被移除，多边形也最终被分割成多个三角形。
 
 ![RTR - 12.Polygonal Techniques - Ear clipping
 ](https://picx.zhimg.com/80/v2-7c2a99be56ca9e4af6269e2c070b853b_1440w.webp?source=d16d100b)
 
-The detailed algorithm can be found in the paper: [Triangulation By Ear Clipping], while [earcut] provides a JS implementation:
+详细算法可参考论文：[Triangulation By Ear Clipping]，而 [earcut] 提供了一种 JS 实现：
 
 ```ts
 function isEar(ear) {
@@ -317,7 +316,7 @@ function isEar(ear) {
     var p = ear.next.next;
 
     while (p !== ear.prev) {
-        // If the poing is in triangle, it's not an ear.
+        // 处于三角形中，不是 ear
         if (
             pointInTriangle(a.x, a.y, b.x, b.y, c.x, c.y, p.x, p.y) &&
             area(p.prev, p, p.next) >= 0
@@ -330,7 +329,7 @@ function isEar(ear) {
 }
 ```
 
-Triangulation is done using [earcut], which inputs the coordinates of the sampling points to get an index array, and even calculates the error. As you'll see later when comparing it to other triangulation methods, earcut greatly improves the speed of the calculation but loses some accuracy:
+使用 [earcut] 完成三角化，输入采样点坐标得到索引数组，甚至还可以计算误差。稍后在与其他三角化方式对比时可以看到，earcut 大幅提升了计算速度但损失一定的精确性：
 
 ```ts
 import earcut, { flatten, deviation } from 'earcut';
@@ -346,7 +345,7 @@ const indices = earcut(vertices, holes, dimensions); // [1, 3, 2]
 const err = deviation(vertices, holes, dimensions, indices); // 0
 ```
 
-We can then use `gl.drawElements()` or `passEncoder.drawIndexed()` to do the drawing. In the image below, the left Path is defined as follows. Comparing it to the circle on the right, which was drawn using SDF, you can see that the edges are not really smooth, and this is even more obvious when the camera zooms in:
+这样我们就可以使用 `gl.drawElements()` 或者 `passEncoder.drawIndexed()` 完成绘制了。下图中左侧 Path 定义如下，和右侧使用 SDF 绘制的 Circle 对比后可以看出边缘其实并不平滑，在相机放大后更为明显：
 
 ```ts
 const path = new Path({
@@ -407,15 +406,15 @@ call(() => {
 });
 ```
 
-I've found that many 2D rendering engines such as [vello] use [Ghostscript Tiger.svg] to test the rendering of the Path, as you can see in the example at the beginning of this article. But if you compare it to the original SVG (remember the export feature we implemented?, you'll see that it's in the top right corner of the canvas.), you'll see that something is missing.
+我发现很多 2D 渲染引擎例如 [vello] 都会使用 [Ghostscript Tiger.svg] 来测试对于 Path 的渲染效果，在本文开头的示例中就可以看到。但如果和原始 SVG 仔细对比（还记得我们实现的导出功能吗？它就在画布右上角），会发现缺失了一些部分。
 
-### Other triangulation techniques {#other-tesselation-techniques}
+### 其他三角化方案 {#other-tesselation-techniques}
 
-Pixi.js uses [earcut] for triangulation of polygons. Other triangulation libraries include [cdt2d] and [libtess.js], the latter of which is less powerful but more accurate, especially for paths with a lot of `holes` and self-intersections. As [earcut] mentions in their documentation, see: [Ability to substitute earcut for libtess.js for a given Graphics object]：
+Pixi.js 使用了 [earcut] 进行多边形的三角化。其他三角化库还有 [cdt2d] 和 [libtess.js]，后者虽然性能不佳，但胜在精确性，尤其是针对包含大量 `holes` 以及自我交叠的路径。正如 [earcut] 在其文档中提到的，详见 [Ability to substitute earcut for libtess.js for a given Graphics object]：
 
 > If you want to get correct triangulation even on very bad data with lots of self-intersections and earcut is not precise enough, take a look at libtess.js.
 
-The effect of earcut and [libtess.js] is compared in [Polygon Tesselation]. Unlike earcut, which returns an array of indices, libtess.js returns an array of vertices, as shown in the example in the repository. This means that we need to generate the index array manually, but of course this is very simple: since we don't need to think about reusing vertices, we can just use an incremental array starting from `0`.
+[Polygon Tesselation] 中也对比了 earcut 和 [libtess.js] 的效果。与 earcut 返回索引数组不同，libtess.js 返回的是顶点数组，具体使用方式可以参考代码仓库的示例。这意味着我们需要手动生成索引数组，当然这非常简单：由于不需要考虑顶点的复用，使用一个从 `0` 开始的递增数组即可。
 
 ```ts
 export function triangulate(contours: [number, number][][]) {
@@ -431,7 +430,7 @@ triangulate(points); // [100, 0, 0, 100, 0, 0, 0, 100, 100, 0, 100, 100]
 // indices: [0, 1, 2, 3, 4, 5]
 ```
 
-You can go back to the “two tigers” example at the beginning of the article and compare it to the one generated with earcut on the left and libtess.js on the right. We've added a `tessellationMethod` attribute to Path to switch between the two methods of triangulation:
+可以回到文章开头的“两只老虎”示例对比查看，左侧是使用 earcut 生成的，右侧是 libtess.js 生成的。我们为 Path 添加了一个 `tessellationMethod` 属性用来在两种三角化方式间切换：
 
 ```ts
 export enum TesselationMethod {
@@ -443,29 +442,29 @@ export interface PathAttributes extends ShapeAttributes {
 }
 ```
 
-### Draw holes {#draw-holes}
+### 绘制孔洞 {#draw-holes}
 
-In SVG, holes can be defined with a different clockwise direction than the outline. For example, in the path below, the outline is clockwise `M0 0 L100 0 L100 100 L0 100 Z`, and the two subsequent holes are counterclockwise:
+在 SVG 中可以这样定义孔洞，与轮廓的时针方向不同。比如下面路径中的轮廓为顺时针 `M0 0 L100 0 L100 100 L0 100 Z`，后续的两个孔洞就是逆时针方向：
 
 ```bash
 M0 0 L100 0 L100 100 L0 100 Z M50 50 L50 75 L75 75 L75 50 Z M25 25 L25
 ```
 
-You can also reverse the clockwise direction in your definition, for example: [Draw a hollow circle in SVG]. The key is that the hole's direction should be opposite to the outline's direction.
+当然也可以将时针方向反过来定义，例如：[Draw a hollow circle in SVG]，总之孔洞的时针方向与轮廓相反即可。
 
 <Holes />
 
-### Fill rule {#fill-rule}
+### 填充规则 {#fill-rule}
 
-The [fill-rule] in SVG is used to determine the fill area of a Path. In the example below, the left one uses nonzero rule, while the right one uses evenodd rule.
+SVG 中的 [fill-rule] 用来判定 Path 的填充区域，下面的例子中左边是 `nonzero`，右边是 `evenodd`。
 
 <FillRule />
 
-Taking a point in the center hollow area as an example, the ray intersects with the shape an even number of times, therefore it is determined to be outside the shape and does not need to be filled. See details at [how does fill-rule="evenodd" work on a star SVG]。
+以中心挖空区域中的点为例，作射线与图形的交点为偶数，因此判定为图形外部，无需填充。详见 [how does fill-rule="evenodd" work on a star SVG]。
 
 ![fill-rule evenodd](/fill-rule-evenodd.png)
 
-Since earcut doesn't support self-intersecting paths, we use libtess.js for path triangulation.
+由于 earcut 不支持自相交路径，我们使用 libtess.js 来三角化路径。
 
 ```ts
 tessy.gluTessProperty(
@@ -476,13 +475,13 @@ tessy.gluTessProperty(
 );
 ```
 
-## Bounding box and picking {#bounding-box-picking}
+## 包围盒与拾取 {#bounding-box-picking}
 
-The bounding box can be estimated in the same way as in the previous lesson for polyline. We focus on the implementation of how to determine if a point is inside a Path.
+包围盒可以沿用上一节课针对折线的估计方式。我们重点关注如何判定点是否在 Path 内的实现。
 
-### Use native methods {#native-methods}
+### 使用原生方法 {#native-methods}
 
-CanvasRenderingContext2D provides two out-of-the-box methods, [isPointInPath] and [isPointInStroke], which can be easily used in conjunction with [Path2D], which we introduced earlier.
+CanvasRenderingContext2D 提供了 [isPointInPath] 和 [isPointInStroke] 这两个开箱即用的方法，配合我们之前介绍过的 [Path2D] 可以很容易地进行判定。
 
 ```ts
 const canvas = document.getElementById('canvas');
@@ -490,7 +489,7 @@ const ctx = canvas.getContext('2d');
 const isPointInPath = ctx.isPointInPath(new Path2D(d), x, y);
 ```
 
-We introduced [OffscreenCanvas] earlier, and it's particularly good for calculations like picking decisions that are unrelated to the main thread's rendering task. We do the initialization in [PickingPlugin], and then pass in `containsPoint` to be called on demand for specific graphics:
+之前我们介绍过 [OffscreenCanvas]，对于拾取判定这种与主线程渲染任务无关的计算，特别适合交给它完成。在 [PickingPlugin] 中我们完成初始化，随后传入 `containsPoint` 中供具体图形按需调用：
 
 ```ts
 export class Picker implements Plugin {
@@ -513,26 +512,26 @@ export class Picker implements Plugin {
 }
 ```
 
-### Geometry method {#geometry-method}
+### 几何方法 {#geometry-method}
 
-Each subPath of a Path can perform geometric operations on its position in relation to a point. For example, Pixi.js implements [GraphicsContext - containsPoint], read more about it.
+针对 Path 的每一个 subPath 都可以进行它与点位置关系的几何运算。例如 Pixi.js 就实现了 [GraphicsContext - containsPoint]，感兴趣可以深入阅读。
 
-## Hand-drawn style drawing {#hand-drawn-style-drawing}
+## 手绘风格 {#hand-drawn-style-drawing}
 
-[excalidraw] uses [rough] for hand-drawn style drawing. We don't need the actual Canvas2D or SVG based drawing functionality that rough provides by default, so using [RoughGenerator] is a better choice.
+[excalidraw] 使用了 [rough] 进行手绘风格的绘制。我们并不需要 rough 默认提供的基于 Canvas2D 或 SVG 的实际绘制功能，使因此使用 [RoughGenerator] 是更好的选择。
 
 ![rough.js](https://camo.githubusercontent.com/5d90838c20ae2cab9f295e3dd812800285c42e82d04787883c9d5acecaec85ed/68747470733a2f2f726f7567686a732e636f6d2f696d616765732f6361705f64656d6f2e706e67)
 
-### Generate hand-drawn path definitions {#generate-rough-path-definitions}
+### 生成手绘路径定义 {#generate-rough-path-definitions}
 
-RoughGenerator provides generation methods for common shapes, using rectangles as an example:
+RoughGenerator 为常见图形提供了生成方法，以矩形为例：
 
 ```ts
 const generator = rough.generator();
 const rect = generator.rectangle(0, 0, 100, 100);
 ```
 
-It generates a set of subPath-like structures for us based on the input parameters, called OpSet, which contains the `move` `lineTo` and `bcurveTo` operators. We can easily convert this to a command with an absolute path, then sample it and continue drawing with Polyline!
+它能根据输入参数为我们生成一组类似 subPath 的结构，rough 称作 OpSet，它包含 `move` `lineTo` 和 `bcurveTo` 三种操作符。我们可以很容易地将它转换成包含绝对路径的命令，随后进行采样就可以继续使用 Polyline 绘制了。
 
 ```ts
 import { AbsoluteArray } from '@antv/util';
@@ -563,12 +562,13 @@ export function opSet2Absolute(set: OpSet) {
 
 ### Rough Mixin {rough-mixin}
 
-We would like to reuse the non-hand-drawn version for these functions of the envelope box calculation and pickup for the following reasons:
+在包围盒计算、拾取这些功能上我们希望复用非手绘版本，理由如下：
 
--   This stylized rendering should only affect the rendering effect, it does not change its physical properties.
--   A hand-drawn graphic actually consists of several sets of Paths, so it is a waste of performance to calculate the bounding box exactly.
--   When picking up, it should be taken as a whole, and judging by the Paths will give wrong results, e.g. if the mouse is hovering inside the graphic, but is in the empty space between the lines, and thus is not inside the graphic.
-    So we create a new Mixin with all the parameters supported by rough such as `seed` `roughness` etc. and redraw it as soon as these parameters change:
+-   这种风格化渲染仅应当影响渲染效果，并不改变它的物理属性
+-   手绘图形实际由若干组 Path 组成，精确计算包围盒反而是种性能浪费
+-   在拾取时应当作为一个整体，按 Path 判断反而会获得错误的效果，例如鼠标明明悬停在图形内部，但却因为处在线条之间的空白处从而导致判定不在图形内
+
+因此我们创建一个新的 Mixin，它包含 rough 支持的全部参数例如 `seed` `roughness` 等等，当这些参数发生改变立刻执行重绘：
 
 ```ts
 import { Drawable, Options } from 'roughjs/bin/core';
@@ -598,7 +598,7 @@ export function Rough<TBase extends GConstructor>(Base: TBase) {
 }
 ```
 
-This way we can get hand-drawn effects by wrapping our already supported shapes in it. The way to use it is as follows, taking RoughRect as an example, which inherits from Rect:
+这样我们已经支持的图形只需要用它包装一下即可获得手绘效果。使用方式如下，以 RoughRect 为例，它继承自 Rect：
 
 ```ts
 import { RectWrapper, RectAttributes } from './Rect';
@@ -608,7 +608,7 @@ export class RoughRect extends Rough(RectWrapper(Shape)) {}
 
 ### fillStyle solid {#fill-style-solid}
 
-To support the `fillStyle = 'solid'` case:
+为了支持 `fillStyle = 'solid'` 的情况：
 
 ```ts
 SHAPE_DRAWCALL_CTORS.set(RoughRect, [
@@ -727,9 +727,9 @@ call(() => {
 });
 ```
 
-### Export SVG {#export-svg}
+### 导出 SVG {#export-svg}
 
-As you can see the graphics generated by rough are made up of a set of Paths. Therefore you need to use `<path>` when exporting to SVG. You can try exporting in the example above:
+可以看出 rough 生成的图形都是由一组 Path 组成。因此在导出成 SVG 时需要使用 `<path>`。可以在上面的示例中尝试导出：
 
 ```ts
 export function exportRough(
@@ -756,7 +756,7 @@ export function exportRough(
 }
 ```
 
-## Extended reading {#extended-reading}
+## 扩展阅读 {#extended-reading}
 
 -   [Rendering SVG Paths in WebGL]
 -   [Shaping Curves with Parametric Equations]
@@ -793,13 +793,13 @@ export function exportRough(
 [Ghostscript Tiger.svg]: https://en.m.wikipedia.org/wiki/File:Ghostscript_Tiger.svg
 [vello]: https://github.com/linebender/vello
 [Polygon Tesselation]: https://andrewmarsh.com/software/tesselation-web/
-[polyline with multiple segments]: /guide/lesson-012#polyline-with-multiple-segments
+[包含多段的折线]: /zh/guide/lesson-012#polyline-with-multiple-segments
 [RoughGenerator]: https://github.com/rough-stuff/rough/wiki/RoughGenerator
 [isPointInPath]: https://developer.mozilla.org/en-US/docs/Web/API/CanvasRenderingContext2D/isPointInPath
 [isPointInStroke]: https://developer.mozilla.org/en-US/docs/Web/API/CanvasRenderingContext2D/isPointInStroke
 [GraphicsContext - containsPoint]: https://github.com/pixijs/pixijs/blob/dev/src/scene/graphics/shared/GraphicsContext.ts#L1072
-[OffscreenCanvas]: /guide/lesson-011#offscreen-canvas
-[PickingPlugin]: /guide/lesson-006#picking-plugin
+[OffscreenCanvas]: /zh/guide/lesson-011#offscreen-canvas
+[PickingPlugin]: /zh/guide/lesson-006#picking-plugin
 [Draw a hollow circle in SVG]: https://stackoverflow.com/questions/8193675/draw-a-hollow-circle-in-svg
 [fill-rule]: https://developer.mozilla.org/en-US/docs/Web/SVG/Attribute/fill-rule
 [how does fill-rule="evenodd" work on a star SVG]: https://stackoverflow.com/a/46145333/4639324

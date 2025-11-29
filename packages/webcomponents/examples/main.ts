@@ -108,11 +108,13 @@ canvas.addEventListener(Event.READY, async (e) => {
       name: 'A swimming dog',
       type: 'rect',
       fill: 'https://v3b.fal.media/files/b/tiger/v1lf1EcPP1X1pw_YOKM4o.jpg',
+      // fill: 'red',
       x: 100,
       y: 100,
       width: 400,
       height: 400,
       lockAspectRatio: true,
+      // filter: 'brightness(0.4)',
     } as const,
     // {
     //   id: '2',
@@ -319,9 +321,36 @@ canvas.addEventListener(Event.READY, async (e) => {
   });
 
   api.updateNodes(nodes);
-  api.selectNodes([nodes[0]]);
+  // api.selectNodes([nodes[0]]);
 
-  api.record();
+  const threadId = `${Date.now()}`;
+  const commentId = `${Date.now()}`;
+  api.setThreads([
+    {
+      type: 'thread',
+      id: threadId,
+      roomId: 'my-room-id',
+      createdAt: new Date(),
+      comments: [
+        {
+          type: 'comment',
+          threadId,
+          id: commentId,
+          roomId: 'my-room-id',
+          userId: 'alicia@example.com',
+          createdAt: new Date(),
+          editedAt: new Date(),
+          text: 'Hello, world!',
+        },
+      ],
+      metadata: {
+        x: 500,
+        y: 200,
+      },
+    },
+  ]);
+
+  // api.record();
   // });
 });
 

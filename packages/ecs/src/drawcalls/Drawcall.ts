@@ -11,6 +11,14 @@ import {
   BufferFrequencyHint,
   VertexStepMode,
   Format,
+  SwapChain,
+  RenderTarget,
+  Texture,
+  MipmapFilterMode,
+  AddressMode,
+  FilterMode,
+  TextureUsage,
+  TransparentWhite,
 } from '@antv/g-device-api';
 import { Entity } from '@lastolivegames/becsy';
 import { RenderCache, uid } from '../utils';
@@ -21,6 +29,7 @@ import {
   FillImage,
   FillPattern,
   FillTexture,
+  Filter,
   Wireframe,
 } from '../components';
 
@@ -67,8 +76,21 @@ export abstract class Drawcall {
     ],
   };
 
+  #filterProgram: Program;
+  #filterPipeline: RenderPipeline;
+  #filterInputLayout: InputLayout;
+  #filterVertexBuffer: Buffer;
+  #filterTexture: Texture;
+  #filterRenderTarget: RenderTarget;
+  #filterBindings: Bindings;
+  #filterTextureWidth: number;
+  #filterTextureHeight: number;
+  // #inputTexture: Texture;
+  // #inputRenderTarget: RenderTarget;
+
   constructor(
     protected device: Device,
+    protected swapChain: SwapChain,
     protected renderCache: RenderCache,
     protected texturePool: TexturePool,
     protected instanced: boolean,
@@ -165,11 +187,13 @@ export abstract class Drawcall {
   }
 
   protected get useFillImage() {
-    return this.shapes[0]?.hasSomeOf(
-      FillImage,
-      FillTexture,
-      FillGradient,
-      FillPattern,
+    return (
+      this.shapes[0]?.hasSomeOf(
+        FillImage,
+        FillTexture,
+        FillGradient,
+        FillPattern,
+      ) || this.shapes[0]?.has(Filter)
     );
   }
 
@@ -268,6 +292,125 @@ export abstract class Drawcall {
       viewOrSize: uniqueIndices,
       usage: BufferUsage.INDEX,
       hint: BufferFrequencyHint.STATIC,
+    });
+  }
+
+  protected createPostProcessing(
+    vert: string,
+    frag: string,
+    inputTexture: Texture,
+    width: number,
+    height: number,
+  ) {
+    this.#filterTextureWidth = width;
+    this.#filterTextureHeight = height;
+    this.#filterTexture = this.device.createTexture({
+      format: Format.U8_RGBA_NORM,
+      width,
+      height,
+      usage: TextureUsage.RENDER_TARGET,
+    });
+    this.#filterRenderTarget = this.device.createRenderTargetFromTexture(
+      this.#filterTexture,
+    );
+
+    const diagnosticDerivativeUniformityHeader =
+      this.device.queryVendorInfo().platformString === 'WebGPU'
+        ? 'diagnostic(off,derivative_uniformity);\n'
+        : '';
+
+    this.#filterProgram = this.renderCache.createProgram({
+      vertex: {
+        glsl: vert,
+      },
+      fragment: {
+        glsl: frag,
+        postprocess: (fs) => diagnosticDerivativeUniformityHeader + fs,
+      },
+    });
+
+    this.#filterVertexBuffer = this.device.createBuffer({
+      viewOrSize: new Float32Array([1, 3, -3, -1, 1, -1]),
+      usage: BufferUsage.VERTEX,
+      hint: BufferFrequencyHint.DYNAMIC,
+    });
+
+    this.#filterInputLayout = this.device.createInputLayout({
+      vertexBufferDescriptors: [
+        {
+          arrayStride: 4 * 2,
+          stepMode: VertexStepMode.VERTEX,
+          attributes: [
+            {
+              shaderLocation: 0,
+              offset: 0,
+              format: Format.F32_RG,
+            },
+          ],
+        },
+      ],
+      indexBufferFormat: null,
+      program: this.#filterProgram,
+    });
+
+    this.#filterPipeline = this.device.createRenderPipeline({
+      inputLayout: this.#filterInputLayout,
+      program: this.#filterProgram,
+      colorAttachmentFormats: [Format.U8_RGBA_NORM],
+    });
+
+    this.#filterBindings = this.renderCache.createBindings({
+      pipeline: this.#filterPipeline,
+      samplerBindings: [
+        {
+          texture: inputTexture,
+          sampler: this.createSampler(),
+        },
+      ],
+    });
+
+    return {
+      texture: this.#filterTexture,
+      renderTarget: this.#filterRenderTarget,
+    };
+  }
+
+  protected renderPostProcessing() {
+    const filterRenderPass = this.device.createRenderPass({
+      colorAttachment: [this.#filterRenderTarget],
+      colorResolveTo: [null],
+      colorClearColor: [TransparentWhite],
+      colorStore: [true],
+      depthStencilAttachment: null,
+      depthStencilResolveTo: null,
+    });
+    // this.program.setUniformsLegacy(sceneUniformLegacyObject);
+    filterRenderPass.setViewport(
+      0,
+      0,
+      this.#filterTextureWidth,
+      this.#filterTextureHeight,
+    );
+    filterRenderPass.setPipeline(this.#filterPipeline);
+    filterRenderPass.setVertexInput(
+      this.#filterInputLayout,
+      [{ buffer: this.#filterVertexBuffer }],
+      null,
+    );
+    filterRenderPass.setBindings(this.#filterBindings);
+    filterRenderPass.draw(3);
+    this.device.submitPass(filterRenderPass);
+  }
+
+  protected createSampler() {
+    return this.renderCache.createSampler({
+      addressModeU: AddressMode.CLAMP_TO_EDGE,
+      addressModeV: AddressMode.CLAMP_TO_EDGE,
+      minFilter: FilterMode.POINT,
+      magFilter: FilterMode.BILINEAR,
+      mipmapFilter: MipmapFilterMode.LINEAR,
+      lodMinClamp: 0,
+      lodMaxClamp: 0,
     });
   }
 }
