@@ -45,7 +45,7 @@ import {
 import { Event } from '../event';
 import { ExtendedAPI, pendingCanvases } from '../API';
 import { LitStateManagement } from '../context';
-import { InfiniteCanvas } from '../spectrum/infinite-canvas';
+import { InfiniteCanvas } from '../spectrum';
 
 export class InitCanvas extends System {
   private readonly commands = new Commands(this);
