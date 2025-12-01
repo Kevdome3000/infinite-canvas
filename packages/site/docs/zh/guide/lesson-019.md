@@ -1,21 +1,19 @@
 ---
 outline: deep
-description: 'Implement undo/redo functionality with history management. Learn about state snapshots, incremental updates, and recording history entries for collaborative editing support.'
-head:
-    - ['meta', { property: 'og:title', content: 'Lesson 19 - History' }]
+description: '实现撤销/重做功能和历史记录管理。学习状态快照、增量更新以及记录历史条目的技术，为协同编辑提供支持。'
 ---
 
 <script setup>
-import History from '../components/History.vue';
+import History from '../../components/History.vue';
 </script>
 
-# Lesson 19 - History
+# 课程 19 - 历史记录
 
-In this lesson, we will explore how to implement features related to history.
+在本课程中，我们将探讨如何实现历史记录相关的功能。
 
 <History />
 
-Whether you are a text or graphical editor, the history and undo redo functionality is a must. As implemented in [JavaScript-Undo-Manager], we can use an undoStack to save each operation and its inverse:
+无论是文本还是图形编辑器，历史记录以及撤销重做功能都是必备的。正如 [JavaScript-Undo-Manager] 的实现，我们可以使用一个 undoStack 保存每次操作和它的逆操作：
 
 ```ts
 function createPerson(id, name) {
@@ -30,11 +28,11 @@ function createPerson(id, name) {
 }
 ```
 
-We can also use two stacks to manage undo and redo operations separately, see: [UI Algorithms: A Tiny Undo Stack]. The last section of [How Figma's multiplayer technology works] introduces Figma's implementation approach:
+我们也可以使用两个 stack 分别管理 undo 和 redo 操作，详见：[UI Algorithms: A Tiny Undo Stack]。Figma 也采用了这种方式，详见：[How Figma’s multiplayer technology works] 一文最后一节介绍了 Figma 的实现思路：
 
 > This is why in Figma an undo operation modifies redo history at the time of the undo, and likewise a redo operation modifies undo history at the time of the redo.
 
-Referring to [Excalidraw HistoryEntry], we add a History class to manage undo and redo operations.
+参考 [Excalidraw HistoryEntry]，我们增加一个 History 类，持有两个 stack 用于管理撤销和重做。
 
 ```ts
 export class History {
@@ -48,7 +46,7 @@ export class History {
 }
 ```
 
-Each entry in the history stack contains two types of modifications to the system state, which we describe below:
+历史记录栈中的每一个条目包含两类系统状态的修改，下面我们来介绍这两类状态：
 
 ```ts
 type HistoryStack = HistoryEntry[];
@@ -60,9 +58,9 @@ export class HistoryEntry {
 }
 ```
 
-## Design states {#design-states}
+## 设计系统状态 {#design-states}
 
-Referring to Excalidraw, we split the system state into `AppState` and `Elements`. The former includes the state of the canvas as well as the UI components, such as the current theme, the camera zoom level, the toolbar configurations and selections, etc.
+参考 Excalidraw，我们把系统状态分成 AppState 和 Elements。前者包括画布以及 UI 组件的状态，例如当前主题、相机缩放等级、工具条配置和选中情况等等。
 
 ```ts
 export interface AppState {
@@ -78,9 +76,9 @@ export interface AppState {
 }
 ```
 
-As you can see, we prefer to use a flat data structure rather than a nested object structure like `{ penbar: { all: [], selected: [] } }`, in order to allow for quicker and easier state diff considerations that don't require recursion, see: [distinctKeysIterator].
+可以看出这里我们倾向于使用扁平的数据结构，而非 `{ penbar: { all: [], selected: [] } }` 这样的嵌套对象结构，这是为了后续更方便快速地进行状态 diff 考虑，不需要使用递归，详见：[distinctKeysIterator]。
 
-The latter is the array of shapes in the canvas, which we previously covered in [Lesson 10] in the context of serializing shapes. Here we use a flat array instead of a tree structure, move the attributes in the `attributes` object up to the top level, and represent the parent-child relationship slightly differently, using `parentId` to associate the parent node with the `id`. However, we can't just traverse the tree structure and render it, we need to sort the graph array according to some rules, which we'll cover later:
+而后者就是画布中的图形数组了，之前在 [课程 10] 中我们介绍过图形的序列化方案。这里我们使用扁平的数组而非树形结构，把 `attributes` 对象中的属性上移到最顶层，在父子关系的表示上稍有不同，使用 `parentId` 关联父节点的 `id`。但这样我们就没法直接遍历树形结构进行渲染了，需要按照某种规则对图形数组排序，稍后我们会介绍这种方法：
 
 ```ts
 // before
@@ -102,15 +100,15 @@ interface SerializedNode {
 }
 ```
 
-Consider collaboration we'll add more attributes like `version` later on.
+考虑协同我们稍后还会添加 `version` 等属性。有了这两种系统状态，我们就可以定义当前系统的快照。
 
-## State as a snapshot {#state-as-a-snapshot}
+## 定义快照 {#state-as-a-snapshot}
 
-The following image from [State as a Snapshot] shows how the React render function executes and then takes a snapshot before updating the DOM tree:
+下图来自 [State as a Snapshot]，展示了 React render 函数执行后，先生成快照再更新 DOM 树的过程：
 
 ![React snapshot](/react-snapshot.png)
 
-Our snapshot contains the two types of system states defined above, there will only be one snapshot of the system at any given moment, and each time the state changes, you can calculate with the current snapshot to get the corresponding modification of the state, e.g., "A graphic was deleted" in `ElementsChange`, "A layer was selected" in `AppStateChange`, and so on.
+我们的快照就包含上面定义的两类系统状态，系统任意时刻只会有一张快照，每次状态发生改变时，可以与当前快照计算得到状态对应的修改，例如 `ElementsChange` 中 “删除了一个图形”，`AppStateChange` 中 “选中了一个图层” 等等：
 
 ```ts
 class Snapshot {
@@ -121,7 +119,7 @@ class Snapshot {
 }
 ```
 
-So how should the system update the snapshot? Strategically you can choose to directly overwrite, or compute an incremental update. excalidraw provides [captureUpdate] to describe these two behaviors, which are suitable for different scenarios, for example, direct overwrite is suitable for scene initialization, after all, at this time, there is no need to fall back to a blank canvas state:
+那系统应该如何更新快照呢？在策略上可以选择直接覆盖，或者计算增量更新。Excalidraw 提供了 [captureUpdate] 描述这两种行为，这两种行为适合不同的场景，比如直接覆盖适合场景初始化的场景，毕竟此时不需要回退到空白画布状态：
 
 ```ts
 class Store {
@@ -146,7 +144,7 @@ class Store {
 }
 ```
 
-Let's focus on how to calculate the increment and use it to create a `HistoryEntry`.
+我们着重来看如何计算增量，并使用它创建 `HistoryEntry`。
 
 ```ts
 class Store {
@@ -165,16 +163,16 @@ class Store {
             : ElementsChange.empty();
         // AppStateChange 同理
 
-        // Use history.record to create HistoryEntry
+        // 使用 history.record 创建 HistoryEntry
     }
 }
 ```
 
-Let's see how to add a history entry.
+下面我们来看如何添加一条历史记录。
 
-## Record a history entry {#record-history-entry}
+## 插入历史记录 {#record-history-entry}
 
-In the example at the top of this section, we used the API to insert two histories for updating the fill color of the rectangle, which you can do using the undo and redo operations in the top toolbar:
+在本节最上面的例子中，我们使用 API 插入了两条历史记录用来更新矩形的填充色，你可以使用顶部工具条的 undo 和 redo 操作在两种颜色间切换：
 
 ```ts
 api.updateNode(node, {
@@ -188,7 +186,7 @@ api.updateNode(node, {
 api.record();
 ```
 
-Each call to `api.record` updates the snapshot with the current `AppState` and `Elements` state:
+每次调用 `api.record` 会使用当前的 `AppState` 和 `Elements` 状态更新快照：
 
 ```ts
 class API {
@@ -208,7 +206,7 @@ class API {
 }
 ```
 
-Each call to `api.record` adds a history record because the state of the graph did change, but it is important to note that only AppState changes should not reset the redoStack. when a change occurs we add the inverse operation of the change to the undoStack:
+如果是增量更新模式，就会增加一条历史记录，因为图形的状态确实发生了改变，但需要注意的是仅发生 AppState 的修改不应该重置 redoStack。发生变更时，我们将变更的逆操作添加到 undoStack 中：
 
 ```ts
 export class History {
@@ -226,11 +224,11 @@ export class History {
 }
 ```
 
-Now we can look at how to design the `AppStateChange` and `ElementsChange` data structures for `Change`, allowing us to use a generic `entry.inverse()` instead of describing each changeable attribute with `add/removeFill` `add/removeStroke` and so on.
+现在我们可以来看如何设计“变更”的数据结构 `AppStateChange` 和 `ElementsChange`，让我们可以用一种通用的 `entry.inverse()`，而不是针对每一个可变更属性都用 `add/removeFill` `add/removeStroke` 等等来描述。
 
-## Design change structure {#design-change-structure}
+## 设计变更数据结构 {#design-change-structure}
 
-The `Change` interface in Excalidraw is very simple:
+Excalidraw 中的 `Change` 接口十分简单：
 
 ```ts
 export interface Change<T> {
@@ -238,14 +236,10 @@ export interface Change<T> {
      * Inverses the `Delta`s inside while creating a new `Change`.
      */
     inverse(): Change<T>;
-
     /**
      * Applies the `Change` to the previous object.
-     *
-     * @returns a tuple of the next object `T` with applied change, and `boolean`, indicating whether the applied change resulted in a visible change.
      */
     applyTo(previous: T, ...options: unknown[]): [T, boolean];
-
     /**
      * Checks whether there are actually `Delta`s.
      */
@@ -253,14 +247,14 @@ export interface Change<T> {
 }
 ```
 
-Changes to the two types of state can be described by generics, where `SceneElementsMap` is a `Map<SerializedNode[‘id’], SerializedNode>`:
+两类状态的变更可以通过泛型描述，其中 `SceneElementsMap` 就是一个 `Map<SerializedNode['id'], SerializedNode>`：
 
 ```ts
 class AppStateChange implements Change<AppState> {}
 class ElementsChange implements Change<SceneElementsMap> {}
 ```
 
-Let's start with the simpler `AppStateChange`, whose constructor is a `Delta` instance that accepts deleted and added/modified attributes, and if you need to reverse them just swap the order of the two:
+下面我们先来看比较简单的 `AppStateChange`，它的构造函数是一个 `Delta` 实例，接受被删除和加入/修改的属性，如果需要反转只需要调换一下两者的顺序：
 
 ```ts
 class AppStateChange implements Change<AppState> {
@@ -283,7 +277,7 @@ class Delta<T> {
 }
 ```
 
-## Apply changes {#apply-changes}
+## 应用变更 {#apply-changes}
 
 ```ts
 export class ElementsChange implements Change<SceneElementsMap> {
@@ -306,10 +300,11 @@ export class ElementsChange implements Change<SceneElementsMap> {
 }
 ```
 
+[How Figma’s multiplayer technology works]: https://www.figma.com/blog/how-figmas-multiplayer-technology-works/
 [UI Algorithms: A Tiny Undo Stack]: https://blog.julik.nl/2025/03/a-tiny-undo-stack
 [JavaScript-Undo-Manager]: https://github.com/ArthurClemens/JavaScript-Undo-Manager
 [distinctKeysIterator]: https://github.com/excalidraw/excalidraw/blob/dff69e91912507bbfcc68b35277cc6031ce5b437/packages/excalidraw/change.ts#L359
-[Lesson 10]: /guide/lesson-010#shape-to-serialized-node
-[State as a Snapshot]: https://react.dev/learn/state-as-a-snapshot
+[课程 10]: /zh/guide/lesson-010#shape-to-serialized-node
+[State as a Snapshot]: https://zh-hans.react.dev/learn/state-as-a-snapshot
 [Excalidraw HistoryEntry]: https://github.com/excalidraw/excalidraw/blob/master/packages/excalidraw/history.ts#L160-L164
 [captureUpdate]: https://docs.excalidraw.com/docs/@excalidraw/excalidraw/api/props/excalidraw-api#captureupdate

@@ -3,11 +3,11 @@ outline: deep
 publish: false
 ---
 
-After [Getting the API], you can call the related methods:
+在 [获取 API] 后，可以调用相关方法：
 
 ## get/setAppState
 
-Control the state of the entire canvas application, such as switching between light and dark themes at runtime:
+控制整个画布应用的状态，例如在运行时切换明暗主题：
 
 ```ts
 api.setAppState({
@@ -15,7 +15,7 @@ api.setAppState({
 });
 ```
 
-Or hide taskbar on the right side:
+或者隐藏右侧 taskbar：
 
 ```ts
 api.setAppState({
@@ -23,7 +23,7 @@ api.setAppState({
 });
 ```
 
-The complete state is as follows:
+完整状态如下：
 
 ```ts
 export interface AppState {
@@ -87,7 +87,7 @@ export interface AppState {
 
 ## get/setNodes
 
-Get or set the shapes in the canvas.
+获取或者设置画布中的图形。
 
 ```ts
 api.setNodes(nodes);
@@ -95,39 +95,43 @@ api.setNodes(nodes);
 
 ## getNodeById
 
+通过 id 获取图形：
+
 ```ts
 api.getNodeById('1'); // { id: '1', ... }
 ```
 
 ## getCanvas
 
-Obtain the Canvas Entity, after which you can retrieve the associated set of Components:
+获取 Canvas Entity，随后可以获取关联的一系列 Component：
 
 ```ts
 const entity = api.getCanvas();
 ```
 
-For example, to obtain the DOM element corresponding to the canvas:
+例如获取画布对应的 DOM 元素：
 
 ```ts
 const { element } = entity.read(Canvas); // HTMLCanvasElement | OffscreenCanvas
 ```
 
-Below we introduce these components.
+下面我们介绍这些 Component
 
 ### Canvas
 
--   `element` DOM element of canvas `HTMLCanvasElement | OffscreenCanvas`
--   `htmlLayer` HTML container element `HTMLDivElement`
--   `width`
--   `height`
--   `renderer` renderer, the available values are `'webgl' | 'webgpu'`, default to `'webgl'`
--   `shaderCompilerPath` Convert GLSL to WGSL
--   `devicePixelRatio` Default to `1`, see: [devicePixelRatio]
+核心组件
+
+-   `element` 画布对应的 DOM 元素 `HTMLCanvasElement | OffscreenCanvas`
+-   `htmlLayer` HTML 容器元素 `HTMLDivElement`
+-   `width` 画布宽度
+-   `height` 画布高度
+-   `renderer` 渲染器，可选值为 `'webgl' | 'webgpu'`，默认为 `'webgl'`
+-   `shaderCompilerPath` 运行时将 GLSL 转译成 WGSL
+-   `devicePixelRatio` 默认为 `1`，详见：[devicePixelRatio]
 
 ### Theme
 
-See: [Lesson 7 - Theme]
+详见：[课程 7 - 明暗主题]
 
 ```ts
 entity.read(Theme).mode; // ThemeMode.LIGHT
@@ -157,7 +161,7 @@ entity.read(Theme).mode; // ThemeMode.LIGHT
 
 ### Grid
 
-Draw a grid as the background on the canvas. For details, see: [Lesson 5 - Draw grid]
+在画布中绘制网格作为背景，详见：[课程 5 - 绘制网格]
 
 ```ts
 enum CheckboardStyle {
@@ -175,7 +179,7 @@ entity.read(Grid).checkboardStyle; // CheckboardStyle.GRID
 
 ### Cursor
 
-see: [CSS cursor]
+鼠标样式，详见：[CSS cursor]
 
 ```ts
 entity.read(Cursor).value; // 'default'
@@ -183,10 +187,10 @@ entity.read(Cursor).value; // 'default'
 
 ### GPUResource
 
-Save a series of GPU-related resources
+保存一系列 GPU 相关资源
 
--   `device` see: [@antv/g-device-api]
--   `swapChain` see: [Lesson 1 - SwapChain]
+-   `device` 详见 [@antv/g-device-api]
+-   `swapChain` 详见：[课程 1 - SwapChain]
 -   `renderTarget`
 -   `depthRenderTarget`
 -   `renderCache`
@@ -194,7 +198,7 @@ Save a series of GPU-related resources
 
 ### Screenshot
 
-see: [Export image]
+详见：[导出图片]
 
 ```ts
 const { dataURL } = entity.read(Screenshot); // 'data:'
@@ -202,17 +206,17 @@ const { dataURL } = entity.read(Screenshot); // 'data:'
 
 ## getHtmlLayer
 
-Retrieve the HTML content container. For details, see: [Lesson 29 - HTML container]
+获取 HTML 内容容器，详见：[课程 29 - HTML 容器]
 
 ```ts
 api.getHtmlLayer(); // HTMLDivElement
-// equivalent to
+// 等价于
 api.getCanvas().read(Canvas).htmlLayer;
 ```
 
 ## client2Viewport
 
-Convert points in the viewport coordinate system to points in the client coordinate system.
+将客户端坐标系下的点转换为视口坐标系下的点。
 
 ```ts
 client2Viewport({ x, y }: IPointData): IPointData
@@ -220,18 +224,18 @@ client2Viewport({ x, y }: IPointData): IPointData
 
 ## viewport2Client
 
-Convert points in the viewport coordinate system to points in the client coordinate system.
+将视口坐标系下的点转换为客户端坐标系下的点。
 
 ```ts
 viewport2Client({ x, y }: IPointData): IPointData
 ```
 
-[Getting the API]: /reference/create-app#use-api
-[Lesson 29 - HTML container]: /guide/lesson-029#create-html-container
+[获取 API]: /zh/reference/create-app#use-api
+[课程 29 - HTML 容器]: /zh/guide/lesson-029#create-html-container
 [devicePixelRatio]: https://developer.mozilla.org/en-US/docs/Web/API/Window/devicePixelRatio
 [CSS cursor]: https://developer.mozilla.org/en-US/docs/Web/CSS/cursor
-[Lesson 5 - Draw grid]: /guide/lesson-005
-[Lesson 7 - Theme]: /guide/lesson-007#theme
-[Export image]: /reference/export-image
-[Lesson 1 - SwapChain]: /guide/lesson-001#swapchain
+[课程 5 - 绘制网格]: /zh/guide/lesson-005
+[课程 7 - 明暗主题]: /zh/guide/lesson-007#theme
+[导出图片]: /zh/reference/export-image
+[课程 1 - SwapChain]: /zh/guide/lesson-001#swapchain
 [@antv/g-device-api]: https://github.com/antvis/g-device-api
