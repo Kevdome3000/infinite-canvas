@@ -112,7 +112,7 @@ void main() {
 
 ## Render graph {#render-graph}
 
-Render Graph（有时称为 FrameGraph）是一种将渲染过程抽象为有向无环图（DAG）的现代渲染架构。在这一架构下，每个渲染 Pass 以及它们使用的资源都被视为图节点与边，通过图结构自动管理资源状态转换、同步和生命周期。
+Render Graph (sometimes called FrameGraph) is a modern rendering architecture that abstracts the rendering process into a directed acyclic graph (DAG). In this architecture, each render pass and the resources they use are treated as graph nodes and edges, and the graph structure automatically manages resource state transitions, synchronization, and lifecycles.
 
 -   [FrameGraph: Extensible Rendering Architecture in Frostbite]
 -   [Why Talking About Render Graphs]
