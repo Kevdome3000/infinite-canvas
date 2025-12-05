@@ -1,4 +1,4 @@
-import { App, DefaultPlugins, CheckboardStyle } from '../../ecs';
+import { App, DefaultPlugins, getDefaultAppState } from '../../ecs';
 import { Event, UIPlugin } from '../src';
 import { IndexedDbStorageService, CanvasData } from '../src/storage';
 import '../src/spectrum';
@@ -7,6 +7,8 @@ const storage = new IndexedDbStorageService();
 
 // State
 let currentCanvasId: string | null = null;
+let currentCanvasName: string = 'Untitled Canvas';
+let currentCanvasCreatedAt: number = Date.now();
 let currentApi: any = null;
 let isLoading = false;
 
@@ -30,10 +32,10 @@ const saveCanvas = debounce(async () => {
 
   const canvasData: CanvasData = {
     id: currentCanvasId,
-    name: 'Untitled Canvas',
+    name: currentCanvasName,
     nodes: currentApi.getNodes(),
     appState: currentApi.getAppState(),
-    createdAt: Date.now(),
+    createdAt: currentCanvasCreatedAt,
     updatedAt: Date.now(),
   };
 
@@ -76,21 +78,36 @@ function createCanvasElement(): HTMLElement {
   const canvas = document.createElement('ic-spectrum-canvas');
   canvas.setAttribute('style', 'width: 100%; height: 100%;');
   canvas.setAttribute('renderer', 'webgl');
-  canvas.setAttribute(
-    'app-state',
-    JSON.stringify({
-      topbarVisible: true,
-      cameraZoom: 1,
-      checkboardStyle: CheckboardStyle.GRID,
-    }),
-  );
+  // Use the full default app state from ECS
+  const defaultAppState = getDefaultAppState();
+  canvas.setAttribute('app-state', JSON.stringify(defaultAppState));
   return canvas;
 }
 
 // Open a canvas (new or existing)
 async function openCanvas(id?: string) {
   isLoading = true;
-  currentCanvasId = id || storage.generateId();
+
+  // For new canvases, prompt for a name
+  if (!id) {
+    const name = prompt('Enter a name for your new canvas:', 'My Canvas');
+    if (name === null) {
+      // User cancelled, don't create canvas
+      isLoading = false;
+      return;
+    }
+    currentCanvasId = storage.generateId();
+    currentCanvasName = name || 'Untitled Canvas';
+    currentCanvasCreatedAt = Date.now();
+  } else {
+    // Existing canvas - load metadata
+    currentCanvasId = id;
+    const savedData = await storage.loadCanvas(id);
+    if (savedData) {
+      currentCanvasName = savedData.name;
+      currentCanvasCreatedAt = savedData.createdAt;
+    }
+  }
 
   // Switch views
   document.getElementById('home-screen')!.style.display = 'none';
@@ -162,6 +179,8 @@ async function goBack() {
   // Reset state
   currentApi = null;
   currentCanvasId = null;
+  currentCanvasName = 'Untitled Canvas';
+  currentCanvasCreatedAt = Date.now();
   isLoading = false;
 
   // Switch views
