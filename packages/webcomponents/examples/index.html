@@ -1,31 +1,61 @@
 <html>
   <script type="module" src="./main.ts"></script>
   <style>
-    html,
-    body {
+    html, body {
       margin: 0;
       padding: 0;
-      overflow: hidden;
-      display: flex;
-      flex-direction: row;
       height: 100%;
+      font-family: system-ui, sans-serif;
     }
 
-    #canvas {
-      touch-action: none;
+    #home-screen {
+      padding: 20px;
+    }
+
+    #editor-screen {
+      display: none;
+      width: 100vw;
+      height: 100vh;
+      position: relative;
+    }
+
+    #back-btn {
+      position: absolute;
+      top: 10px;
+      left: 60px;
+      z-index: 1000;
+      padding: 8px 16px;
+      cursor: pointer;
+    }
+
+    .canvas-list {
+      display: grid;
+      gap: 10px;
+      grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+      margin-top: 20px;
+    }
+
+    .canvas-card {
+      border: 1px solid #ccc;
+      padding: 15px;
+      border-radius: 8px;
+      cursor: pointer;
+    }
+
+    .canvas-card:hover {
+      background: #f5f5f5;
     }
   </style>
   <body>
-    <!-- <div style="width:70%; height: 300px"> -->
-    <div style="width: 100vw; height: 100vh;">
-      <ic-spectrum-canvas id="canvas1" style="width: 100%; height: 100%;"
-         app-state='{"topbarVisible":true, "cameraZoom": 1}'
-         renderer="webgl"
-      ></ic-spectrum-canvas>
+    <div id="home-screen">
+      <h1>My Canvases</h1>
+      <button id="create-btn">+ New Canvas</button>
+      <div id="canvas-list" class="canvas-list"></div>
     </div>
-    <!-- <img ref="imgWrapper" draggable="true" src="/canvas.png" style="width: 30%; object-fit: contain;" /> -->
-    <!-- <div style="width: 400px; height: 100%;">
-      <ic-spectrum-canvas id="canvas2" style="width: 100%; height: 100%;"></ic-spectrum-canvas>
-    </div> -->
+
+    <div id="editor-screen">
+      <button id="back-btn">← Back</button>
+      <div id="canvas-container" style="width: 100%; height: 100%;"></div>
+    </div>
   </body>
 </html>
