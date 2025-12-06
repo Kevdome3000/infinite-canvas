@@ -1,6 +1,6 @@
 import { App, DefaultPlugins, getDefaultAppState } from '../../ecs';
 import { Event, UIPlugin } from '../src';
-import { IndexedDbStorageService, CanvasData } from '../src/storage';
+import { IndexedDbStorageService, CanvasData } from '../src';
 import '../src/spectrum';
 
 const storage = new IndexedDbStorageService();
@@ -67,7 +67,7 @@ async function renderCanvasList() {
   // Add click handlers to canvas cards
   container.querySelectorAll('.canvas-card').forEach((card) => {
     card.addEventListener('click', () => {
-      const id = (card as HTMLElement).dataset.id!;
+      const id = (card as HTMLElement).dataset['id']!;
       openCanvas(id);
     });
   });
