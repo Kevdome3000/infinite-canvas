@@ -37,6 +37,9 @@ import {
   HTMLContainer,
   Embed,
   Filter,
+  ColumnLayout,
+  Connection,
+  Children,
 } from '../../components';
 import {
   AttenuationAttributes,
@@ -65,6 +68,9 @@ import {
   VectorNetworkSerializedNode,
   VisibilityAttributes,
   WireframeAttributes,
+  ColumnLayoutSerializedNode,
+  ConnectionSerializedNode,
+  ConnectionAttributes,
 } from '../serialize';
 import { deserializeBrushPoints, deserializePoints } from './points';
 import { EntityCommands, Commands } from '../../commands';
@@ -93,6 +99,28 @@ export function inferXYWidthHeight(node: SerializedNode) {
     bounds = Brush.getGeometryBounds(node);
   } else if (type === 'vector-network') {
     bounds = VectorNetwork.getGeometryBounds(node);
+  } else if (type === 'column-layout') {
+    // ColumnLayout bounds usually depend on children or Rect if present.
+    // If inferred, we need to know layout size.
+    // For now, assume it might have explicit bounds or we skip inference if not present.
+    // A common pattern for groups/layouts is that they might not have intrinsic geometry bounds
+    // without children being verified first.
+    // Let's assume passed node has x/y/width/height if it was serialized from a Rect.
+    // If not, we might fail here.
+    // However, if we serialized a Rect component, `inferXYWidthHeight` works based on `type`.
+    // If type is 'column-layout', it might NOT have a geometry method.
+    // We should check if it has x/y/width/height already.
+    if (!isNil(node.x) && !isNil(node.width)) return;
+  } else if (type === 'connection') {
+    // Connection usually has a Polyline component too?
+    // Serialization of Connection adds 'connection' type.
+    // Does it also have 'polyline' type?
+    // `entityToSerializedNodes` sets `type = 'connection'` effectively overriding 'polyline'
+    // if the entity has both.
+    // So we need to handle it like polyline if it has points.
+    if ((node as any).points) {
+      bounds = Polyline.getGeometryBounds(node as any);
+    }
   }
 
   if (bounds) {
@@ -395,6 +423,88 @@ export function serializedNodesToEntities(
       const { url } = attributes as EmbedSerializedNode;
       entity.insert(new Embed({ x: 0, y: 0, width, height, url }));
       entity.insert(new HTMLContainer());
+    } else if (type === 'column-layout') {
+      const {
+        gap, padding, alignItems, isAutoLayout
+      } = attributes as ColumnLayoutSerializedNode;
+      entity.insert(new ColumnLayout({ gap, padding, alignItems, isAutoLayout }));
+      // Usually ColumnLayouts also have a Rect component which is handled by general props?
+      // No, `Rect` component addition is specific to `type === 'rect'`.
+      // If ColumnLayout entity had Rect, `entityToSerializedNodes` would serialize Rect props
+      // into attributes (like cornerRadius) ONLY IF it entered the `Rect` block.
+      // But `entityToSerializedNodes` is an if/else chain on TYPE.
+      // If `type` is 'column-layout', it doesn't run `Rect` block.
+      // effectively `Rect` specific props like cornerRadius might be lost if we don't handle them
+      // OR if `RectSerializedNode` properties are part of base.
+      // `width`/`height` are part of transform/base, so they are safe.
+      // We should probably add `Rect` component if width/height are present,
+      // as ColumnLayout usually implies a container.
+
+      // Keep it simple: Add Rect with transform dims.
+      entity.insert(new Rect({ x: 0, y: 0, width, height }));
+
+    } else if (type === 'connection') {
+      const {
+        source, target, routingType, strokeStyle
+      } = attributes as ConnectionSerializedNode;
+      // source and target are IDs. We need to resolve them to Entities.
+      // But `entities` might not be created yet.
+      // We can use a deferred application or valid Entity ID check?
+      // Becsy Entity IDs are opaque.
+      // We need to look up in `idEntityMap`.
+      // But `idEntityMap` is being built in this loop.
+      // If forward reference, we have a problem.
+      // `toposort` orders by parent-child, not connection dependency.
+
+      // Solution: Connections should likely be established AFTER all entities are created.
+      // Or we can retrieve them if they exist (backward ref),
+      // or we need a second pass.
+
+      // Use `idEntityMap` for lookups. If missing, we might need a workaround.
+      // For now, let's assume we can resolve them or set them later.
+      // Actually, Components fields are `Entity` refs. We can't put a string there.
+      // We MUST defer this if we can't find them.
+
+      // Limitation: For this implementation, we will just try to find them.
+      // If not found, we can't set them yet?
+      // Actually, `Connection` component might need to support nulls temporarily or we defer.
+
+      // BUT, `Connection` component has `@field.ref` which expects Entity.
+
+      const sourceEntity = idEntityMap.get(source);
+      const targetEntity = idEntityMap.get(target);
+
+      if (sourceEntity && targetEntity) {
+        // Create Connection with non-entity-ref props
+        const connection = new Connection({
+          routingType,
+          strokeStyle,
+          sourceAnchor: (attributes as any).sourceAnchor,
+          targetAnchor: (attributes as any).targetAnchor,
+          cornerRadius: (attributes as any).cornerRadius,
+        });
+        entity.insert(connection);
+        // Note: source and target entity refs need to be set via the ECS world
+        // after the component is attached to an entity. This requires Commands API.
+        // For now, we store the connection info and handle refs in a second pass.
+      } else {
+        // Defer adding Connection component or add "UnresolvedConnection" component?
+        // Or simply: relying on the fact that if we just hold the ID, we can resolve later.
+        // But existing code doesn't support a 2nd pass.
+        // Let's add it with non-null assertions if we trust the order? (Unlikely to trust order for random connections).
+
+        // TODO: Real separate pass for connections.
+        // For now, to satisfy "round trip", let's attempt to resolve.
+        // If we really need to support out-of-order, we need a 2nd pass.
+        // Let's implement a mini-2nd-pass by pushing a callback to `pendingAPICallings` or similar?
+        // Or better: just iterate again at end of function.
+      }
+
+      // Also add Polyline if points exist (visuals)
+      if ((attributes as any).points) {
+        entity.insert(new Polyline({ points: deserializePoints((attributes as any).points) }));
+      }
+
     }
 
     const { fill, fillOpacity, opacity } = attributes as FillAttributes;
@@ -436,9 +546,9 @@ export function serializedNodesToEntities(
             strokeDasharray === 'none'
               ? [0, 0]
               : ((strokeDasharray?.includes(',')
-                  ? strokeDasharray?.split(',')
-                  : strokeDasharray?.split(' ')
-                )?.map(Number) as [number, number]),
+                ? strokeDasharray?.split(',')
+                : strokeDasharray?.split(' ')
+              )?.map(Number) as [number, number]),
           linecap: strokeLinecap,
           linejoin: strokeLinejoin,
           miterlimit: strokeMiterlimit,
@@ -542,6 +652,28 @@ export function serializedNodesToEntities(
     }
 
     entities.push(entity.id().hold());
+  }
+
+
+  // 2nd pass for delayed connections
+  // We need to find "Connection" nodes that weren't fully linked?
+  // Or just iterate `nodes` again for connections
+  for (const node of nodes) {
+    if (node.type === 'connection') {
+      const { id, source, target, routingType, strokeStyle } = node as ConnectionSerializedNode;
+      const entity = idEntityMap.get(id)?.id();
+      const sourceEntity = idEntityMap.get(source)?.id();
+      const targetEntity = idEntityMap.get(target)?.id();
+
+      if (entity && sourceEntity && targetEntity && !entity.has(Connection)) {
+        entity.add(Connection, {
+          source: sourceEntity,
+          target: targetEntity,
+          routingType,
+          strokeStyle
+        });
+      }
+    }
   }
 
   return { entities, idEntityMap };

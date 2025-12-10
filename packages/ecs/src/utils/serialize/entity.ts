@@ -13,6 +13,10 @@ import {
   StrokeAttributes,
   TextDecorationAttributes,
   TextSerializedNode,
+  ColumnLayoutSerializedNode,
+  ConnectionSerializedNode,
+  ConnectionAttributes,
+  ColumnLayoutAttributes,
 } from './type';
 import {
   Children,
@@ -42,6 +46,8 @@ import {
   Line,
   LockAspectRatio,
   Filter,
+  ColumnLayout,
+  Connection,
 } from '../../components';
 import { serializePoints } from './points';
 
@@ -92,6 +98,28 @@ export function entityToSerializedNodes(
       d,
       fillRule,
       tessellationMethod,
+    });
+  } else if (entity.has(ColumnLayout)) {
+    type = 'column-layout';
+    const { gap, padding, alignItems, isAutoLayout } = entity.read(ColumnLayout);
+    Object.assign(attributes as ColumnLayoutSerializedNode, {
+      gap,
+      padding,
+      alignItems,
+      isAutoLayout,
+    });
+  } else if (entity.has(Connection)) {
+    type = 'connection';
+    const connection = entity.read(Connection);
+    // Serialize entity references as IDs
+    const sourceId = connection.source?.__id;
+    const targetId = connection.target?.__id;
+
+    Object.assign(attributes as ConnectionSerializedNode, {
+      source: sourceId,
+      target: targetId,
+      routingType: connection.routingType,
+      strokeStyle: connection.strokeStyle,
     });
   } else if (entity.has(Text)) {
     type = 'text';

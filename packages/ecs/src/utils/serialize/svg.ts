@@ -181,6 +181,27 @@ export const defaultAttributes: Record<
     height: 0,
     url: '',
   },
+  'column-layout': {
+    ...commonDefaultAttributes,
+    gap: 10,
+    padding: 10,
+    alignItems: 'stretch',
+    isAutoLayout: true,
+    direction: 'vertical',
+    maxChildren: 0,
+    showDropZone: false,
+  },
+  connection: {
+    ...commonDefaultAttributes,
+    ...strokeDefaultAttributes,
+    source: '',
+    target: '',
+    sourceAnchor: 'auto',
+    targetAnchor: 'auto',
+    routingType: 'orthogonal',
+    strokeStyle: 'solid',
+    cornerRadius: 0,
+  },
 };
 
 // @see https://github.com/plouc/nivo/issues/164
