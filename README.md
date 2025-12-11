@@ -339,15 +339,17 @@ If you want to use it in your own project, you can refer to:
 
 ## Lesson 28 - Integrating with AI [🔗](https://infinitecanvas.cc/guide/lesson-028)
 
--   Common post-processing
--   Integrating with AI
-    -   Use chatbox
-    -   Use Nano banana to edit image, e.g remove background
-    -   Use SAM with WebGPU
+-   Use chatbox
+-   Use Nano banana to edit image, e.g remove background
+-   Use SAM with ONNX WebGPU runtime in WebWorker
 
 |                      Use chatbox                      |                 Remove background                  |
 | :---------------------------------------------------: | :------------------------------------------------: |
 | ![when canvas meets chat](./screenshots/lesson28.png) | ![remove background](./screenshots/lesson28-2.png) |
+
+|         Use SAM with ONNX WebGPU runtime in WebWorker          |     |
+| :------------------------------------------------------------: | :-: |
+| ![use onnx and sam in webworker](./screenshots/lesson28-3.gif) |     |
 
 ## Lesson 29 - Embedding HTML content [🔗](https://infinitecanvas.cc/guide/lesson-029)
 

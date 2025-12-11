@@ -8,13 +8,13 @@ import {
 } from '@infinite-canvas-tutorial/ecs';
 import { ref, onMounted, onUnmounted } from 'vue';
 import { Event, UIPlugin } from '@infinite-canvas-tutorial/webcomponents';
+import { FalAIPlugin } from '@infinite-canvas-tutorial/fal-ai';
 
 const wrapper = ref<HTMLElement | null>(null);
 let api: any | undefined;
 let onReady: ((api: CustomEvent<any>) => void) | undefined;
 
 onMounted(async () => {
-
   import('webfontloader').then((module) => {
     const WebFont = module.default;
     WebFont.load({
@@ -200,7 +200,7 @@ onMounted(async () => {
   if (!(window as any).worldInited) {
     (window as any).worldInited = true;
     await import('@infinite-canvas-tutorial/webcomponents/spectrum');
-    new App().addPlugins(...DefaultPlugins, UIPlugin).run();
+    new App().addPlugins(...DefaultPlugins, UIPlugin, FalAIPlugin).run();
   } else {
     // 等待组件更新完成后检查API是否已经准备好
     setTimeout(() => {

@@ -79,6 +79,17 @@ export interface AppState {
    * Allow snap to objects
    */
   snapToObjectsEnabled: boolean;
+
+  /**
+   * Points in editing mode.
+   */
+  editingPoints: [number, number][];
+
+  /**
+   * loading state
+   */
+  loading: boolean;
+  loadingMessage: string;
 }
 
 export const getDefaultAppState: () => AppState = () => {
@@ -218,6 +229,9 @@ export const getDefaultAppState: () => AppState = () => {
     snapToPixelGridEnabled: false,
     snapToPixelGridSize: 10,
     snapToObjectsEnabled: false,
+    editingPoints: [],
+    loading: false,
+    loadingMessage: '',
   };
 };
 

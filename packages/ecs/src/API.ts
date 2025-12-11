@@ -1279,4 +1279,52 @@ export class API {
   runAtNextTick(fn: () => any) {
     pendingAPICallings.push(fn);
   }
+
+  // AI APIs
+  async createOrEditImage(
+    isEdit: boolean,
+    prompt: string,
+    image_urls: string[],
+  ): Promise<{ images: { url: string }[]; description: string }> {
+    throw new Error('Not implemented');
+  }
+
+  async upload(file: File): Promise<string> {
+    throw new Error('Not implemented');
+  }
+
+  async encodeImage(image: string): Promise<void> {
+    throw new Error('Not implemented');
+  }
+
+  async segmentImage(
+    input: Partial<{
+      prompt: string;
+      point_prompts: PointPrompt[];
+      box_prompts: BoxPrompt[];
+    }>,
+  ): Promise<{
+    /**
+     * Primary segmented mask preview
+     */
+    image: HTMLCanvasElement;
+  }> {
+    throw new Error('Not implemented');
+  }
+}
+
+export interface PointPrompt {
+  x: number;
+  y: number;
+  /**
+   * 1 for foreground, 0 for background
+   */
+  label: number;
+}
+
+export interface BoxPrompt {
+  x_min: number;
+  y_min: number;
+  x_max: number;
+  y_max: number;
 }
