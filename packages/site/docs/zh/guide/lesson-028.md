@@ -7,6 +7,7 @@ head:
 
 <script setup>
 import WhenCanvasMeetsChat from '../../components/WhenCanvasMeetsChat.vue'
+import SAM from '../../components/SAM.vue'
 </script>
 
 # 课程 28 - 与 AI 结合
@@ -15,11 +16,11 @@ import WhenCanvasMeetsChat from '../../components/WhenCanvasMeetsChat.vue'
 
 下图为 Lovart 的产品界面，底层使用了我们在 [课程 21 - Transformer] 中提及的 Konva.js。虽然以图片编辑为主，但并没有放弃图形编辑器中的常用功能，例如左下角默认隐藏了图层列表，左侧工具栏也可以插入一些基础图形。
 
-![Lovart](/lovart.png)
+![Chat & canvas in Lovart](/lovart.png)
 
 Recraft 也正在测试聊天框功能。以我的观察，画布与聊天框正在成为这类编辑器的两大入口：
 
-![Recraft chat](/recraft-chat.png)
+![Chat & canvas in Recraft](/recraft-chat.png)
 
 本节课中我们会结合 Nano banana 丰富我们的图片编辑功能。
 
@@ -45,6 +46,31 @@ console.log(result.data); // { image: [{ url: 'https://...' }]; description: 'Su
 图片修改接口接受的参数也是一组图片的 URL，即使传递了编码后的 DataURL 也会收到类似 “无法读取图片信息” 的警告。因此 [fal.ai] 提供了文件上传接口，我们可以选择当本地图片被添加到画布中时开启上传。
 
 ### API 设计 {#api-design}
+
+我们需要一个负责生成和修改图片的 API，这两种情况下参数应该完全一致：一个 prompt 和参考图列表
+
+```ts
+import { fal } from '@fal-ai/client';
+
+api.createOrEditImage = async (
+    isEdit: boolean,
+    prompt: string,
+    image_urls: string[],
+): Promise<{ images: { url: string }[]; description: string }> => {
+    const result = await fal.subscribe(
+        isEdit
+            ? 'fal-ai/gemini-25-flash-image/edit'
+            : 'fal-ai/gemini-25-flash-image',
+        {
+            input: {
+                prompt,
+                image_urls,
+            },
+        },
+    );
+    return result.data;
+};
+```
 
 ### 加入聊天框 {#chatbox}
 
@@ -104,9 +130,26 @@ private async removeBackground() {
 
 ![Smart select in Midjourney](/midjourney-smart-select.jpeg)
 
-在 [课程 1 - 硬件抽象层] 中我们就介绍过 WebGPU 的优势（Figma 也在近日升级了渲染引擎），除了渲染更是在 Compute Shader 的支持上让浏览器端 GPGPU 成为可能。
+在 [课程 1 - 硬件抽象层] 中我们就介绍过 WebGPU 的优势（Figma 也在近日升级了渲染引擎），除了渲染更是在 Compute Shader 的支持上让浏览器端 GPGPU 成为可能。ONNX 提供了 Web 端的运行时，这样就可以在浏览器端进行实时推理，不需要消耗任何 token。详见：[How to add machine learning to your web application with ONNX Runtime]
 
-[Image Segmentation in the Browser with Segment Anything Model 2]
+我们参考这篇文章：[Image Segmentation in the Browser with Segment Anything Model 2]，
+
+-   为了减小运行时的下载模型大小，使用了 [ORT model format]
+-   使用 WebGPU 获得更快的推理速度，详见：[Using the WebGPU Execution Provider]
+-   在 WebWorker 中运行，不阻塞主线程
+
+以上功能封装成了 [SAM plugin]，完整例子详见：[在 WebWorker 中使用 SAM 分割图像]
+
+![SAM in WebWorker](/sam.gif)
+
+其他实践以及 SAM3 相关资料可以参考：
+
+-   [Segment Anything 2, in WebGPU]
+-   [Request for Official ONNX Export + TensorRT Conversion Scripts for SAM3]
+
+### 端侧模型 LaMa {#use-lama}
+
+[Client-Side Image Inpainting with ONNX and Next.js] 介绍了如何在端侧使用 [LaMa] 模型完成
 
 ### 合并多张图片 {#combine-multiple-images}
 
@@ -185,6 +228,10 @@ Adobe Photoshop 提供了 [Match fonts] 功能：
 
 最后将各部分图层叠加。
 
+## Upscaler {#upscaler}
+
+![Image upscaler with LiteRT.js](/image-upscaler.jpg)
+
 ## MCP
 
 来自 [MCP: What It Is and Why It Matters]：
@@ -216,3 +263,12 @@ Adobe Photoshop 提供了 [Match fonts] 功能：
 [Raster to Vector converter]: https://lottiefiles.com/tools/raster-to-vector
 [AI image vectorizer]: https://www.recraft.ai/ai-image-vectorizer
 [vtracer]: https://github.com/visioncortex/vtracer
+[Segment Anything 2, in WebGPU]: https://lucasgelfond.online/software/webgpu-sam2/
+[LaMa]: https://github.com/advimman/lama
+[Client-Side Image Inpainting with ONNX and Next.js]: https://medium.com/@geronimo7/client-side-image-inpainting-with-onnx-and-next-js-3d9508dfd059
+[Request for Official ONNX Export + TensorRT Conversion Scripts for SAM3]: https://github.com/facebookresearch/sam3/issues/224
+[在 WebWorker 中使用 SAM 分割图像]: /zh/experiment/sam-in-worker
+[SAM plugin]: /zh/reference/sam
+[How to add machine learning to your web application with ONNX Runtime]: https://onnxruntime.ai/docs/tutorials/web/
+[ORT model format]: https://onnxruntime.ai/docs/performance/model-optimizations/ort-format-models.html
+[Using the WebGPU Execution Provider]: https://onnxruntime.ai/docs/tutorials/web/ep-webgpu.html

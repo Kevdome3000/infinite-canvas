@@ -1,11 +1,15 @@
 import { v4 as uuidv4 } from 'uuid';
 import { consume } from '@lit/context';
 import { AppState, RectSerializedNode } from '@infinite-canvas-tutorial/ecs';
-import { html, css, LitElement } from 'lit';
+import { html, css, LitElement, PropertyValues } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { apiContext, appStateContext } from '../context';
 import { ExtendedAPI } from '../API';
-import { createOrEditImage } from '../providers/fal';
+
+enum ImageEditMode {
+  IDLE = 'idle',
+  POINT_SEGMENT = 'point-segment',
+}
 
 @customElement('ic-spectrum-context-image-edit-bar')
 export class ContextImageEditBar extends LitElement {
@@ -27,6 +31,40 @@ export class ContextImageEditBar extends LitElement {
   @state()
   removingBackground: boolean;
 
+  @state()
+  encodingImage: boolean;
+
+  private binded = false;
+
+  private mode: ImageEditMode = ImageEditMode.IDLE;
+
+  previouseEditingPoints: [number, number][];
+
+  private maskCanvas: HTMLCanvasElement;
+
+  shouldUpdate(changedProperties: PropertyValues) {
+    for (const prop of changedProperties.keys()) {
+      if (prop !== 'appState') return true;
+    }
+
+    const newEditingPoints = this.appState.editingPoints;
+    if (newEditingPoints !== this.previouseEditingPoints) {
+      this.previouseEditingPoints = newEditingPoints;
+
+      if (this.mode === ImageEditMode.POINT_SEGMENT) {
+        this.segmentWithPoints(newEditingPoints);
+      }
+
+      if (newEditingPoints.length === 0) {
+        this.maskCanvas?.remove();
+        this.maskCanvas = undefined;
+      }
+      return true;
+    }
+
+    return false;
+  }
+
   private async removeBackground() {
     this.removingBackground = true;
 
@@ -46,7 +84,7 @@ export class ContextImageEditBar extends LitElement {
       this.api.updateNode(newImage);
     });
 
-    const { images } = await createOrEditImage(
+    const { images } = await this.api.createOrEditImage(
       true,
       'Remove background from the image',
       [this.node.fill],
@@ -61,7 +99,60 @@ export class ContextImageEditBar extends LitElement {
     }
   }
 
+  private async startSmartSelect() {
+    this.encodingImage = true;
+    await this.api.encodeImage(this.node.fill);
+    this.mode = ImageEditMode.POINT_SEGMENT;
+    this.encodingImage = false;
+  }
+
+  private async segmentWithPoints(points: [number, number][]) {
+    if (points.length === 0) {
+      return;
+    }
+
+    // convert points in canvas coordinages to local coordinates
+    const selectedNode = this.api.getNodeById(
+      this.api.getAppState().layersSelected[0],
+    );
+
+    const point = points[0];
+    const { x, y } = this.api.viewport2Canvas({ x: point[0], y: point[1] });
+
+    if (this.maskCanvas) {
+      this.maskCanvas.remove();
+    }
+
+    const { image } = await this.api.segmentImage({
+      point_prompts: [
+        {
+          x: x - selectedNode.x,
+          y: y - selectedNode.y,
+          label: 1,
+        },
+      ],
+    });
+
+    this.maskCanvas = image;
+    this.maskCanvas.style.position = 'absolute';
+    this.maskCanvas.style.left = `${selectedNode.x}px`;
+    this.maskCanvas.style.top = `${selectedNode.y}px`;
+    this.maskCanvas.style.width = `${selectedNode.width}px`;
+    this.maskCanvas.style.height = `${selectedNode.height}px`;
+    this.maskCanvas.style.pointerEvents = 'none';
+    this.api.getHtmlLayer().appendChild(this.maskCanvas);
+  }
+
   render() {
+    if (!this.api) {
+      return;
+    }
+
+    // FIXME: wait for the element to be ready.
+    if (this.api.element && !this.binded) {
+      this.binded = true;
+    }
+
     return html`<sp-action-button
         quiet
         size="m"
@@ -103,7 +194,12 @@ export class ContextImageEditBar extends LitElement {
           </svg>
         </sp-icon>
       </sp-action-button>
-      <sp-action-button quiet size="m">
+      <sp-action-button
+        quiet
+        size="m"
+        ?disabled="${this.encodingImage}"
+        @click="${this.startSmartSelect}"
+      >
         <sp-tooltip self-managed placement="bottom"> Smart select </sp-tooltip>
         <sp-icon-polygon-select slot="icon"></sp-icon-polygon-select>
       </sp-action-button>`;

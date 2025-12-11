@@ -29,7 +29,9 @@
     "@loaders.gl/images": "^4.2.2",
     "@loaders.gl/arrow": "^4.2.2",
     "@infinite-canvas-tutorial/ecs": "workspace:*",
-    "@infinite-canvas-tutorial/webcomponents": "workspace:*"
+    "@infinite-canvas-tutorial/webcomponents": "workspace:*",
+    "@infinite-canvas-tutorial/fal-ai": "workspace:*",
+    "@infinite-canvas-tutorial/sam": "workspace:*",
   },
   "devDependencies": {
     "@ant-design/icons-vue": "^7.0.1",
