@@ -17,6 +17,8 @@ import {
   ConnectionSerializedNode,
   ConnectionAttributes,
   ColumnLayoutAttributes,
+  HtmlSerializedNode,
+  EmbedSerializedNode,
 } from './type';
 import {
   Children,
@@ -48,6 +50,8 @@ import {
   Filter,
   ColumnLayout,
   Connection,
+  HTML,
+  Embed,
 } from '../../components';
 import { serializePoints } from './points';
 
@@ -189,6 +193,14 @@ export function entityToSerializedNodes(
         decorationThickness: thickness,
       });
     }
+  } else if (entity.has(HTML)) {
+    type = 'html';
+    const { html } = entity.read(HTML);
+    (attributes as HtmlSerializedNode).html = html;
+  } else if (entity.has(Embed)) {
+    type = 'embed';
+    const { url } = entity.read(Embed);
+    (attributes as EmbedSerializedNode).url = url;
   } else {
     type = 'g';
   }

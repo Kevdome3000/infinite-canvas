@@ -204,7 +204,7 @@ export class Penbar extends LitElement {
             () => html`
               <sp-action-button value="${Pen.HAND}">
                 <sp-icon-hand slot="icon"></sp-icon-hand>
-                <sp-tooltip self-managed placement="top">
+                <sp-tooltip slot="tooltip" placement="top">
                   Hand (Panning tool)
                 </sp-tooltip>
               </sp-action-button>
@@ -215,7 +215,7 @@ export class Penbar extends LitElement {
             () => html`
               <sp-action-button value="${Pen.SELECT}">
                 <sp-icon-select slot="icon"></sp-icon-select>
-                <sp-tooltip self-managed placement="top"> Select </sp-tooltip>
+                <sp-tooltip slot="tooltip" placement="top"> Select </sp-tooltip>
               </sp-action-button>
             `,
           )}
@@ -227,7 +227,7 @@ export class Penbar extends LitElement {
               penbarAll.includes(Pen.DRAW_ROUGH_RECT) ||
               penbarAll.includes(Pen.DRAW_ROUGH_ELLIPSE),
             () => html`
-              <overlay-trigger placement="top">
+              <overlay-trigger placement="top" triggered-by="click hover">
                 <sp-action-button
                   value=${this.lastDrawPen}
                   hold-affordance
@@ -336,17 +336,17 @@ export class Penbar extends LitElement {
             () => html`
               <sp-action-button value="${Pen.IMAGE}">
                 <sp-icon-image slot="icon"></sp-icon-image>
-                <sp-tooltip self-managed placement="top"> Image </sp-tooltip>
+                <sp-tooltip slot="tooltip" placement="top"> Image </sp-tooltip>
               </sp-action-button>
             `,
           )}
           ${when(
             penbarAll.includes(Pen.TEXT),
             () => html`
-              <overlay-trigger placement="top">
+              <overlay-trigger placement="top" triggered-by="hover">
                 <sp-action-button value="${Pen.TEXT}" slot="trigger">
                   <sp-icon-text slot="icon"></sp-icon-text>
-                  <sp-tooltip self-managed placement="top"> Text </sp-tooltip>
+                  <sp-tooltip slot="tooltip" placement="top"> Text </sp-tooltip>
                 </sp-action-button>
                 <sp-popover slot="hover-content" style="padding: 8px;">
                   <ic-spectrum-penbar-text-settings></ic-spectrum-penbar-text-settings>
@@ -357,10 +357,10 @@ export class Penbar extends LitElement {
           ${when(
             penbarAll.includes(Pen.PENCIL),
             () => html`
-              <overlay-trigger placement="top">
+              <overlay-trigger placement="top" triggered-by="hover">
                 <sp-action-button value="${Pen.PENCIL}" slot="trigger">
                   <sp-icon-annotate-pen slot="icon"></sp-icon-annotate-pen>
-                  <sp-tooltip self-managed placement="top">
+                  <sp-tooltip slot="tooltip" placement="top">
                     Pencil
                   </sp-tooltip>
                 </sp-action-button>
@@ -375,7 +375,7 @@ export class Penbar extends LitElement {
             () => html`
               <sp-action-button value="${Pen.BRUSH}">
                 <sp-icon-brush slot="icon"></sp-icon-brush>
-                <sp-tooltip self-managed placement="top"> Brush </sp-tooltip>
+                <sp-tooltip slot="tooltip" placement="top"> Brush </sp-tooltip>
               </sp-action-button>
             `,
           )}
@@ -384,7 +384,7 @@ export class Penbar extends LitElement {
             () => html`
               <sp-action-button value="${Pen.VECTOR_NETWORK}">
                 <sp-icon-shapes slot="icon"></sp-icon-shapes>
-                <sp-tooltip self-managed placement="top">
+                <sp-tooltip slot="tooltip" placement="top">
                   Vector Network
                 </sp-tooltip>
               </sp-action-button>
@@ -395,7 +395,7 @@ export class Penbar extends LitElement {
             () => html`
               <sp-action-button value="${Pen.COMMENT}">
                 <sp-icon-comment slot="icon"></sp-icon-comment>
-                <sp-tooltip self-managed placement="top">
+                <sp-tooltip slot="tooltip" placement="top">
                   Comment
                 </sp-tooltip>
               </sp-action-button>
