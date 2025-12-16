@@ -39,9 +39,23 @@ export class PersistenceManager {
 
   private currentSnapshot: { appState: AppState; nodes: SerializedNode[] } | null = null;
 
+  /**
+   * Update the internal snapshot without triggering a save.
+   * Use this when restoring state from storage - saves should only be
+   * triggered by api.onchange when the user makes actual changes.
+   */
   updateSnapshot(snapshot: { appState: AppState; nodes: SerializedNode[] }) {
     this.currentSnapshot = snapshot;
-    this.onStateChange(snapshot);
+    // DON'T call onStateChange - this is for syncing internal state only
+    // Saves are triggered by api.onchange when user makes changes
+  }
+
+  /**
+   * Get the current snapshot.
+   * Useful for checking if the singleton already has data from a previous session.
+   */
+  getSnapshot(): { appState: AppState; nodes: SerializedNode[] } | null {
+    return this.currentSnapshot;
   }
 
   private async save() {
@@ -72,6 +86,7 @@ export class PersistenceManager {
     try {
       const data = await this.storage.loadCanvas(id);
       if (data) {
+
         this.canvasId = data.id;
         this.canvasName = data.name;
         this.createdAt = data.createdAt;
