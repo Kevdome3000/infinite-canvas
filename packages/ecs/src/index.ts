@@ -56,6 +56,8 @@ export {
   type PolylineSerializedNode,
   type PathSerializedNode,
   type TextSerializedNode,
+  type HtmlSerializedNode,
+  type CardMetadata,
   type RoughAttributes,
   type StrokeAttributes,
   type FillAttributes,

@@ -316,9 +316,52 @@ export interface VectorNetworkSerializedNode
 export interface HtmlAttributes {
   html: string;
 }
+
+/**
+ * Metadata for ChanceAI card entities.
+ * Stores card-specific data that persists with the HTML entity.
+ */
+export interface CardMetadata {
+  /** Card type discriminator */
+  cardType?: 'NOTE' | 'LINK' | 'AI_PROMPT' | 'AI_RESPONSE' | 'CHAT';
+  /** Card content (HTML/JSON for TEXT, plain text for NOTE) */
+  content?: string;
+  /** Rich text flag for TEXT cards */
+  isRichText?: boolean;
+  /** Color theme for NOTE cards */
+  colorTheme?: 'yellow' | 'pink' | 'blue' | 'green' | 'white';
+  /** Image source URL for IMAGE cards */
+  src?: string;
+  /** Image caption for IMAGE cards */
+  caption?: string;
+  /** Aspect ratio for IMAGE cards */
+  aspectRatio?: number;
+  /** URL for LINK cards */
+  url?: string;
+  /** Embed flag for LINK cards */
+  isEmbed?: boolean;
+  /** Embed URL for LINK cards */
+  embedUrl?: string;
+  /** Embed provider for LINK cards */
+  embedProvider?: string;
+  /** Fetch status for LINK cards */
+  fetchStatus?: 'idle' | 'loading' | 'success' | 'error';
+  /** Link metadata for LINK cards */
+  linkMetadata?: {
+    title?: string;
+    description?: string;
+    image?: string;
+    favicon?: string;
+    siteName?: string;
+  };
+}
+
 export interface HtmlSerializedNode
   extends BaseSerializeNode<'html'>,
-  Partial<HtmlAttributes> { }
+  Partial<HtmlAttributes> {
+  /** ChanceAI card metadata for serialization/deserialization */
+  metadata?: CardMetadata;
+}
 
 export interface EmbedAttributes {
   url: string;
