@@ -42,6 +42,8 @@ export class ComputeBounds extends System {
           Text,
           Brush,
           VectorNetwork,
+          HTML,
+          Embed,
         ).trackWrites,
   );
 
