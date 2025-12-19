@@ -4,3 +4,5 @@ export * from './utils';
 export * from './API';
 export * from './context';
 export * from './storage';
+
+export { registerTask } from './spectrum/taskbar';
