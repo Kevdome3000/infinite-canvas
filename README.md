@@ -316,11 +316,16 @@ If you want to use it in your own project, you can refer to:
 ## Lesson 25 - Draw rect mode and brush [🔗](https://infinitecanvas.cc/guide/lesson-025)
 
 -   Draw shapes mode: draw rect, ellipse, line and arrow with dragging
+-   Pencil mode, including freehand
 -   Brush mode
 
-|                Draw rect mode                 |                 Pencil tool                  |                 Draw arrow                  |
-| :-------------------------------------------: | :------------------------------------------: | :-----------------------------------------: |
-| ![draw rect mode](./screenshots/lesson25.gif) | ![pencil tool](./screenshots/lesson25-2.gif) | ![draw arrow](./screenshots/lesson25-3.gif) |
+|                Draw rect mode                 |                 Draw arrow                  |
+| :-------------------------------------------: | :-----------------------------------------: |
+| ![draw rect mode](./screenshots/lesson25.gif) | ![draw arrow](./screenshots/lesson25-3.gif) |
+
+|                 Pencil tool                  |          Pencil tool with freehand           |
+| :------------------------------------------: | :------------------------------------------: |
+| ![pencil tool](./screenshots/lesson25-2.gif) | ![pencil tool](./screenshots/lesson25-4.png) |
 
 ## Lesson 26 - Selection tools [🔗](https://infinitecanvas.cc/guide/lesson-026)
 

@@ -38,7 +38,15 @@ export class FalAISystem extends System {
             image_url,
           },
         });
-        return { image: result.data.image };
+
+        // Convert Image to HTMLCanvasElement
+        const image = result.data.image as unknown as HTMLImageElement;
+        const canvas = document.createElement('canvas');
+        canvas.width = image.width;
+        canvas.height = image.height;
+        const ctx = canvas.getContext('2d')!;
+        ctx.drawImage(image, 0, 0);
+        return { image: canvas };
       };
 
       // Do nothing here

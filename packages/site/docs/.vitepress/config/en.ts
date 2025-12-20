@@ -374,8 +374,25 @@ export const en = defineConfig({
                 ],
               },
               {
-                text: 'Draw rect',
-                link: 'draw-rect',
+                text: 'Draw tools',
+                items: [
+                  {
+                    text: 'Rect tool',
+                    link: 'draw-rect',
+                  },
+                  {
+                    text: 'Arrow tool',
+                    link: 'draw-arrow',
+                  },
+                  {
+                    text: 'Pencil tool',
+                    link: 'pencil',
+                  },
+                  {
+                    text: 'Pencil tool (freehand)',
+                    link: 'pencil-freehand',
+                  },
+                ],
               },
               {
                 text: 'HTML and embeded content',

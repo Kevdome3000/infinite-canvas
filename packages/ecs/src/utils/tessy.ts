@@ -3,6 +3,7 @@
  * @see https://github.com/ShukantPal/pixi-essentials/blob/049c67d0126ca771e026a04702a63fee1ce25d16/packages/svg/src/utils/buildPath.ts#L12
  */
 import libtess from 'libtess';
+import polygonClipping from 'polygon-clipping';
 
 // function called for each vertex of tesselator output
 function vertexCallback(data, polyVertArray) {
@@ -74,4 +75,55 @@ export function triangulate(
   // console.log('tesselation time: ' + (endTime - startTime).toFixed(2) + 'ms');
 
   return triangleVerts;
+}
+
+const average = (a: number, b: number) => (a + b) / 2;
+export function getSvgPathFromStroke(points: number[][], closed = true) {
+  const len = points.length;
+
+  if (len < 4) {
+    return `M${points[0][0].toFixed(2)},${points[0][1].toFixed(2)} ${points
+      .map((p) => `L${p[0].toFixed(2)},${p[1].toFixed(2)}`)
+      .join('')}`;
+  }
+
+  let a = points[0];
+  let b = points[1];
+  const c = points[2];
+
+  let result = `M${a[0].toFixed(2)},${a[1].toFixed(2)} Q${b[0].toFixed(
+    2,
+  )},${b[1].toFixed(2)} ${average(b[0], c[0]).toFixed(2)},${average(
+    b[1],
+    c[1],
+  ).toFixed(2)} T`;
+
+  for (let i = 2, max = len - 1; i < max; i++) {
+    a = points[i];
+    b = points[i + 1];
+    result += `${average(a[0], b[0]).toFixed(2)},${average(a[1], b[1]).toFixed(
+      2,
+    )} `;
+  }
+
+  if (closed) {
+    result += 'Z';
+  }
+
+  return result;
+}
+
+export function getFlatSvgPathFromStroke(stroke: number[][]) {
+  // @ts-ignore
+  const faces = polygonClipping.union([stroke]);
+
+  const d = [];
+
+  faces.forEach((face) =>
+    face.forEach((points) => {
+      d.push(getSvgPathFromStroke(points, false));
+    }),
+  );
+
+  return d.join(' ');
 }
