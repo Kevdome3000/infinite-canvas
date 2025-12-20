@@ -38,10 +38,10 @@ import {
   PathSerializedNode,
   PolylineSerializedNode,
   StrokeAttributes,
-} from '../utils/serialize';
-import { distanceBetweenPoints } from '../utils/matrix';
+} from '../utils';
+import { distanceBetweenPoints } from '../utils';
 import { DRAW_RECT_Z_INDEX } from '../context';
-import { serializePoints } from '../utils/serialize';
+import { serializePoints } from '../utils';
 import { getFlatSvgPathFromStroke } from '../utils';
 
 const PENCIL_CURSOR =
