@@ -6,7 +6,7 @@ import {
   sliceTensorMask,
 } from './utils';
 // @ts-expect-error - import.meta is only available in ES modules, but this code will run in ES module environments
-import workerUrl from './sam-worker.js?worker&url';
+import workerUrl from './worker.js?worker&url';
 
 // resize+pad all images to 1024x1024
 const imageSize = { w: 1024, h: 1024 };
@@ -80,7 +80,7 @@ export class SAMSystem extends System {
               });
 
               this.worker.onmessage = originalOnMessage;
-              resolve({ image: maskCanvasResized });
+              resolve({ image: { canvas: maskCanvasResized } });
             }
             originalOnMessage?.call(this.worker, event);
           };
@@ -115,7 +115,7 @@ export class SAMSystem extends System {
               api.setAppState({ loading: false, loadingMessage: '' });
             } else {
               api.setAppState({ loading: false, loadingMessage: '' });
-              console.error('Failed to load SAM models');
+              console.error('Failed to load SAM model');
             }
           } else if (
             type == 'downloadInProgress' ||
@@ -133,7 +133,7 @@ export class SAMSystem extends System {
 
         api.setAppState({
           loading: true,
-          loadingMessage: 'Loading SAM models...',
+          loadingMessage: 'Loading SAM model...',
         });
         this.worker.postMessage({ type: 'ping' });
       }

@@ -319,14 +319,15 @@ pnpm run dev
 -   图形绘制模式：通过拖拽绘制矩形、椭圆、直线和箭头
 -   铅笔模式，支持自由可变线宽
 -   笔刷模式：绘制折线
+-   橡皮擦工具，尝试支持非原子化效果
 
 |                Draw rect mode                 |                 Draw arrow                  |
 | :-------------------------------------------: | :-----------------------------------------: |
 | ![draw rect mode](./screenshots/lesson25.gif) | ![draw arrow](./screenshots/lesson25-3.gif) |
 
-|                 Pencil tool                  |          Pencil tool with freehand           |
-| :------------------------------------------: | :------------------------------------------: |
-| ![pencil tool](./screenshots/lesson25-2.gif) | ![pencil tool](./screenshots/lesson25-4.png) |
+|                 Pencil tool                  |          Pencil tool with freehand           |                    Eraser                    |
+| :------------------------------------------: | :------------------------------------------: | :------------------------------------------: |
+| ![pencil tool](./screenshots/lesson25-2.gif) | ![pencil tool](./screenshots/lesson25-4.png) | ![eraser tool](./screenshots/lesson25-5.gif) |
 
 ## 课程 26 - 选择工具 [🔗](https://infinitecanvas.cc/zh/guide/lesson-026)
 
@@ -348,14 +349,16 @@ pnpm run dev
 -   使用聊天框
 -   使用 Nano banana 进行图片生成与编辑
 -   通过 ONNX 的 WebGPU 运行时使用 SAM 在端侧进行推理
+-   使用 Qwen-Image-Layered 分解图层
+-   使用 UpscalerJS 提升图片分辨率
 
 |                     与聊天框结合                      |                      清除背景                      |
 | :---------------------------------------------------: | :------------------------------------------------: |
 | ![when canvas meets chat](./screenshots/lesson28.png) | ![remove background](./screenshots/lesson28-2.png) |
 
-|            在 WebWorker 中使用 ONNX 和 SAM 分割图片            |     |
-| :------------------------------------------------------------: | :-: |
-| ![use onnx and sam in webworker](./screenshots/lesson28-3.gif) |     |
+|            在 WebWorker 中使用 ONNX 和 SAM 分割图片            |               使用 Qwen-Image-Layered 分解图层               |           使用 UpscalerJS 增强分辨率           |
+| :------------------------------------------------------------: | :----------------------------------------------------------: | :--------------------------------------------: |
+| ![use onnx and sam in webworker](./screenshots/lesson28-3.gif) | ![decompose image into layers](./screenshots/lesson28-4.gif) | ![upscale image](./screenshots/lesson28-5.png) |
 
 ## 课程 29 - 嵌入 HTML 内容 [🔗](https://infinitecanvas.cc/zh/guide/lesson-029)
 

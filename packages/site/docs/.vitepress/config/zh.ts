@@ -125,6 +125,8 @@ export const zh = defineConfig({
                 link: 'fal',
               },
               { text: 'Segment Anything Model', link: 'sam' },
+              { text: 'LaMa', link: 'lama' },
+              { text: 'UpscalerJS', link: 'upscaler' },
             ],
           },
           {
@@ -399,6 +401,10 @@ export const zh = defineConfig({
           {
             text: '在 WebWorker 中使用 SAM 进行图像分割',
             link: 'sam-in-worker',
+          },
+          {
+            text: '在 WebWorker 中使用 LaMa 进行对象擦除',
+            link: 'lama-in-worker',
           },
           { text: '音频可视化', link: 'audio-visualizer' },
         ],

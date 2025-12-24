@@ -146,6 +146,10 @@ export class DrawPencil extends System {
         });
       }
 
+      if (input.key === 'Escape') {
+        // TODO: cancel drawing pencil
+      }
+
       // Dragging
       inputPoints.forEach((point) => {
         const inputPoint = point.write(InputPoint);

@@ -318,14 +318,15 @@ If you want to use it in your own project, you can refer to:
 -   Draw shapes mode: draw rect, ellipse, line and arrow with dragging
 -   Pencil mode, including freehand
 -   Brush mode
+-   Eraser tool, try to support non-atomic effect
 
 |                Draw rect mode                 |                 Draw arrow                  |
 | :-------------------------------------------: | :-----------------------------------------: |
 | ![draw rect mode](./screenshots/lesson25.gif) | ![draw arrow](./screenshots/lesson25-3.gif) |
 
-|                 Pencil tool                  |          Pencil tool with freehand           |
-| :------------------------------------------: | :------------------------------------------: |
-| ![pencil tool](./screenshots/lesson25-2.gif) | ![pencil tool](./screenshots/lesson25-4.png) |
+|                 Pencil tool                  |          Pencil tool with freehand           |                    Eraser                    |
+| :------------------------------------------: | :------------------------------------------: | :------------------------------------------: |
+| ![pencil tool](./screenshots/lesson25-2.gif) | ![pencil tool](./screenshots/lesson25-4.png) | ![eraser tool](./screenshots/lesson25-5.gif) |
 
 ## Lesson 26 - Selection tools [🔗](https://infinitecanvas.cc/guide/lesson-026)
 
@@ -347,14 +348,16 @@ If you want to use it in your own project, you can refer to:
 -   Use chatbox
 -   Use Nano banana to edit image, e.g remove background
 -   Use SAM with ONNX WebGPU runtime in WebWorker
+-   Use Qwen-Image-Layered to decompose an image into multiple layers
+-   Use UpscalerJS to upscale an image to 2X
 
 |                      Use chatbox                      |                 Remove background                  |
 | :---------------------------------------------------: | :------------------------------------------------: |
 | ![when canvas meets chat](./screenshots/lesson28.png) | ![remove background](./screenshots/lesson28-2.png) |
 
-|         Use SAM with ONNX WebGPU runtime in WebWorker          |     |
-| :------------------------------------------------------------: | :-: |
-| ![use onnx and sam in webworker](./screenshots/lesson28-3.gif) |     |
+|         Use SAM with ONNX WebGPU runtime in WebWorker          |        Decompose into layers with Qwen-Image-Layered         |         Upscale image with UpscalerJS          |
+| :------------------------------------------------------------: | :----------------------------------------------------------: | :--------------------------------------------: |
+| ![use onnx and sam in webworker](./screenshots/lesson28-3.gif) | ![decompose image into layers](./screenshots/lesson28-4.gif) | ![upscale image](./screenshots/lesson28-5.png) |
 
 ## Lesson 29 - Embedding HTML content [🔗](https://infinitecanvas.cc/guide/lesson-029)
 

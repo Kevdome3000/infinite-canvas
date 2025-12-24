@@ -1082,6 +1082,7 @@ export class API {
     });
 
     this.deselectNodes(deletedNodes);
+    this.unhighlightNodes(deletedNodes);
 
     deletedNodes.forEach((node) => {
       const entity = this.#idEntityMap.get(node.id);
@@ -1111,6 +1112,24 @@ export class API {
       .children.filter((child) => !!this.getNodeByEntity(child)); // Filter out entities that are not in the scene graph e.g. Transformer UI.
 
     return children;
+  }
+
+  getParent(node: SerializedNode) {
+    const entity = this.getEntity(node);
+    if (!entity.has(Children)) {
+      return undefined;
+    }
+
+    return entity.read(Children).parent;
+  }
+
+  getChildren(node: SerializedNode) {
+    const entity = this.getEntity(node);
+    if (!entity.has(Parent)) {
+      return [];
+    }
+
+    return entity.read(Parent).children;
   }
 
   /**
@@ -1281,37 +1300,89 @@ export class API {
   }
 
   // AI APIs
+
+  /**
+   * Create or edit an image with a prompt.
+   */
   async createOrEditImage(
     isEdit: boolean,
     prompt: string,
     image_urls: string[],
-  ): Promise<{ images: { url: string }[]; description: string }> {
+  ): Promise<{ images: Image[]; description: string }> {
     throw new Error('Not implemented');
   }
 
+  /**
+   * Upload the file to CDN and return an URL.
+   */
   async upload(file: File): Promise<string> {
     throw new Error('Not implemented');
   }
 
-  async encodeImage(image: string): Promise<void> {
+  /**
+   * Encode image before segmenting.
+   */
+  async encodeImage(image_url: string): Promise<void> {
     throw new Error('Not implemented');
   }
 
-  async segmentImage(
-    input: Partial<{
-      image_url: string;
-      prompt: string;
-      point_prompts: PointPrompt[];
-      box_prompts: BoxPrompt[];
-    }>,
-  ): Promise<{
+  /**
+   * Segment the image into a mask.
+   */
+  async segmentImage(input: {
+    image_url: string;
+    prompt?: string;
+    point_prompts?: PointPrompt[];
+    box_prompts?: BoxPrompt[];
+  }): Promise<{
     /**
      * Primary segmented mask preview
      */
-    image: HTMLCanvasElement;
+    image: Image;
   }> {
     throw new Error('Not implemented');
   }
+
+  /**
+   * Split the image into multiple layers.
+   */
+  async decomposeImage(input: {
+    image_url: string;
+    num_layers?: number;
+  }): Promise<{
+    images: Image[];
+  }> {
+    throw new Error('Not implemented');
+  }
+
+  /**
+   * Upscale the image.
+   */
+  async upscaleImage(input: {
+    image_url: string;
+    scale_factor?: number;
+  }): Promise<Image> {
+    throw new Error('Not implemented');
+  }
+
+  async removeByMask(input: {
+    image_url: string;
+    mask: HTMLCanvasElement;
+  }): Promise<Image> {
+    throw new Error('Not implemented');
+  }
+}
+
+export interface Image {
+  /**
+   * The URL where the file can be downloaded from.
+   */
+  url?: string;
+
+  /**
+   * HTMLCanvasElement object.
+   */
+  canvas?: HTMLCanvasElement;
 }
 
 export interface PointPrompt {

@@ -86,7 +86,7 @@ createOrEditImage(
     isEdit: boolean,
     prompt: string,
     image_urls: string[],
-): Promise<{ images: { url: string }[]; description: string }> {}
+): Promise<{ images: Image[]; description: string }> {}
 ```
 
 Parameter descriptions:
@@ -94,6 +94,13 @@ Parameter descriptions:
 -   `isEdit` Whether it is in edit mode
 -   `prompt` Description when generating images
 -   `image_urls` Reference image list, can be empty
+
+```ts
+interface Image {
+    url?: string;
+    canvas?: HTMLCanvasElement;
+}
+```
 
 ### fal.ai
 
@@ -106,7 +113,7 @@ api.createOrEditImage = async (
     isEdit: boolean,
     prompt: string,
     image_urls: string[],
-): Promise<{ images: { url: string }[]; description: string }> => {
+): Promise<{ images: Image[]; description: string }> => {
     const result = await fal.subscribe(
         isEdit
             ? 'fal-ai/gemini-25-flash-image/edit'
@@ -127,17 +134,6 @@ api.createOrEditImage = async (
 Segment images using SAM to generate masks
 
 ```ts
-segmentImage(params: {
-    points: {
-        x: number;
-        y: number;
-        xNormalized: number;
-        yNormalized: number;
-    }[],
-}): Promise<any> {}
-```
-
-```ts
 segmentImage(
     input: Partial<{
         image_url: string;
@@ -149,7 +145,7 @@ segmentImage(
     /**
      * Primary segmented mask preview
      */
-    image: HTMLCanvasElement;
+    image: Image;
 }> {}
 ```
 
@@ -191,7 +187,7 @@ const result = await fal.subscribe('fal-ai/sam-3/image', {
 
 ### ONNX
 
-Decode in WebWorker:
+Decode in WebWorker, see [SAM Plugin]:
 
 ```ts
 // WebWorker
@@ -219,7 +215,7 @@ encodeImage(image: string): Promise<void> {}
 
 ### ONNX
 
-Encode images using SAM for subsequent inference:
+Encode images using SAM for subsequent inference, see [SAM Plugin]:
 
 ```ts
 import { Tensor } from 'onnxruntime-web';
@@ -232,5 +228,35 @@ const imgTensor = new Tensor('float32', float32Array, shape);
 await sam.encodeImage(imgTensor);
 ```
 
+## decomposeImage
+
+Decompose an image into multiple layers.
+
+```ts
+decomposeImage(input: {
+    image_url: string;
+    num_layers?: number;
+}): Promise<{
+    images: Image[];
+}> {}
+```
+
+## removeByMask
+
+Remove objects in mask area.
+
+```ts
+removeByMask(input: {
+    image_url: string;
+    mask: HTMLCanvasElement;
+}): Promise<Image> {}
+```
+
+### ONNX
+
+Remove objects in mask area with LaMa, see: [LaMa Plugin]
+
 [Lesson 28 - Integration with AI]: /guide/lesson-028
 [fal.ai]: https://fal.ai/
+[SAM Plugin]: /reference/sam
+[LaMa Plugin]: /reference/lama

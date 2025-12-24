@@ -177,6 +177,8 @@ export const en = defineConfig({
               { text: 'Chat', link: 'chat' },
               { text: 'fal.ai', link: 'fal' },
               { text: 'Segment Anything Model', link: 'sam' },
+              { text: 'LaMa', link: 'lama' },
+              { text: 'UpscalerJS', link: 'upscaler' },
             ],
           },
           {
@@ -454,6 +456,10 @@ export const en = defineConfig({
           {
             text: 'Use SAM in WebWorker for image segmentation',
             link: 'sam-in-worker',
+          },
+          {
+            text: 'Use LaMa in WebWorker for object removal',
+            link: 'lama-in-worker',
           },
           { text: 'Audio visualizer', link: 'audio-visualizer' },
         ],
