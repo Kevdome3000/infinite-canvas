@@ -1,19 +1,20 @@
-import { html, css, LitElement } from 'lit';
+import { css, html, LitElement } from 'lit';
 import { consume } from '@lit/context';
 import { map } from 'lit/directives/map.js';
 import { when } from 'lit/directives/when.js';
 import { customElement } from 'lit/decorators.js';
 import {
-  SerializedNode,
-  Task,
   AppState,
+  SerializedNode,
   sortByFractionalIndex,
+  Task,
   UI,
   ZIndex,
 } from '@infinite-canvas-tutorial/ecs';
 import { apiContext, appStateContext, nodesContext } from '../context';
 import { Event } from '../event';
 import { ExtendedAPI } from '../API';
+
 @customElement('ic-spectrum-layers-panel')
 export class LayersPanel extends LitElement {
   static styles = css`

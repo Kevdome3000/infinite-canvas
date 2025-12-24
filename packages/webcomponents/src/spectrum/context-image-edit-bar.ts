@@ -1,7 +1,7 @@
 import { v4 as uuidv4 } from 'uuid';
 import { consume } from '@lit/context';
 import { AppState, RectSerializedNode } from '@infinite-canvas-tutorial/ecs';
-import { html, css, LitElement, PropertyValues } from 'lit';
+import { css, html, LitElement, PropertyValues } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { apiContext, appStateContext } from '../context';
 import { ExtendedAPI } from '../API';
