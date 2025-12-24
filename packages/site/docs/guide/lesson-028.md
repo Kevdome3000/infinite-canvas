@@ -1,6 +1,6 @@
 ---
 outline: deep
-description: 'Integrating with AI, using chat dialogs with image generation models such as GPT 4o and Nano banana'
+description: 'Integrating with AI, using chat dialogs with image generation models such as GPT 4o and Nano banana. Use SAM to segment image in WebWorker, use LaMa for inpainting and upscale image with UpscalerJS.'
 head:
     - [
           'meta',
@@ -149,6 +149,12 @@ For other practices and SAM3-related materials, please refer to:
 -   [Segment Anything 2, in WebGPU]
 -   [Request for Official ONNX Export + TensorRT Conversion Scripts for SAM3]
 
+The mask obtained through SAM can be used as a reference image to feed into the raw image model.
+
+### Using LaMa {#use-lama}
+
+[Client-Side Image Inpainting with ONNX and Next.js] explains how to use the [LaMa] model on the client side.
+
 ### Combining Multiple Images {#combine-multiple-images}
 
 Using canvas allows us to obtain additional positional information about images, which is often difficult to describe with language. For example, we can drag a teacup to any position on a desktop and composite an image.
@@ -202,6 +208,10 @@ First, use an OCR-like tool to identify text regions and generate a mask. Then, 
 
 ![text editing with flux-text](/flux-text.png)
 
+Using the open-source [Qwen-Image-Layered] enables layer decomposition. In the [fal.ai plugin], we achieved the following effect:
+
+![Qwen-Image-Layered](/decompose-layers.gif)
+
 ### Font recognition {#font-recognition}
 
 Next, we need to identify the style attributes such as font and font size within the text area.
@@ -225,6 +235,18 @@ Adobe Photoshop provides [Match fonts]:
 ```
 
 Finally, overlay all the layers.
+
+## Upscale image {#upscale-image}
+
+We can upscale image with model, such as [SeedVR2] in fal.ai. In browser side, we can use [UpscalerJS] in webworker, see our [upscaler plugin], which uses `@upscalerjs/esrgan-medium 4x` model by default.
+
+![@upscalerjs/esrgan-medium 4x](/upscaler.png)
+
+### Other browser runtime {#other-browser-runtime}
+
+[UpscalerJS] uses tensorflow.js, you can choose [super-resolution-js] with ONNX runtime, or a new runtime called LiteRT:
+
+![Image upscaler with LiteRT.js](/image-upscaler.jpg)
 
 ## MCP
 
@@ -263,6 +285,12 @@ Finally, overlay all the layers.
 [Request for Official ONNX Export + TensorRT Conversion Scripts for SAM3]: https://github.com/facebookresearch/sam3/issues/224
 [Use SAM in WebWorker]: /experiment/sam-in-worker
 [SAM plugin]: /reference/sam
+[fal.ai plugin]: /reference/fal
+[upscaler plugin]: /reference/upscaler
 [How to add machine learning to your web application with ONNX Runtime]: https://onnxruntime.ai/docs/tutorials/web/
 [ORT model format]: https://onnxruntime.ai/docs/performance/model-optimizations/ort-format-models.html
 [Using the WebGPU Execution Provider]: https://onnxruntime.ai/docs/tutorials/web/ep-webgpu.html
+[Qwen-Image-Layered]: https://arxiv.org/pdf/2512.15603
+[SeedVR2]: https://huggingface.co/ByteDance-Seed/SeedVR2-7B
+[UpscalerJS]: https://upscalerjs.com/documentation/guides/browser/performance/webworker
+[super-resolution-js]: https://github.com/josephrocca/super-resolution-js

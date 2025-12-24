@@ -62,6 +62,7 @@ export interface AppState {
   taskbarChatMessages: Message[];
   layersSelected: SerializedNode['id'][];
   layersHighlighted: SerializedNode['id'][];
+  layersExpanded: SerializedNode['id'][];
   propertiesOpened: SerializedNode['id'][];
   /**
    * Allow rotate in transformer
@@ -147,8 +148,9 @@ export const getDefaultAppState: () => AppState = () => {
       Pen.IMAGE,
       Pen.TEXT,
       Pen.PENCIL,
-      Pen.BRUSH,
-      Pen.VECTOR_NETWORK,
+      // Pen.BRUSH,
+      Pen.ERASER,
+      // Pen.VECTOR_NETWORK,
       Pen.COMMENT,
     ],
     penbarSelected: Pen.HAND,
@@ -206,6 +208,7 @@ export const getDefaultAppState: () => AppState = () => {
       stroke: TRANSFORMER_ANCHOR_STROKE_COLOR,
       strokeWidth: 1,
       strokeOpacity: 1,
+      freehand: true,
     },
     penbarText: {
       fontFamily: 'system-ui',
@@ -221,6 +224,7 @@ export const getDefaultAppState: () => AppState = () => {
     layersSelected: [],
     layersHighlighted: [],
     propertiesOpened: [],
+    layersExpanded: [],
     rotateEnabled: false,
     flipEnabled: false,
     snapToPixelGridEnabled: false,

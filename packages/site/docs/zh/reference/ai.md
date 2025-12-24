@@ -86,7 +86,7 @@ createOrEditImage(
     isEdit: boolean,
     prompt: string,
     image_urls: string[],
-): Promise<{ images: { url: string }[]; description: string }> {}
+): Promise<{ images: Image[]; description: string }> {}
 ```
 
 参数说明如下：
@@ -94,6 +94,13 @@ createOrEditImage(
 -   `isEdit` 是否是编辑模式
 -   `prompt` 生成图片时的描述
 -   `image_urls` 参考图列表，可以为空
+
+```ts
+interface Image {
+    url?: string;
+    canvas?: HTMLCanvasElement;
+}
+```
 
 ### fal.ai
 
@@ -106,7 +113,7 @@ api.createOrEditImage = async (
     isEdit: boolean,
     prompt: string,
     image_urls: string[],
-): Promise<{ images: { url: string }[]; description: string }> => {
+): Promise<{ images: Image[]; description: string }> => {
     const result = await fal.subscribe(
         isEdit
             ? 'fal-ai/gemini-25-flash-image/edit'
@@ -138,7 +145,7 @@ segmentImage(
     /**
      * Primary segmented mask preview
      */
-    image: HTMLCanvasElement;
+    image: Image;
 }> {}
 ```
 
@@ -180,7 +187,7 @@ const result = await fal.subscribe('fal-ai/sam-3/image', {
 
 ### ONNX
 
-为了不阻塞主线程，可以放在 WebWorker 中执行。
+为了不阻塞主线程，可以放在 WebWorker 中执行，详见 [SAM 插件]。
 
 ```ts
 // WebWorker
@@ -203,12 +210,12 @@ let bestMaskCanvas = float32ArrayToCanvas(bestMaskArray, width, height);
 在端侧推理前对图片进行编码，同样可以在 WebWorker 中进行。
 
 ```ts
-encodeImage(image: string): Promise<void> {}
+encodeImage(image_url: string): Promise<void> {}
 ```
 
 ### ONNX
 
-使用 SAM 对图片进行编码，用于后续的推理：
+使用 SAM 对图片进行编码，用于后续的推理，详见 [SAM 插件]：
 
 ```ts
 import { Tensor } from 'onnxruntime-web';
@@ -221,5 +228,35 @@ const imgTensor = new Tensor('float32', float32Array, shape);
 await sam.encodeImage(imgTensor);
 ```
 
+## decomposeImage
+
+将图片按语义分解成多个图层：
+
+```ts
+decomposeImage(input: {
+    image_url: string;
+    num_layers?: number;
+}): Promise<{
+    images: Image[];
+}> {}
+```
+
+## removeByMask
+
+擦除 Mask 区域的内容
+
+```ts
+removeByMask(input: {
+    image_url: string;
+    mask: HTMLCanvasElement;
+}): Promise<Image> {}
+```
+
+### ONNX
+
+使用 LaMa 进行擦除，详见：[LaMa 插件]
+
 [课程 28 - 与 AI 结合]: /zh/guide/lesson-028
 [fal.ai]: https://fal.ai/
+[SAM 插件]: /zh/reference/sam
+[LaMa 插件]: /zh/reference/lama

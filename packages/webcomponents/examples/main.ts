@@ -1,7 +1,13 @@
-import { App, DefaultPlugins, getDefaultAppState } from '../../ecs';
-import { Event, UIPlugin } from '../src';
-import { IndexedDbStorageService, CanvasData } from '../src';
+import { App, CheckboardStyle, DefaultPlugins, getDefaultAppState, Pen, Task, } from '../../ecs';
+import { CanvasData, Event, IndexedDbStorageService, UIPlugin } from '../src';
 import '../src/spectrum';
+import WebFont from 'webfontloader';
+
+WebFont.load({
+  google: {
+    families: ['Gaegu'],
+  },
+});
 
 const storage = new IndexedDbStorageService();
 
@@ -29,7 +35,6 @@ function debounce<T extends (...args: any[]) => any>(fn: T, ms: number) {
 // Auto-save function
 const saveCanvas = debounce(async () => {
   if (!currentCanvasId || !currentApi || isLoading) return;
-
   const canvasData: CanvasData = {
     id: currentCanvasId,
     name: currentCanvasName,
@@ -158,10 +163,73 @@ async function openCanvas(id?: string) {
         isLoading = false;
       }
     } else {
-      // New canvas, release loading lock
-      isLoading = false;
+  // api.runAtNextTick(() => {
+        api.setAppState({
+          ...api.getAppState(),
+          cameraX: 0,
+    penbarSelected: Pen.SELECT,
+    penbarText: {
+      ...api.getAppState().penbarText,
+      fontFamily: 'system-ui',
+      fontFamilies: ['system-ui', 'serif', 'monospace', 'Gaegu'],
+    },
+    penbarPencil: {
+      ...api.getAppState().penbarPencil,
+      freehand: true,
+    },
+    taskbarAll: [
+      Task.SHOW_CHAT_PANEL,
+      Task.SHOW_LAYERS_PANEL,
+      Task.SHOW_PROPERTIES_PANEL,
+    ],
+          checkboardStyle: CheckboardStyle.GRID,
+          snapToPixelGridEnabled: true,
+          snapToPixelGridSize: 1,
+        });
+
+  // api.updateNodes(nodes);
+        // Create default nodes
+        const node1 = {
+          id: 'rect-1',
+          type: 'rect',
+          x: 0,
+          y: 0,
+          width: 200,
+          height: 200,
+          fill: 'grey',
+        };
+        const node2 = {
+          id: 'text-1',
+          type: 'text',
+          parentId: 'rect-1',
+          anchorX: 10,
+          anchorY: 50,
+          content: 'Hello',
+          fill: 'black',
+          fontSize: 30,
+          fontFamily: 'system-ui',
+        };
+        const node3 = {
+          id: 'rect-2',
+          type: 'rect',
+          x: 100,
+          y: 100,
+          width: 200,
+          height: 200,
+          fill: 'red',
+        };
+
+        api.updateNodes([node1, node2, node3]);
+        api.record();
+
+        // Release loading lock
+        isLoading = false;
     }
-  });
+  }
+  );
+
+  // Wait a tick to ensure READY event is processed
+  await new Promise((resolve) => setTimeout(resolve, 0));
 }
 
 // Go back to home screen

@@ -236,7 +236,7 @@ if (marker === 'line') {
 
 In contrast, exported SVG files must also support re-importing into the canvas.
 
-## Draw polygon {#draw-polygon}
+## [WIP] Draw polygon {#draw-polygon}
 
 [Shape tools - polygons]
 
@@ -279,6 +279,22 @@ const d = getSvgPathFromStroke(outlinePoints); // 'M 0 0 L...'
 ```
 
 <PencilFreehand />
+
+By default, [perfect-freehand] simulates the speed of brushstrokes by calculating variable line widths based on the distance between adjacent points. To use real [pressure], such as that from a pen or stylus, provide the pressure as the third number for each input point:
+
+```ts
+export class Input {
+    @field.float32 declare pressure: number; // [!code ++]
+}
+```
+
+And set the simulatePressure option to false.
+
+```ts
+const outlinePoints = getStroke(inputPoints, {
+    simulatePressure: false,
+});
+```
 
 ## Brush mode {#brush-mode}
 
@@ -357,7 +373,36 @@ This doesn't quite work like a real brushstroke.
 
 Figma is able to export Brush to SVG.
 
-### Eraser {#eraser}
+## Eraser {#eraser}
+
+Excalidraw supports the [freedraw eraser]. After selecting the eraser tool, shapes traced by the mouse cursor will appear “faded,” indicating they are about to be erased. Lifting the mouse completes the erasure.
+
+In the implementation, we use the Perfect freehand technique introduced in the previous section to draw the drag path, but only store the most recent 4 points. Simultaneously, we detect the shapes passed over in real time, setting their opacity (but remember to save the original opacity for restoration upon cancellation), and remove the selected shapes when the mouse is lifted:
+
+```ts
+export class DrawEraser extends System {
+    execute() {
+        if (input.pointerUpTrigger) {
+            api.runAtNextTick(() => {
+                api.updateNode(brush, { visibility: 'hidden' }, false);
+                api.setAppState({
+                    penbarSelected: Pen.SELECT,
+                });
+                api.deleteNodesById(
+                    Array.from(selected).map((e) => api.getNodeByEntity(e)?.id),
+                );
+                api.record();
+            });
+        }
+    }
+}
+```
+
+![Eraser tool](/eraser.gif)
+
+### Non-atomic {#non-atomic}
+
+Erasing entire shapes is sufficient for most scenarios, but non-atomic erasing proves more practical in freehand drawing contexts—such as breaking a straight line midway. Excalidraw currently lacks this feature; see: [non-atomic erasing for linear & freedraw shapes]. FigJam shares this limitation.
 
 ## Extended reading {#extended-reading}
 
@@ -384,3 +429,8 @@ Figma is able to export Brush to SVG.
 [plot - arrow]: https://github.com/observablehq/plot/blob/main/src/marks/arrow.js
 [orient]: https://developer.mozilla.org/en-US/docs/Web/SVG/Reference/Attribute/orient
 [export arrow]: https://github.com/xiaoiver/infinite-canvas-tutorial/blob/master/__tests__/ecs/snapshots/export-arrow.svg
+[perfect-freehand]: https://github.com/steveruizok/perfect-freehand
+[Perfect Freehand Drawing Issue]: https://github.com/excalidraw/excalidraw/issues/4802
+[pressure]: https://developer.mozilla.org/docs/Web/API/PointerEvent/pressure
+[freedraw eraser]: https://github.com/excalidraw/excalidraw/issues/3682
+[non-atomic erasing for linear & freedraw shapes]: https://github.com/excalidraw/excalidraw/issues/4904
