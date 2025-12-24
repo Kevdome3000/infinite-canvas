@@ -206,6 +206,7 @@ export const getDefaultAppState: () => AppState = () => {
       stroke: TRANSFORMER_ANCHOR_STROKE_COLOR,
       strokeWidth: 1,
       strokeOpacity: 1,
+      freehand: true,
     },
     penbarText: {
       fontFamily: 'system-ui',
