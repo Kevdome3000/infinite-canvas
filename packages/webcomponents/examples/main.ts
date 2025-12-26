@@ -219,7 +219,7 @@ async function openCanvas(id?: string) {
           fill: 'red',
         };
 
-        api.updateNodes([node1, node2, node3]);
+  api.updateNodes([node1]);
         api.record();
 
         // Release loading lock
