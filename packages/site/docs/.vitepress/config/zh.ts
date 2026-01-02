@@ -131,6 +131,8 @@ export const zh = defineConfig({
               { text: 'Segment Anything Model', link: 'sam' },
               { text: 'LaMa', link: 'lama' },
               { text: 'UpscalerJS', link: 'upscaler' },
+              { text: '激光笔', link: 'laser-pointer' },
+              { text: '套索工具', link: 'lasso' },
             ],
           },
           {
@@ -342,6 +344,14 @@ export const zh = defineConfig({
                   {
                     text: '铅笔工具（自由绘制）',
                     link: 'pencil-freehand',
+                  },
+                  {
+                    text: '激光笔工具',
+                    link: 'laser-pointer',
+                  },
+                  {
+                    text: '套索工具',
+                    link: 'lasso',
                   },
                 ],
               },

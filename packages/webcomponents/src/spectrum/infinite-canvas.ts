@@ -90,6 +90,9 @@ import '@spectrum-web-components/icons-workflow/icons/sp-icon-polygon-select.js'
 import '@spectrum-web-components/icons-workflow/icons/sp-icon-comment.js';
 import '@spectrum-web-components/icons-workflow/icons/sp-icon-image-auto-mode.js';
 import '@spectrum-web-components/icons-workflow/icons/sp-icon-erase.js';
+import '@spectrum-web-components/icons-workflow/icons/sp-icon-vector-draw.js';
+import '@spectrum-web-components/icons-workflow/icons/sp-icon-events.js';
+import '@spectrum-web-components/icons-workflow/icons/sp-icon-region-select.js';
 
 export const TOP_NAVBAR_HEIGHT = 48;
 
@@ -237,6 +240,17 @@ export class InfiniteCanvas extends LitElement {
         -cameraY,
       )}px)`;
 
+      const $svgLayer = document.createElement('div');
+      $svgLayer.style.position = 'absolute';
+      $svgLayer.style.top = topbarVisible ? `${TOP_NAVBAR_HEIGHT}px` : '0px';
+      $svgLayer.style.left = '0px';
+      $svgLayer.style.height = '100%';
+      $svgLayer.style.width = '100%';
+      $svgLayer.style.contain = 'layout style size';
+      $svgLayer.style.userSelect = 'none';
+      $svgLayer.style.outline = 'none';
+      $svgLayer.style.pointerEvents = 'none';
+
       const { width, height } = this.getBoundingClientRect();
 
       pendingCanvases.push({
@@ -244,6 +258,7 @@ export class InfiniteCanvas extends LitElement {
         canvas: {
           element: $canvas,
           htmlLayer: $htmlLayer,
+          svgLayer: $svgLayer,
           width,
           height: topbarVisible ? height - TOP_NAVBAR_HEIGHT : height,
           devicePixelRatio: window.devicePixelRatio,
@@ -258,7 +273,7 @@ export class InfiniteCanvas extends LitElement {
         },
       });
 
-      return [$canvas, $htmlLayer] as const;
+      return [$canvas, $htmlLayer, $svgLayer] as const;
     },
     args: () => [this.renderer, this.shaderCompilerPath] as const,
   });
@@ -280,9 +295,9 @@ export class InfiniteCanvas extends LitElement {
             size="s"
           ></sp-progress-circle>`,
         ),
-      complete: ([$canvas, $htmlLayer]) =>
+      complete: ([$canvas, $htmlLayer, $svgLayer]) =>
         themeWrapper(
-          html`${$htmlLayer}<ic-spectrum-top-navbar
+          html`${$svgLayer}${$htmlLayer}<ic-spectrum-top-navbar
             ></ic-spectrum-top-navbar>${$canvas}
             <ic-spectrum-penbar
               style="bottom: 32px;"

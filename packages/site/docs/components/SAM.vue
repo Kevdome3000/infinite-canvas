@@ -8,6 +8,8 @@ import {
 } from '@infinite-canvas-tutorial/ecs';
 import { ref, onMounted, onUnmounted } from 'vue';
 import { Event, UIPlugin } from '@infinite-canvas-tutorial/webcomponents';
+import { LaserPointerPlugin } from '@infinite-canvas-tutorial/laser-pointer';
+
 import { SAMPlugin } from '@infinite-canvas-tutorial/sam';
 // import { UpscalerPlugin } from '@infinite-canvas-tutorial/upscaler';
 

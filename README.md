@@ -125,6 +125,7 @@ If you want to use it in your own project, you can refer to:
 -   Implementing a canvas component
 -   Implementing a zoom toolbar component
 -   Implementing a dark theme
+-   I18n with Lit localization
 
 ## Lesson 8 - Optimize performance [🔗](https://infinitecanvas.cc/guide/lesson-008)
 
@@ -319,6 +320,7 @@ If you want to use it in your own project, you can refer to:
 -   Pencil mode, including freehand
 -   Brush mode
 -   Eraser tool, try to support non-atomic effect
+-   Laser pointer tool for presentation
 
 |                Draw rect mode                 |                 Draw arrow                  |
 | :-------------------------------------------: | :-----------------------------------------: |
