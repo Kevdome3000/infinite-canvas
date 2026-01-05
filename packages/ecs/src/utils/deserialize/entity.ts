@@ -421,6 +421,20 @@ export function serializedNodesToEntities(
       const { html } = attributes as HtmlSerializedNode;
       entity.insert(new HTML({ x: 0, y: 0, width, height, html }));
       entity.insert(new HTMLContainer());
+
+      // Add ColumnLayout for card stacks to enable ECS-based child positioning
+      const metadata = (attributes as HtmlSerializedNode).metadata;
+      const cardType = metadata?.cardType?.toLowerCase();
+      if (cardType === 'stack') {
+        entity.insert(new ColumnLayout({
+          isAutoLayout: true,
+          direction: 'vertical',
+          gap: 8,
+          padding: 12,
+          alignItems: 'stretch',
+        }));
+        entity.insert(new Rect({ x: 0, y: 0, width, height }));
+      }
     } else if (type === 'embed') {
       const { url } = attributes as EmbedSerializedNode;
       entity.insert(new Embed({ x: 0, y: 0, width, height, url }));

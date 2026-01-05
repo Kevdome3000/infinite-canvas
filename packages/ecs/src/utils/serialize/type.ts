@@ -323,7 +323,7 @@ export interface HtmlAttributes {
  */
 export interface CardMetadata {
   /** Card type discriminator */
-  cardType?: 'NOTE' | 'LINK' | 'AI_PROMPT' | 'AI_RESPONSE' | 'CHAT' | 'TODO' | 'TABLE' | 'FILE' | 'STACK' | 'ARTIFACT' | 'note' | 'file' | 'table' | 'todo' | 'link' | 'artifact';
+  cardType?: 'NOTE' | 'LINK' | 'AI_PROMPT' | 'AI_RESPONSE' | 'CHAT' | 'TODO' | 'TABLE' | 'FILE' | 'STACK' | 'ARTIFACT' | 'note' | 'file' | 'table' | 'todo' | 'link' | 'artifact' | 'stack';
   /** Card content (HTML/JSON for TEXT, plain text for NOTE) */
   content?: string;
   /** Rich text flag for TEXT cards */
@@ -388,6 +388,15 @@ export interface CardMetadata {
   // Artifact card settings
   /** Artifact card view mode */
   cardView?: 'preview' | 'icon';
+
+  // Card Stack ECS layout configuration
+  /** ColumnLayout settings for card stacks */
+  columnLayout?: {
+    direction: 'vertical' | 'horizontal';
+    gap: number;
+    padding: number;
+    alignItems: 'start' | 'center' | 'end' | 'stretch';
+  };
 }
 
 export interface HtmlSerializedNode
