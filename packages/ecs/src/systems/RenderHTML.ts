@@ -54,24 +54,13 @@ export class RenderHTML extends System {
       return;
     }
 
-    this.culled.addedChangedOrRemoved.forEach((entity) => {
-      entity.read(HTMLContainer).element.style.display = entity.has(Culled)
-        ? 'none'
-        : 'block';
-    });
-
-    this.editables.addedOrChanged.forEach((entity) => {
-      const { element } = entity.read(HTMLContainer);
-      const { isEditing } = entity.read(Editable);
-      element.style.pointerEvents = isEditing ? 'auto' : 'none';
-
-      if (entity.has(Embed)) {
-        const $iframe = element.querySelector('iframe');
-        if ($iframe) {
-          $iframe.style.pointerEvents = isEditing ? 'auto' : 'none';
-        }
-      }
-    });
+    // ============================================================
+    // PHASE 1: ELEMENT CREATION
+    // Create DOM elements for newly added HTML/Embed entities.
+    // This MUST run first - all other operations depend on elements existing.
+    // Fixes: TypeError when culled/editables queries access element.style
+    // on entities that were just deserialized with HTMLContainer.element = null.
+    // ============================================================
 
     this.htmls.added.forEach((entity) => {
       const { html, width, height } = entity.read(HTML);
@@ -99,13 +88,6 @@ export class RenderHTML extends System {
 
       htmlLayer.appendChild($child);
 
-      this.updateCSSTransform($child, matrix, width, height);
-    });
-
-    this.htmls.changed.forEach((entity) => {
-      const $child = entity.read(HTMLContainer).element;
-      const { matrix } = entity.read(GlobalTransform);
-      const { width, height } = entity.read(HTML);
       this.updateCSSTransform($child, matrix, width, height);
     });
 
@@ -158,6 +140,53 @@ export class RenderHTML extends System {
       htmlLayer.appendChild($child);
 
       this.updateCSSTransform($child, matrix, width, height, $iframe);
+    });
+
+    // ============================================================
+    // PHASE 2: VISIBILITY & CULLING
+    // Apply display styles based on viewport culling.
+    // Elements are now guaranteed to exist after Phase 1.
+    // ============================================================
+
+    this.culled.addedChangedOrRemoved.forEach((entity) => {
+      const { element } = entity.read(HTMLContainer);
+      // Guard: element may still be null for entities not yet processed by Phase 1
+      // (e.g., entities with Culled but without HTML/Embed added in this frame)
+      if (!element) return;
+      element.style.display = entity.has(Culled) ? 'none' : 'block';
+    });
+
+    // ============================================================
+    // PHASE 3: INTERACTIVITY
+    // Apply pointer-events based on edit state.
+    // ============================================================
+
+    this.editables.addedOrChanged.forEach((entity) => {
+      const { element } = entity.read(HTMLContainer);
+      // Guard: element may still be null for entities not yet processed by Phase 1
+      if (!element) return;
+
+      const { isEditing } = entity.read(Editable);
+      element.style.pointerEvents = isEditing ? 'auto' : 'none';
+
+      if (entity.has(Embed)) {
+        const $iframe = element.querySelector('iframe');
+        if ($iframe) {
+          $iframe.style.pointerEvents = isEditing ? 'auto' : 'none';
+        }
+      }
+    });
+
+    // ============================================================
+    // PHASE 4: TRANSFORM UPDATES
+    // Update positions/sizes for changed entities.
+    // ============================================================
+
+    this.htmls.changed.forEach((entity) => {
+      const $child = entity.read(HTMLContainer).element;
+      const { matrix } = entity.read(GlobalTransform);
+      const { width, height } = entity.read(HTML);
+      this.updateCSSTransform($child, matrix, width, height);
     });
 
     this.embeds.changed.forEach((entity) => {
