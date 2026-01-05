@@ -323,7 +323,7 @@ export interface HtmlAttributes {
  */
 export interface CardMetadata {
   /** Card type discriminator */
-  cardType?: 'NOTE' | 'LINK' | 'AI_PROMPT' | 'AI_RESPONSE' | 'CHAT';
+  cardType?: 'NOTE' | 'LINK' | 'AI_PROMPT' | 'AI_RESPONSE' | 'CHAT' | 'TODO' | 'TABLE' | 'FILE' | 'STACK' | 'ARTIFACT' | 'note' | 'file' | 'table' | 'todo' | 'link' | 'artifact';
   /** Card content (HTML/JSON for TEXT, plain text for NOTE) */
   content?: string;
   /** Rich text flag for TEXT cards */
@@ -354,6 +354,40 @@ export interface CardMetadata {
     favicon?: string;
     siteName?: string;
   };
+
+  // Display/visibility toggles
+  /** Show preview toggle (LINK, FILE cards) */
+  showPreview?: boolean;
+  /** Show link info toggle (LINK cards) */
+  showLinkInfo?: boolean;
+  /** Show caption toggle (multiple card types) */
+  showCaption?: boolean;
+  /** Show file info toggle (FILE cards) */
+  showFileInfo?: boolean;
+  /** Show title toggle (TABLE, TODO cards) */
+  showTitle?: boolean;
+
+  // Card styling
+  /** Background color for cards */
+  backgroundColor?: string;
+  /** Top strip accent color */
+  stripColor?: string | null;
+  /** Text color */
+  textColor?: string;
+  /** Highlight color */
+  highlightColor?: string;
+
+  // Table cell formatting
+  /** Cell alignment */
+  cellAlignment?: { horizontal: 'left' | 'center' | 'right'; vertical: 'top' | 'middle' | 'bottom' };
+  /** Cell background color */
+  cellColor?: string;
+  /** Cell type */
+  cellType?: string;
+
+  // Artifact card settings
+  /** Artifact card view mode */
+  cardView?: 'preview' | 'icon';
 }
 
 export interface HtmlSerializedNode

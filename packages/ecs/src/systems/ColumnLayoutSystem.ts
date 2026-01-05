@@ -3,7 +3,6 @@ import { ColumnLayout } from '../components';
 import { Parent } from '../components';
 import { Transform } from '../components';
 import { Rect } from '../components';
-import { Children } from '../components';
 
 /**
  * ColumnLayoutSystem manages auto-layout for column containers.
