@@ -10,6 +10,11 @@
       "types": "./lib/index.d.ts",
       "import": "./esm/index.js",
       "require": "./lib/index.js"
+    },
+    "./spectrum": {
+      "types": "./lib/spectrum/index.d.ts",
+      "import": "./esm/spectrum/index.js",
+      "require": "./lib/spectrum/index.js"
     }
   },
   "files": [
@@ -48,6 +53,7 @@
     "localize:build": "lit-localize build"
   },
   "dependencies": {
+    "@antv/util": "^3.3.10",
     "@excalidraw/laser-pointer": "^1.3.2",
     "@infinite-canvas-tutorial/ecs": "workspace:*",
     "@infinite-canvas-tutorial/webcomponents": "workspace:*",

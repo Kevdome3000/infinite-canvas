@@ -1,6 +1,8 @@
 import {
+  Camera,
   Canvas,
   Cursor,
+  DOMAdapter,
   Input,
   InputPoint,
   Pen,
@@ -8,16 +10,11 @@ import {
 } from '@infinite-canvas-tutorial/ecs';
 import { LaserTrails } from './laser-trails';
 import {
-  ExtendedAPI,
   SVG_NS,
   AnimationFrameHandler,
 } from '@infinite-canvas-tutorial/webcomponents';
-import { html } from 'lit';
-import { msg, str } from '@lit/localize';
-export class LaserPointerSystem extends System {
-  private readonly canvases = this.query((q) =>
-    q.added.and.current.with(Canvas),
-  );
+export class DrawLaserPointer extends System {
+  private readonly cameras = this.query((q) => q.current.with(Camera).read);
 
   private selections = new Map<
     number,
@@ -36,20 +33,19 @@ export class LaserPointerSystem extends System {
   }
 
   execute() {
-    this.canvases.added.forEach((canvas) => {
-      const { api } = canvas.read(Canvas);
-      (api as ExtendedAPI).registerPen(
-        Pen.LASER_POINTER,
-        html`<sp-icon-events slot="icon"></sp-icon-events>`,
-        msg(str`Laser Pointer`),
-      );
-    });
+    this.cameras.current.forEach((camera) => {
+      if (!camera.has(Camera)) {
+        return;
+      }
 
-    this.canvases.current.forEach((canvas) => {
+      const { canvas } = camera.read(Camera);
+      if (!canvas) {
+        return;
+      }
+
       const { inputPoints, api } = canvas.read(Canvas);
       const appState = api.getAppState();
       const pen = appState.penbarSelected;
-      const camera = api.getCamera();
 
       if (pen !== Pen.LASER_POINTER) {
         return;
@@ -64,15 +60,15 @@ export class LaserPointerSystem extends System {
       if (!selection) {
         this.selections.set(camera.__id, {
           laserTrails: new LaserTrails(this.handler, api),
-          svgSVGElement: document.createElementNS(
-            SVG_NS,
-            'svg',
-          ) as SVGSVGElement,
+          svgSVGElement: DOMAdapter.get()
+            .getDocument()
+            .createElementNS(SVG_NS, 'svg'),
         });
         selection = this.selections.get(camera.__id);
 
         // Default is hidden
         selection.svgSVGElement.style.overflow = 'visible';
+        selection.svgSVGElement.style.position = 'absolute';
 
         api.getSvgLayer().appendChild(selection.svgSVGElement);
       }
@@ -98,7 +94,6 @@ export class LaserPointerSystem extends System {
         } = inputPoint;
         const [x, y] = input.pointerViewport;
 
-        // TODO: If the pointer is not moved, change the selection mode to SELECT
         if (prevX === x && prevY === y) {
           return;
         }

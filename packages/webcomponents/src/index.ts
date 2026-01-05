@@ -5,7 +5,4 @@ export * from './utils';
 export * from './API';
 export * from './context';
 export * from './storage';
-export * from './i18n';
-
-// FIXME: move to extended API
-export { registerTask } from './spectrum/taskbar';
+export { localizedTemplates } from './i18n';

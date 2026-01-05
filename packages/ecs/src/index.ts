@@ -47,6 +47,7 @@ export {
   isSupportedImageFileType,
   inferXYWidthHeight,
   getSvgPathFromStroke,
+  distanceBetweenPoints,
   MIME_TYPES,
   IMAGE_MIME_TYPES,
   type Gradient,
@@ -77,6 +78,8 @@ export {
   type ComponentType,
   type Entity,
 } from '@lastolivegames/becsy';
+
+export { type IPointData } from '@pixi/math';
 
 export const DefaultPlugins: Plugin[] = [
   HierarchyPlugin,

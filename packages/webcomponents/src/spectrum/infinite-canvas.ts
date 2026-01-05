@@ -89,9 +89,7 @@ import '@spectrum-web-components/icons-workflow/icons/sp-icon-find-and-replace.j
 import '@spectrum-web-components/icons-workflow/icons/sp-icon-polygon-select.js';
 import '@spectrum-web-components/icons-workflow/icons/sp-icon-comment.js';
 import '@spectrum-web-components/icons-workflow/icons/sp-icon-image-auto-mode.js';
-import '@spectrum-web-components/icons-workflow/icons/sp-icon-erase.js';
 import '@spectrum-web-components/icons-workflow/icons/sp-icon-vector-draw.js';
-import '@spectrum-web-components/icons-workflow/icons/sp-icon-events.js';
 import '@spectrum-web-components/icons-workflow/icons/sp-icon-region-select.js';
 
 export const TOP_NAVBAR_HEIGHT = 48;
@@ -114,10 +112,9 @@ export class InfiniteCanvas extends LitElement {
 
     ic-spectrum-penbar {
       position: absolute;
+      top: 0;
+      left: 0;
       bottom: 0;
-      left: 50%;
-      transform: translateX(-50%) scale(2);
-      transform-origin: bottom center;
     }
 
     ic-spectrum-taskbar {
@@ -300,13 +297,20 @@ export class InfiniteCanvas extends LitElement {
           html`${$svgLayer}${$htmlLayer}<ic-spectrum-top-navbar
             ></ic-spectrum-top-navbar>${$canvas}
             <ic-spectrum-penbar
-              style="bottom: 32px;"
-            ></ic-spectrum-penbar>
+              style=${topbarVisible
+                ? `top: ${TOP_NAVBAR_HEIGHT}px; height: calc(100% - ${TOP_NAVBAR_HEIGHT}px);`
+                : 'top: 0; height: 100%;'}
+            >
+              <slot name="penbar-item" slot="penbar-item"></slot>
+            </ic-spectrum-penbar>
             <ic-spectrum-taskbar
               style=${`top: ${
                 topbarVisible ? TOP_NAVBAR_HEIGHT : 0
               }px; right: 0;`}
-            ></ic-spectrum-taskbar>
+            >
+              <slot name="taskbar-item" slot="taskbar-item"></slot>
+              <slot name="taskbar-panel" slot="taskbar-panel"></slot>
+            </ic-spectrum-taskbar>
             <ic-spectrum-context-bar></ic-spectrum-context-bar>
             <ic-spectrum-context-menu></ic-spectrum-context-menu>
             <ic-spectrum-text-editor

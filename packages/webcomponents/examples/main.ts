@@ -1,6 +1,12 @@
 import { App, CheckboardStyle, DefaultPlugins, getDefaultAppState, Pen, Task, } from '../../ecs';
 import { CanvasData, Event, IndexedDbStorageService, UIPlugin } from '../src';
 import '../src/spectrum';
+import { LaserPointerPlugin } from '../../plugin-laser-pointer';
+import { EraserPlugin } from '../../plugin-eraser';
+import { LassoPlugin } from '../../plugin-lasso';
+import '../../plugin-laser-pointer/src/spectrum';
+import '../../plugin-eraser/src/spectrum';
+import '../../plugin-lasso/src/spectrum';
 import WebFont from 'webfontloader';
 
 WebFont.load({
@@ -268,7 +274,12 @@ renderCanvasList();
 
 // Start the ECS app
 try {
-  const app = new App().addPlugins(...DefaultPlugins, UIPlugin);
+  const app = new App().addPlugins(
+    ...DefaultPlugins,
+    UIPlugin,
+    EraserPlugin,
+    LaserPointerPlugin,
+  );
   app.run();
 } catch (e) {
   console.error(e);

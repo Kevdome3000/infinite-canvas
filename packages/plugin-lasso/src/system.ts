@@ -7,20 +7,18 @@ import {
   InputPoint,
   Pen,
   RBush,
+  Rect,
+  Selected,
   System,
+  Transformable,
 } from '@infinite-canvas-tutorial/ecs';
 import { LassoTrail } from './lasso-trail';
 import {
-  ExtendedAPI,
   SVG_NS,
   AnimationFrameHandler,
 } from '@infinite-canvas-tutorial/webcomponents';
-import { html } from 'lit';
-import { msg, str } from '@lit/localize';
 export class LassoSystem extends System {
-  private readonly canvases = this.query((q) =>
-    q.added.and.current.with(Canvas),
-  );
+  private readonly cameras = this.query((q) => q.current.with(Camera).read);
 
   private selections = new Map<
     number,
@@ -38,28 +36,33 @@ export class LassoSystem extends System {
     this.query(
       (q) =>
         q
-          .using(Canvas, InputPoint, Input, Cursor)
-          .write.and.using(Camera, ComputedCamera, RBush).read,
+          .using(Canvas, InputPoint, Input, Cursor, Selected, Transformable)
+          .write.and.using(Camera, ComputedCamera, RBush, Rect).read,
     );
   }
 
   execute() {
-    this.canvases.added.forEach((canvas) => {
-      const { api } = canvas.read(Canvas);
-      (api as ExtendedAPI).registerPen(
-        Pen.LASSO,
-        html`<sp-icon-region-select slot="icon"></sp-icon-region-select>`,
-        msg(str`Lasso`),
-      );
-    });
+    this.cameras.current.forEach((camera) => {
+      if (!camera.has(Camera)) {
+        return;
+      }
 
-    this.canvases.current.forEach((canvas) => {
+      const { canvas } = camera.read(Camera);
+      if (!canvas) {
+        return;
+      }
+
       const { inputPoints, api } = canvas.read(Canvas);
       const appState = api.getAppState();
       const pen = appState.penbarSelected;
-      const camera = api.getCamera();
+
+      let selection = this.selections.get(camera.__id);
 
       if (pen !== Pen.LASSO) {
+        // Clear selection
+        if (selection) {
+          selection.lassoTrail.clearTrails();
+        }
         return;
       }
 
@@ -68,7 +71,6 @@ export class LassoSystem extends System {
 
       cursor.value = 'default';
 
-      let selection = this.selections.get(camera.__id);
       if (!selection) {
         this.selections.set(camera.__id, {
           lassoTrail: new LassoTrail(this.handler, api),
