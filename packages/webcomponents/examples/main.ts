@@ -190,7 +190,16 @@ async function openCanvas(id?: string) {
     ],
           checkboardStyle: CheckboardStyle.GRID,
           snapToPixelGridEnabled: true,
-          snapToPixelGridSize: 1,
+    snapToPixelGridSize: 10,
+    snapToObjectsEnabled: true,
+    // checkboardStyle: CheckboardStyle.NONE,
+    // penbarSelected: Pen.SELECT,
+    // topbarVisible: false,
+    // contextBarVisible: false,
+    // penbarVisible: false,
+    // taskbarVisible: false,
+    // rotateEnabled: false,
+    // flipEnabled: false,
         });
 
   // api.updateNodes(nodes);
@@ -225,7 +234,7 @@ async function openCanvas(id?: string) {
           fill: 'red',
         };
 
-  api.updateNodes([node1]);
+  api.updateNodes([node1, node3]);
         api.record();
 
         // Release loading lock

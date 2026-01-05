@@ -1,23 +1,25 @@
 ---
 outline: deep
-description: 'Snap and align'
+description: '吸附与对齐'
 head:
-    - ['meta', { property: 'og:title', content: 'Lesson 27 - Snap and align' }]
+    - ['meta', { property: 'og:title', content: '课程 27 - 吸附与对齐' }]
 ---
 
 <script setup>
-import SnapToPixelGrid from '../components/SnapToPixelGrid.vue'
+import SnapToPixelGrid from '../../components/SnapToPixelGrid.vue'
 </script>
 
-# Lesson 27 - Snap and align
+# 课程 27 - 吸附与对齐
 
-Snapping is a common feature in graphics editor applications. The core idea is to automatically align element boundaries or anchor points to the nearest pixel grid lines or other graphics when moving, drawing, or scaling elements. In this lesson, we'll introduce their implementation.
+吸附是一种常见于图形编辑器应用中的功能，其核心思想是在元素移动、绘制或缩放时，自动将其边界或锚点对齐到最近的像素网格线或者其他图形上，本节课我们就来介绍它们的实现。
 
-## Snap to pixel grid {#snap-to-pixel-grid}
+## 网格吸附 {#snap-to-pixel-grid}
 
-In [Lesson 5 - Drawing grids], we introduced how to efficiently draw straight-line grids. In some drag interactions such as moving and drawing, snapping to the minimum unit of the grid ensures that the position or geometric information of graphics are integers. This feature is called "Snap to pixel grid" in Figma and can be enabled in "User Preferences".
+在 [课程 5 - 绘制网格] 中我们介绍了如何高效绘制直线网格，在一些拖拽交互例如移动和绘制时，吸附到网格的最小单位，能保证图形的位置或者几何信息为整数。这个功能在 Figma 中被称为 “Snap to pixel grid”，在“用户偏好设置”中可以开启。
 
 ![source: [Snap to grid in Excalidraw] ](https://user-images.githubusercontent.com/490574/85198268-4ff5f300-b322-11ea-897e-602ef5936995.gif)
+
+我们在应用状态中增加两个配置项：
 
 ```ts
 export interface AppState {
@@ -26,7 +28,7 @@ export interface AppState {
 }
 ```
 
-To implement this feature, we first need to calculate the coordinates of points in the world coordinate system. When users drag, scale, or draw graphics, we get the current coordinates (such as x, y), then round these coordinates to the nearest integer (pixel point) or the specified grid spacing:
+实现这一功能，首先需要计算世界坐标系下点的坐标。当用户拖动、缩放、绘制图形时，获取当前的坐标（如 x, y），然后将该坐标四舍五入到最近的整数（像素点）或者指定的 grid 间距：
 
 ```ts
 // Snap to custom grid (e.g. 10px)
@@ -35,7 +37,7 @@ function snapToGrid(value, gridSize = 10) {
 }
 ```
 
-Then apply this processing function in all Systems that need to calculate coordinates of points in the world coordinate system (such as Select, DrawRect):
+然后在所有需要计算世界坐标系下点的坐标的 System 里（例如 Select、DrawRect）中，都应用这个处理函数：
 
 ```ts
 let { x: sx, y: sy } = api.viewport2Canvas({
@@ -61,24 +63,24 @@ if (snapToPixelGridEnabled) {
 }
 ```
 
-In the example below, we set `snapToPixelGridSize` to 10. You can experience the effect by dragging, moving, and drawing:
+在下面的例子中，我们将 `snapToPixelGridSize` 设置成 10，你可以通过拖拽移动、绘制来感受效果：
 
 <SnapToPixelGrid />
 
-## Object-level snapping {#snap-to-objects}
+## 对象级吸附 {#snap-to-objects}
 
-The implementation of snapping functionality in Excalidraw is divided into the following key steps:
+Excalidraw 中的 snapping 功能实现分为以下几个关键步骤：
 
--   Check if the current operation allows snapping ([isSnappingEnabled]).
--   Calculate all snappable points and gaps ([getPointSnaps]).
--   Real-time calculation of snap offsets and guide lines during drag/scale operations ([snapDraggedElements] / [snapResizingElements]).
--   Pass snapLines to the UI layer and render guide lines on the canvas ([renderSnaps]).
+-   [isSnappingEnabled] 检查当前操作是否允许吸附
+-   [getPointSnaps] 计算所有可吸附的点和间隙
+-   [snapDraggedElements] / [snapResizingElements] 拖拽/缩放时实时计算吸附偏移和辅助线
+-   [renderSnaps] 把 snapLines 传递到 UI 层，canvas 上渲染辅助线
 
-Below, we will implement this by following the steps outlined above.
+下面我们参考以上步骤来实现。
 
-### Is snapping enabled {#is-snapping-enabled}
+### 检查是否允许吸附 {#is-snapping-enabled}
 
-We have added the following configuration options to the application settings, which can also be enabled in the “Preferences Menu”:
+我们在应用状态中增加以下配置项，同样可以在“偏好菜单”中开启：
 
 ```ts
 export interface AppState {
@@ -86,13 +88,13 @@ export interface AppState {
 }
 ```
 
-Triggered when dragging and moving or drawing shapes:
+在拖拽移动和绘制图形时触发：
 
 ![source: https://github.com/excalidraw/excalidraw/issues/263#issuecomment-577605528](https://user-images.githubusercontent.com/5153846/72973602-d804ba80-3dcd-11ea-9717-05448160044c.gif)
 
-### Get point snaps {#get-point-snaps}
+### 计算可吸附点 {#get-point-snaps}
 
-Snap points are divided into two categories: selected shapes and other shapes. For one or more selected shapes, common snap points include the four corners and the center of the bounding box:
+可吸附点分成两类：被选中的图形与其他图形。对于选中的一个或多个图形，常用的可吸附点包括包围盒的四个角和中心：
 
 ```ts
 const { minX, minY, maxX, maxY } = api.getBounds(
@@ -109,7 +111,7 @@ const selectionSnapPoints = [
 ];
 ```
 
-Considering performance, we should minimize the number of times we detect the attachment points of the selected shape relative to all other shapes. We've already covered similar issues in [Lesson 8 - Using spatial indexing], where we only retrieve shapes within the viewport.
+考虑性能，我们应该尽量减少被选中图形吸附点与其他所有图形吸附点的检测次数。类似问题我们在 [课程 8 - 使用空间索引加速] 中已经介绍过了，只检索视口范围内的图形即可。
 
 ```ts
 const unculledAndUnselected = api
@@ -118,7 +120,7 @@ const unculledAndUnselected = api
     .filter((entity) => !entity.has(Culled) && !entity.has(Selected));
 ```
 
-Similarly, calculate the reference points for these shapes:
+同样计算出这些图形的参考点：
 
 ```ts
 const referenceSnapPoints: [number, number][] = unculledAndUnselected
@@ -126,9 +128,9 @@ const referenceSnapPoints: [number, number][] = unculledAndUnselected
     .flat();
 ```
 
-### Get gap snaps {#get-gap-snaps}
+### 计算间隙 {#get-gap-snaps}
 
-Beyond the currently selected shape on the canvas, other shapes may form pairs with gaps between them. The diagram in the Excalidraw code illustrates this well—take `horizontalGap` as an example:
+画布中除了当前被选中的图形，其他图形两两又可能形成一组间隙，Excalidraw 代码中的图很形象，以 `horizontalGap` 为例：
 
 ```ts
 // https://github.com/excalidraw/excalidraw/blob/f55ecb96cc8db9a2417d48cd8077833c3822d64e/packages/excalidraw/snapping.ts#L65C1-L81C3
@@ -151,7 +153,7 @@ export type Gap = {
 };
 ```
 
-If the bounding box of the selected shape does not overlap with the gap, skip the detection.
+如果被选中图形的包围盒与 Gap 没有重叠，则跳过检测。
 
 ```ts
 for (const gap of horizontalGaps) {
@@ -161,7 +163,7 @@ for (const gap of horizontalGaps) {
 }
 ```
 
-Detect the center point, right edge, and left edge in sequence:
+依次检测中心点、右侧和左侧边缘：
 
 ```ts
 // center
@@ -175,9 +177,9 @@ if (Math.abs(sideOffsetLeft) <= minOffset[0]) {
 }
 ```
 
-### Render snap lines {#render-snap-lines}
+### 渲染辅助线 {#render-snap-lines}
 
-Render snap lines in SVG container, see: [Lesson 26 - Lasso selection].
+和 [课程 26 - 套索工具] 中类似，辅助线也可以绘制在 SVG 容器中。
 
 ```ts
 renderSnapLines(
@@ -199,12 +201,12 @@ renderSnapLines(
 }
 ```
 
-## Extended reading {#extended-reading}
+## 扩展阅读 {#extended-reading}
 
 -   [How to snap shapes positions on dragging with Konva?]
 -   [Custom snapping in tldraw]
 
-[Lesson 5 - Draw grids]: /guide/lesson-005
+[课程 5 - 绘制网格]: /zh/guide/lesson-005
 [How to snap shapes positions on dragging with Konva?]: https://konvajs.org/docs/sandbox/Objects_Snapping.html
 [Snap to grid in Excalidraw]: https://github.com/excalidraw/excalidraw/issues/521
 [Custom snapping in tldraw]: https://tldraw.dev/examples/bounds-snapping-shape
@@ -213,5 +215,5 @@ renderSnapLines(
 [snapDraggedElements]: https://github.com/excalidraw/excalidraw/blob/master/packages/excalidraw/snapping.ts#L692
 [snapResizingElements]: https://github.com/excalidraw/excalidraw/blob/master/packages/excalidraw/snapping.ts#L1108C14-L1108C34
 [renderSnaps]: https://github.com/excalidraw/excalidraw/blob/master/packages/excalidraw/renderer/renderSnaps.ts
-[Lesson 8 - Using spatial indexing]: /guide/lesson-008#using-spatial-indexing
-[Lesson 26 - Lasso selection]: /guide/lesson-026#lasso-selection
+[课程 8 - 使用空间索引加速]: /zh/guide/lesson-008#using-spatial-indexing
+[课程 26 - 套索工具]: /zh/guide/lesson-026#lasso-selection
