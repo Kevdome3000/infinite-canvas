@@ -235,6 +235,7 @@ export class Select extends System {
         selected.remove(Highlighted);
       }
       const node = api.getNodeByEntity(selected);
+      if (!node) return; // Skip if entity not in node map
 
       const oldNode = selection.nodes.find((n) => n.id === node.id);
       if (oldNode) {
@@ -715,7 +716,10 @@ export class Select extends System {
           selection.mode = SelectionMode.EDITING;
 
           // Enter edit mode
-          api.updateNode(api.getNodeByEntity(selected), { isEditing: true });
+          const nodeToEdit = api.getNodeByEntity(selected);
+          if (nodeToEdit) {
+            api.updateNode(nodeToEdit, { isEditing: true });
+          }
           selection.editing = selected;
 
           if (selected.has(Polyline)) {
@@ -742,9 +746,10 @@ export class Select extends System {
 
         if (selection.editing) {
           if (selection.mode === SelectionMode.IDLE) {
-            api.updateNode(api.getNodeByEntity(selection.editing), {
-              isEditing: false,
-            });
+            const nodeToStopEditing = api.getNodeByEntity(selection.editing);
+            if (nodeToStopEditing) {
+              api.updateNode(nodeToStopEditing, { isEditing: false });
+            }
 
             selection.editing = undefined;
             selection.mode = SelectionMode.SELECT;
@@ -1021,7 +1026,8 @@ export class Select extends System {
         .elementsFromBBox(minX, minY, maxX, maxY)
         // Only select direct children of the camera
         .filter((e) => !e.has(UI) && e.read(Children).parent.has(Camera))
-        .map((e) => api.getNodeByEntity(e));
+        .map((e) => api.getNodeByEntity(e))
+        .filter((node): node is SerializedNode => node !== undefined);
       api.selectNodes(selecteds);
 
       if (needHighlight) {
@@ -1102,6 +1108,7 @@ export class Select extends System {
 
     selecteds.forEach((selected) => {
       const node = api.getNodeByEntity(selected);
+      if (!node) return; // Skip if entity not in node map
       const oldNode = selection.nodes.find((n) => n.id === node.id);
       // for each node we have the same [delta transform]
       // the equations is
