@@ -71,19 +71,32 @@ export interface AppState {
      * Allow flip in transformer
      */
     flipEnabled: boolean;
-
-    /**
-     * Allow snap to pixel grid
-     */
-    snapToPixelGridEnabled: boolean;
-    snapToPixelGridSize: number;
-
-    /**
-     * Allow snap to objects
-     */
-    snapToObjectsEnabled: boolean;
 }
 ```
+
+### snapToPixelGridEnabled
+
+To enable grid snapping, see: [Lesson 27 - Snap and align]. The default value is `false`.
+
+### snapToPixelGridSize
+
+Minimum spacing after enabling grid snapping. Default value is `10`.
+
+### snapToObjectsEnabled
+
+To enable object snapping. Default value is `false`
+
+### snapToObjectDistance
+
+After enabling object snapping, the minimum detection distance defaults to `8`.
+
+### snapLineStroke
+
+Color of snap lines. Default value is `orange`
+
+### snapLineStrokeWidth
+
+Stroke width of snap lines. Default value is `1`
 
 ## get/setNodes
 
@@ -210,6 +223,20 @@ api.getHtmlLayer(); // HTMLDivElement
 api.getCanvas().read(Canvas).htmlLayer;
 ```
 
+## getSvgLayer
+
+Retrieve the SVG content container, where the selection tool, lasso tool, eraser tool path, and laser pointer tool will be placed.
+
+```ts
+api.getSvgLayer(); // HTMLDivElement
+// equivalent to
+api.getCanvas().read(Canvas).svgLayer;
+```
+
+## getCanvasElement
+
+Retrieve `<canvas>` element.
+
 ## client2Viewport
 
 Convert points in the viewport coordinate system to points in the client coordinate system.
@@ -235,3 +262,4 @@ viewport2Client({ x, y }: IPointData): IPointData
 [Export image]: /reference/export-image
 [Lesson 1 - SwapChain]: /guide/lesson-001#swapchain
 [@antv/g-device-api]: https://github.com/antvis/g-device-api
+[Lesson 27 - Snap and align]: /guide/lesson-027

@@ -344,11 +344,11 @@ pnpm run dev
 ## 课程 27 - 吸附与对齐 [🔗](https://infinitecanvas.cc/zh/guide/lesson-027)
 
 -   网格吸附
--   对象吸附
+-   对象吸附，展示参考点与辅助线
 
-|                     网格吸附                      |                    对象吸附                     |
-| :-----------------------------------------------: | :---------------------------------------------: |
-| ![snap to pixel grid](./screenshots/lesson27.gif) | ![snap to object](./screenshots/lesson27-2.png) |
+|                     网格吸附                      |                     对象吸附                      |
+| :-----------------------------------------------: | :-----------------------------------------------: |
+| ![snap to pixel grid](./screenshots/lesson27.gif) | ![snap to objects](./screenshots/lesson27-2.gifg) |
 
 ## 课程 28 - 与 AI 结合 [🔗](https://infinitecanvas.cc/zh/guide/lesson-028)
 
@@ -380,7 +380,8 @@ pnpm run dev
 ## 课程 30 - 图像后处理与渲染图 [🔗](https://infinitecanvas.cc/zh/guide/lesson-030)
 
 -   图像后处理，例如噪声、亮度调整等效果
--   渲染图
+-   渲染图的设计思路与实现
+-   使用 FXAA 进行快速抗锯齿
 
 |                Image processing                 |     |
 | :---------------------------------------------: | :-: |
