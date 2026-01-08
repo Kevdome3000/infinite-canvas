@@ -54,13 +54,24 @@ export class RenderHTML extends System {
       return;
     }
 
-    // ============================================================
-    // PHASE 1: ELEMENT CREATION
-    // Create DOM elements for newly added HTML/Embed entities.
-    // This MUST run first - all other operations depend on elements existing.
-    // Fixes: TypeError when culled/editables queries access element.style
-    // on entities that were just deserialized with HTMLContainer.element = null.
-    // ============================================================
+    this.culled.addedChangedOrRemoved.forEach((entity) => {
+      entity.read(HTMLContainer).element.style.display = entity.has(Culled)
+        ? 'none'
+        : 'block';
+    });
+
+    this.editables.addedOrChanged.forEach((entity) => {
+      const { element } = entity.read(HTMLContainer);
+      const { isEditing } = entity.read(Editable);
+      element.style.pointerEvents = isEditing ? 'auto' : 'none';
+
+      if (entity.has(Embed)) {
+        const $iframe = element.querySelector('iframe');
+        if ($iframe) {
+          $iframe.style.pointerEvents = isEditing ? 'auto' : 'none';
+        }
+      }
+    });
 
     this.htmls.added.forEach((entity) => {
       const { html, width, height } = entity.read(HTML);
@@ -88,6 +99,13 @@ export class RenderHTML extends System {
 
       htmlLayer.appendChild($child);
 
+      this.updateCSSTransform($child, matrix, width, height);
+    });
+
+    this.htmls.changed.forEach((entity) => {
+      const $child = entity.read(HTMLContainer).element;
+      const { matrix } = entity.read(GlobalTransform);
+      const { width, height } = entity.read(HTML);
       this.updateCSSTransform($child, matrix, width, height);
     });
 

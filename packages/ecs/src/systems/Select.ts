@@ -32,7 +32,6 @@ import {
   Transformable,
   TransformableStatus,
   UI,
-  UIType,
   Visibility,
   ZIndex,
   AnchorName,
