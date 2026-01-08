@@ -32,7 +32,6 @@ import {
   Transformable,
   TransformableStatus,
   UI,
-  UIType,
   Visibility,
   ZIndex,
   AnchorName,
@@ -53,6 +52,7 @@ import {
   createSVGElement,
   decompose,
   distanceBetweenPoints,
+  GapSnapLine,
   getCursor,
   getGridPoint,
   isBrowser,
@@ -108,11 +108,10 @@ export interface SelectOBB {
   pointerMoveViewportX: number;
   pointerMoveViewportY: number;
 
-  brush: Entity;
+  brushContainer: SVGSVGElement;
+  snapContainer: SVGSVGElement;
 
   editing: Entity;
-
-  svgSVGElement: SVGSVGElement;
 }
 
 /**
@@ -193,38 +192,34 @@ export class Select extends System {
     ex: number,
     ey: number,
   ) {
-    const { snapToPixelGridSize } = api.getAppState();
+    const { snapToPixelGridSize, snapToPixelGridEnabled } = api.getAppState();
     const camera = api.getCamera();
     camera.write(Transformable).status = TransformableStatus.MOVING;
 
     const selection = this.selections.get(camera.__id);
 
-    const { pointerDownCanvasX, pointerDownCanvasY } = camera.read(
-      ComputedCameraControl,
-    );
-    const [gridEx, gridEy] = getGridPoint(ex, ey, snapToPixelGridSize);
-    const [gridPointerDownCanvasX, gridPointerDownCanvasY] = getGridPoint(
-      pointerDownCanvasX,
-      pointerDownCanvasY,
-      snapToPixelGridSize,
-    );
+    let offset: [number, number] = [0, 0];
+    if (snapToPixelGridEnabled) {
+      const [gridSx, gridSy] = getGridPoint(sx, sy, snapToPixelGridSize);
+      const [gridEx, gridEy] = getGridPoint(ex, ey, snapToPixelGridSize);
 
-    const dragOffset: [number, number] = [
-      gridEx - gridPointerDownCanvasX,
-      gridEy - gridPointerDownCanvasY,
-    ];
+      const dragOffset: [number, number] = [gridEx - gridSx, gridEy - gridSy];
 
-    const { snapOffset, snapLines } = snapDraggedElements(api, dragOffset);
+      const { snapOffset, snapLines } = snapDraggedElements(api, dragOffset);
 
-    const offset = calculateOffset(
-      [selection.obb.x, selection.obb.y],
-      dragOffset,
-      snapOffset,
-      snapToPixelGridSize,
-    );
+      const obb = getOBB(camera);
+      offset = calculateOffset(
+        [obb.x, obb.y],
+        dragOffset,
+        snapOffset,
+        snapToPixelGridSize,
+      );
 
-    if (isBrowser) {
-      this.renderSnapLines(api, snapLines);
+      if (isBrowser) {
+        this.renderSnapLines(selection, snapLines, api);
+      }
+    } else {
+      offset = [ex - sx, ey - sy];
     }
 
     const { selecteds, mask } = camera.read(Transformable);
@@ -235,14 +230,10 @@ export class Select extends System {
         selected.remove(Highlighted);
       }
       const node = api.getNodeByEntity(selected);
-
-      const oldNode = selection.nodes.find((n) => n.id === node.id);
-      if (oldNode) {
-        api.updateNodeOBB(node, {
-          x: oldNode.x + dragOffset[0],
-          y: oldNode.y + dragOffset[1],
-        });
-      }
+      api.updateNodeOBB(node, {
+        x: node.x + offset[0],
+        y: node.y + offset[1],
+      });
       updateGlobalTransform(selected);
       updateComputedPoints(selected);
     });
@@ -268,7 +259,7 @@ export class Select extends System {
     this.saveSelectedOBB(api, selection);
 
     if (isBrowser) {
-      this.clearSnapLines(api);
+      this.clearSnapLines(selection);
     }
   }
 
@@ -582,12 +573,9 @@ export class Select extends System {
     const camera = api.getCamera();
     const selection = this.selections.get(camera.__id);
 
-    const {
-      pointerDownViewportX,
-      pointerDownViewportY,
-      pointerDownCanvasX,
-      pointerDownCanvasY,
-    } = camera.read(ComputedCameraControl);
+    const { pointerDownViewportX, pointerDownViewportY } = camera.read(
+      ComputedCameraControl,
+    );
 
     // Use a threshold to avoid showing the selection brush when the pointer is moved a little.
     const shouldShowSelectionBrush =
@@ -599,42 +587,14 @@ export class Select extends System {
       ) > 10;
 
     if (shouldShowSelectionBrush) {
-      if (!selection.brush) {
-        selection.brush = this.commands
-          .spawn(
-            new UI(UIType.BRUSH),
-            new Transform(),
-            new Renderable(),
-            new FillSolid(TRANSFORMER_MASK_FILL_COLOR),
-            new Opacity({ fillOpacity: 0.5 }),
-            new Stroke({ width: 1, color: TRANSFORMER_ANCHOR_STROKE_COLOR }),
-            new Rect(),
-            new Visibility('hidden'),
-            new ZIndex(Infinity),
-            new StrokeAttenuation(),
-          )
-          .id()
-          .hold();
-
-        const camera = this.commands.entity(api.getCamera());
-        camera.appendChild(this.commands.entity(selection.brush));
-        this.commands.execute();
-      }
-
-      selection.brush.write(Visibility).value = 'visible';
-
-      const { x: wx, y: wy } = api.viewport2Canvas({
-        x: viewportX,
-        y: viewportY,
-      });
-
-      Object.assign(selection.brush.write(Rect), {
-        x: pointerDownCanvasX,
-        y: pointerDownCanvasY,
-        width: wx - pointerDownCanvasX,
-        height: wy - pointerDownCanvasY,
-      });
-      updateGlobalTransform(selection.brush);
+      this.renderBrush(
+        selection,
+        // <rect> attribute height: A negative value is not valid. So we need to use the absolute value.
+        Math.min(pointerDownViewportX, viewportX),
+        Math.min(pointerDownViewportY, viewportY),
+        Math.abs(viewportX - pointerDownViewportX),
+        Math.abs(viewportY - pointerDownViewportY),
+      );
 
       // Select elements in the brush
       this.applyBrushSelection(api, selection, true);
@@ -691,17 +651,19 @@ export class Select extends System {
           cos: 0,
           pointerMoveViewportX: 0,
           pointerMoveViewportY: 0,
-          brush: undefined,
+          brushContainer: createSVGElement('svg') as SVGSVGElement,
           editing: undefined,
-          svgSVGElement: createSVGElement('svg') as SVGSVGElement,
+          snapContainer: createSVGElement('svg') as SVGSVGElement,
         };
         this.selections.set(camera.__id, selection);
 
-        selection.svgSVGElement.style.overflow = 'visible';
-        selection.svgSVGElement.style.position = 'absolute';
-
         if (isBrowser) {
-          api.getSvgLayer().appendChild(selection.svgSVGElement);
+          selection.brushContainer.style.overflow = 'visible';
+          selection.brushContainer.style.position = 'absolute';
+          selection.snapContainer.style.overflow = 'visible';
+          selection.snapContainer.style.position = 'absolute';
+          api.getSvgLayer().appendChild(selection.brushContainer);
+          api.getSvgLayer().appendChild(selection.snapContainer);
         }
       }
 
@@ -999,11 +961,12 @@ export class Select extends System {
     });
   }
 
-  private hideBrush(selection: SelectOBB) {
-    if (selection.brush) {
-      selection.brush.write(Visibility).value = 'hidden';
-    }
-    selection.mode = SelectionMode.IDLE;
+  finalize(): void {
+    this.selections.forEach(({ brushContainer, snapContainer }) => {
+      brushContainer.remove();
+      snapContainer.remove();
+    });
+    this.selections.clear();
   }
 
   private applyBrushSelection(
@@ -1011,19 +974,30 @@ export class Select extends System {
     selection: SelectOBB,
     needHighlight: boolean,
   ) {
-    if (selection.brush) {
-      const { x, y, width, height } = selection.brush.read(Rect);
-      const minX = Math.min(x, x + width);
-      const minY = Math.min(y, y + height);
-      const maxX = Math.max(x, x + width);
-      const maxY = Math.max(y, y + height);
+    if (selection.brushContainer) {
+      const brush = selection.brushContainer.firstChild as SVGRectElement;
+      if (!brush) {
+        return;
+      }
+      const x = parseFloat(brush.getAttribute('x') || '0');
+      const y = parseFloat(brush.getAttribute('y') || '0');
+      const width = parseFloat(brush.getAttribute('width') || '0');
+      const height = parseFloat(brush.getAttribute('height') || '0');
+      const { x: minX, y: minY } = api.viewport2Canvas({
+        x,
+        y,
+      });
+      const { x: maxX, y: maxY } = api.viewport2Canvas({
+        x: x + width,
+        y: y + height,
+      });
       const selecteds = api
         .elementsFromBBox(minX, minY, maxX, maxY)
         // Only select direct children of the camera
         .filter((e) => !e.has(UI) && e.read(Children).parent.has(Camera))
+        // TODO: locked layers should not be selected
         .map((e) => api.getNodeByEntity(e));
       api.selectNodes(selecteds);
-
       if (needHighlight) {
         api.highlightNodes(selecteds);
       }
@@ -1147,19 +1121,60 @@ export class Select extends System {
     });
   }
 
-  private clearSnapLines(api: API) {
-    const { svgSVGElement } = this.selections.get(api.getCamera().__id);
-    svgSVGElement.innerHTML = '';
+  private hideBrush(selection: SelectOBB) {
+    if (selection.brushContainer) {
+      selection.brushContainer.setAttribute('visibility', 'hidden');
+    }
+    selection.mode = SelectionMode.IDLE;
+  }
+
+  private renderBrush(
+    selection: SelectOBB,
+    x: number,
+    y: number,
+    width: number,
+    height: number,
+  ) {
+    const { brushContainer } = selection;
+    brushContainer.setAttribute('visibility', 'visible');
+
+    let brush = brushContainer.firstChild as SVGRectElement;
+    if (!brush) {
+      brush = createSVGElement('rect') as SVGRectElement;
+      brush.setAttribute('x', '0');
+      brush.setAttribute('y', '0');
+      brush.setAttribute('width', '0');
+      brush.setAttribute('height', '0');
+      brush.setAttribute('opacity', '0.5');
+      brush.setAttribute('fill', TRANSFORMER_MASK_FILL_COLOR);
+      brush.setAttribute('stroke', TRANSFORMER_ANCHOR_STROKE_COLOR);
+      brush.setAttribute('stroke-width', '1');
+      brushContainer.appendChild(brush);
+    }
+
+    brush.setAttribute('x', x.toString());
+    brush.setAttribute('y', y.toString());
+    brush.setAttribute('width', width.toString());
+    brush.setAttribute('height', height.toString());
+  }
+
+  private clearSnapLines(selection: SelectOBB) {
+    const { snapContainer } = selection;
+    snapContainer.innerHTML = '';
   }
 
   private renderSnapLines(
-    api: API,
+    selection: SelectOBB,
     snapLines: { type: string; points: [number, number][] }[],
+    api: API,
   ) {
-    const { svgSVGElement } = this.selections.get(api.getCamera().__id);
-    this.clearSnapLines(api);
+    const { snapLineStroke, snapLineStrokeWith, cameraZoom } =
+      api.getAppState();
+    const { snapContainer } = selection;
+    this.clearSnapLines(selection);
 
-    snapLines.forEach(({ type, points }) => {
+    snapLines.forEach((snapLine) => {
+      const { type, points } = snapLine;
       if (type === 'points') {
         const pointsInViewport = points.map((p) =>
           api.canvas2Viewport({ x: p[0], y: p[1] }),
@@ -1170,9 +1185,9 @@ export class Select extends System {
           'points',
           pointsInViewport.map((p) => `${p.x},${p.y}`).join(' '),
         );
-        line.setAttribute('stroke', 'orange');
-        line.setAttribute('stroke-width', '1');
-        svgSVGElement.appendChild(line);
+        line.setAttribute('stroke', snapLineStroke);
+        line.setAttribute('stroke-width', `${snapLineStrokeWith}`);
+        snapContainer.appendChild(line);
 
         pointsInViewport.forEach((p) => {
           // cross point
@@ -1181,20 +1196,158 @@ export class Select extends System {
           tlbr.setAttribute('y1', `${p.y - 4}`);
           tlbr.setAttribute('x2', `${p.x + 4}`);
           tlbr.setAttribute('y2', `${p.y + 4}`);
-          tlbr.setAttribute('stroke', 'orange');
-          tlbr.setAttribute('stroke-width', '1');
-          svgSVGElement.appendChild(tlbr);
+          tlbr.setAttribute('stroke', snapLineStroke);
+          tlbr.setAttribute('stroke-width', `${snapLineStrokeWith}`);
+          snapContainer.appendChild(tlbr);
 
           const trbl = createSVGElement('line') as SVGLineElement;
           trbl.setAttribute('x1', `${p.x - 4}`);
           trbl.setAttribute('y1', `${p.y + 4}`);
           trbl.setAttribute('x2', `${p.x + 4}`);
           trbl.setAttribute('y2', `${p.y - 4}`);
-          trbl.setAttribute('stroke', 'orange');
-          trbl.setAttribute('stroke-width', '1');
-          svgSVGElement.appendChild(trbl);
+          trbl.setAttribute('stroke', snapLineStroke);
+          trbl.setAttribute('stroke-width', `${snapLineStrokeWith}`);
+          snapContainer.appendChild(trbl);
         });
+      } else if (type === 'gap') {
+        // @see https://github.com/excalidraw/excalidraw/blob/master/packages/excalidraw/renderer/renderSnaps.ts#L123
+        const { x: fromX, y: fromY } = api.canvas2Viewport({
+          x: points[0][0],
+          y: points[0][1],
+        });
+        const { x: toX, y: toY } = api.canvas2Viewport({
+          x: points[1][0],
+          y: points[1][1],
+        });
+        const distance = Math.sqrt(
+          Math.pow(points[0][0] - points[1][0], 2) +
+            Math.pow(points[0][1] - points[1][1], 2),
+        );
+        const from = [fromX, fromY] as [number, number];
+        const to = [toX, toY] as [number, number];
+        const { direction } = snapLine as GapSnapLine;
+
+        // a horizontal gap snap line
+        // |–––––––||–––––––|
+        // ^    ^   ^       ^
+        // \    \   \       \
+        // (1)  (2) (3)     (4)
+
+        const FULL = 8;
+        const HALF = FULL / 2;
+        const QUARTER = FULL / 4;
+        // (1)
+        if (direction === 'horizontal') {
+          const halfPoint = [(from[0] + to[0]) / 2, from[1]];
+
+          this.renderSnapLine(
+            [from[0], from[1] - FULL],
+            [from[0], from[1] + FULL],
+            api,
+            snapContainer,
+          );
+
+          // (3)
+          this.renderSnapLine(
+            [halfPoint[0] - QUARTER, halfPoint[1] - HALF],
+            [halfPoint[0] - QUARTER, halfPoint[1] + HALF],
+            api,
+            snapContainer,
+          );
+          this.renderSnapLine(
+            [halfPoint[0] + QUARTER, halfPoint[1] - HALF],
+            [halfPoint[0] + QUARTER, halfPoint[1] + HALF],
+            api,
+            snapContainer,
+          );
+
+          // (4)
+          this.renderSnapLine(
+            [to[0], to[1] - FULL],
+            [to[0], to[1] + FULL],
+            api,
+            snapContainer,
+          );
+
+          // (2)
+          this.renderSnapLine(from, to, api, snapContainer);
+
+          // Render distance label below (3)
+
+          const label = createSVGElement('text') as SVGTextElement;
+          label.setAttribute('x', `${halfPoint[0]}`);
+          label.setAttribute('y', `${halfPoint[1] + 16}`);
+          label.setAttribute('text-anchor', 'middle');
+          label.setAttribute('dominant-baseline', 'middle');
+          label.textContent = `${distance.toFixed(0)}`;
+          label.setAttribute('fill', snapLineStroke);
+          label.setAttribute('font-size', '12');
+          snapContainer.appendChild(label);
+        } else {
+          const halfPoint = [from[0], (from[1] + to[1]) / 2];
+
+          this.renderSnapLine(
+            [from[0] - FULL, from[1]],
+            [from[0] + FULL, from[1]],
+            api,
+            snapContainer,
+          );
+
+          // (3)
+          this.renderSnapLine(
+            [halfPoint[0] - HALF, halfPoint[1] - QUARTER],
+            [halfPoint[0] + HALF, halfPoint[1] - QUARTER],
+            api,
+            snapContainer,
+          );
+          this.renderSnapLine(
+            [halfPoint[0] - HALF, halfPoint[1] + QUARTER],
+            [halfPoint[0] + HALF, halfPoint[1] + QUARTER],
+            api,
+            snapContainer,
+          );
+
+          // (4)
+          this.renderSnapLine(
+            [to[0] - FULL, to[1]],
+            [to[0] + FULL, to[1]],
+            api,
+            snapContainer,
+          );
+
+          // (2)
+          this.renderSnapLine(from, to, api, snapContainer);
+
+          // Render distance label to the right of (3)
+          const label = createSVGElement('text') as SVGTextElement;
+          label.setAttribute('x', `${halfPoint[0] + 16}`);
+          label.setAttribute('y', `${halfPoint[1]}`);
+          label.setAttribute('text-anchor', 'start');
+          label.setAttribute('dominant-baseline', 'middle');
+          label.textContent = `${distance.toFixed(0)}`;
+          label.setAttribute('fill', snapLineStroke);
+          label.setAttribute('font-size', '12');
+          snapContainer.appendChild(label);
+        }
       }
     });
+  }
+
+  private renderSnapLine(
+    from: [number, number],
+    to: [number, number],
+    api: API,
+    snapContainer: SVGSVGElement,
+  ) {
+    const { snapLineStroke, snapLineStrokeWith } = api.getAppState();
+    const line = createSVGElement('line') as SVGLineElement;
+
+    line.setAttribute('x1', `${from[0]}`);
+    line.setAttribute('y1', `${from[1]}`);
+    line.setAttribute('x2', `${to[0]}`);
+    line.setAttribute('y2', `${to[1]}`);
+    line.setAttribute('stroke', snapLineStroke);
+    line.setAttribute('stroke-width', `${snapLineStrokeWith}`);
+    snapContainer.appendChild(line);
   }
 }
