@@ -54,25 +54,6 @@ export class RenderHTML extends System {
       return;
     }
 
-    this.culled.addedChangedOrRemoved.forEach((entity) => {
-      entity.read(HTMLContainer).element.style.display = entity.has(Culled)
-        ? 'none'
-        : 'block';
-    });
-
-    this.editables.addedOrChanged.forEach((entity) => {
-      const { element } = entity.read(HTMLContainer);
-      const { isEditing } = entity.read(Editable);
-      element.style.pointerEvents = isEditing ? 'auto' : 'none';
-
-      if (entity.has(Embed)) {
-        const $iframe = element.querySelector('iframe');
-        if ($iframe) {
-          $iframe.style.pointerEvents = isEditing ? 'auto' : 'none';
-        }
-      }
-    });
-
     this.htmls.added.forEach((entity) => {
       const { html, width, height } = entity.read(HTML);
       const { element } = entity.read(HTMLContainer);

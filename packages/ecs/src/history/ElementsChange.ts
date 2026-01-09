@@ -69,11 +69,17 @@ export function safeAddComponent<T>(
   componentCtor: ComponentType<T>,
   component?: Partial<T>,
 ) {
-  if (!entity.has(componentCtor)) {
-    entity.add(componentCtor);
-  }
-  if (component) {
-    Object.assign(entity.write(componentCtor), component);
+  try {
+    if (!entity.has(componentCtor)) {
+      entity.add(componentCtor);
+    }
+    if (component) {
+      Object.assign(entity.write(componentCtor), component);
+    }
+  } catch (e) {
+    // Silently ignore checkMask errors from async operations (e.g., loadImage)
+    // These occur when adding components outside the ECS system execution context
+    console.warn('safeAddComponent failed for', componentCtor.name, ':', e);
   }
 }
 
@@ -220,29 +226,29 @@ export class ElementsChange implements Change<SceneElementsMap> {
         containsZindexDifference: boolean;
       },
     ) =>
-    (id: string, partial: ElementPartial) => {
-      let element = elements.get(id);
+      (id: string, partial: ElementPartial) => {
+        let element = elements.get(id);
 
-      if (!element) {
-        // always fallback to the local snapshot, in cases when we cannot find the element in the elements array
-        element = snapshot.get(id);
+        if (!element) {
+          // always fallback to the local snapshot, in cases when we cannot find the element in the elements array
+          element = snapshot.get(id);
 
-        if (element) {
-          // as the element was brought from the snapshot, it automatically results in a possible zindex difference
-          flags.containsZindexDifference = true;
+          if (element) {
+            // as the element was brought from the snapshot, it automatically results in a possible zindex difference
+            flags.containsZindexDifference = true;
 
-          // as the element was force deleted, we need to check if adding it back results in a visible change
-          if (
-            partial.isDeleted === false ||
-            (partial.isDeleted !== true && element.isDeleted === false)
-          ) {
-            flags.containsVisibleDifference = true;
+            // as the element was force deleted, we need to check if adding it back results in a visible change
+            if (
+              partial.isDeleted === false ||
+              (partial.isDeleted !== true && element.isDeleted === false)
+            ) {
+              flags.containsVisibleDifference = true;
+            }
           }
         }
-      }
 
-      return element;
-    };
+        return element;
+      };
 
   private static createApplier = (
     nextElements: SceneElementsMap,
@@ -305,10 +311,10 @@ export class ElementsChange implements Change<SceneElementsMap> {
       containsVisibleDifference: boolean;
       containsZindexDifference: boolean;
     } = {
-      // by default we don't care about about the flags
-      containsVisibleDifference: true,
-      containsZindexDifference: true,
-    },
+        // by default we don't care about about the flags
+        containsVisibleDifference: true,
+        containsZindexDifference: true,
+      },
   ) {
     const { ...directlyApplicablePartial } = delta.inserted;
 
@@ -396,7 +402,7 @@ export class ElementsChange implements Change<SceneElementsMap> {
     private readonly removed: Map<string, Delta<ElementPartial>>,
     private readonly updated: Map<string, Delta<ElementPartial>>,
     private readonly api: API,
-  ) {}
+  ) { }
 
   inverse(): ElementsChange {
     const inverseInternal = (deltas: Map<string, Delta<ElementPartial>>) => {
