@@ -13,6 +13,7 @@
     "pretty": true,
     "lib": ["dom", "esnext"],
     "skipLibCheck": true,
+    "sourceRoot": "src",
     "baseUrl": "src",
     "resolveJsonModule": true,
     "downlevelIteration": true

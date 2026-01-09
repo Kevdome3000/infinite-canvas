@@ -99,7 +99,7 @@ export class DefaultStateManagement implements StateManagement {
     this.#nodes = nodes;
   }
 
-  onChange(snapshot: { appState: AppState; nodes: SerializedNode[] }) {}
+  onChange(snapshot: { appState: AppState; nodes: SerializedNode[] }) { }
 }
 
 export const mapToArray = <T extends { id: string } | string>(
@@ -240,6 +240,41 @@ export class API {
       }
     }
   }
+
+  /**
+   * Check if the canvas entity has the Canvas component attached.
+   * Use for defensive checks before calling getCanvasElement() etc.
+   */
+  hasCanvas(): boolean {
+    return this.#canvas?.__valid && this.#canvas.has(Canvas);
+  }
+
+  /**
+   * Get a node by ID with type casting.
+   * Convenience method to avoid verbose pattern:
+   *   const nodes = api.getNodes();
+   *   const node = nodes.find(n => n.id === id) as SomeType;
+   */
+  getNodeByIdAs<T extends SerializedNode>(id: string): T | undefined {
+    return this.getNodeById(id) as T | undefined;
+  }
+
+  /**
+   * Get multiple nodes by their IDs (batch operation).
+   */
+  getNodesByIds(ids: string[]): SerializedNode[] {
+    const idSet = new Set(ids);
+    return this.getNodes().filter(node => idSet.has(node.id));
+  }
+
+  /**
+   * Get all currently selected nodes.
+   * Convenience method for the common pattern of getting selected nodes.
+   */
+  getSelectedNodes(): SerializedNode[] {
+    return this.getNodesByIds(this.getAppState().layersSelected);
+  }
+
 
   getParentTransform(entity: Entity) {
     if (entity.has(Children) && !entity.read(Children).parent.has(Camera)) {
@@ -769,12 +804,12 @@ export class API {
     // remove duplicates
     const layersSelected = preserveSelection
       ? [
-          ...prevAppState.layersSelected,
-          ...nodes.map((node) => node.id),
-        ].filter((id, index, self) => self.indexOf(id) === index)
+        ...prevAppState.layersSelected,
+        ...nodes.map((node) => node.id),
+      ].filter((id, index, self) => self.indexOf(id) === index)
       : nodes
-          .map((node) => node.id)
-          .filter((id, index, self) => self.indexOf(id) === index);
+        .map((node) => node.id)
+        .filter((id, index, self) => self.indexOf(id) === index);
     if (updateAppState) {
       this.setAppState({
         ...prevAppState,
@@ -826,12 +861,12 @@ export class API {
     // remove duplicates
     const layersHighlighted = preserveSelection
       ? [
-          ...prevAppState.layersHighlighted,
-          ...nodes.map((node) => node.id),
-        ].filter((id, index, self) => self.indexOf(id) === index)
+        ...prevAppState.layersHighlighted,
+        ...nodes.map((node) => node.id),
+      ].filter((id, index, self) => self.indexOf(id) === index)
       : nodes
-          .map((node) => node.id)
-          .filter((id, index, self) => self.indexOf(id) === index);
+        .map((node) => node.id)
+        .filter((id, index, self) => self.indexOf(id) === index);
     if (updateAppState) {
       this.setAppState({
         ...prevAppState,
@@ -967,7 +1002,7 @@ export class API {
     }
   }
 
-  updateNodeVectorNetwork(node: SerializedNode, vectorNetwork: VectorNetwork) {}
+  updateNodeVectorNetwork(node: SerializedNode, vectorNetwork: VectorNetwork) { }
 
   updateNodeOBB(
     node: SerializedNode,
