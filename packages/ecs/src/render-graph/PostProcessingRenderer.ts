@@ -1,6 +1,5 @@
 import { vert as bigTriangleVert } from '../shaders/post-processing/big-triangle';
-import { frag as fxaaFrag } from '../shaders/post-processing/fxaa';
-// import { frag as giFrag } from '../shaders/post-processing/gi';
+import * as postProcessingShaders from '../shaders/post-processing';
 import {
   Buffer,
   Device,
@@ -20,9 +19,13 @@ import {
   AddressMode,
   FilterMode,
 } from '@antv/g-device-api';
-import { RenderCache } from '../utils';
-import { TexturePool } from '../resources';
-import { API } from '..';
+import { Effect, RenderCache } from '../utils';
+
+/**
+ * Use big triangle to render post processing effects.
+ *
+ * @see https://luma.gl/docs/api-reference/shadertools/shader-passes/image-processing
+ */
 
 export class PostProcessingRenderer {
   #bigTriangleProgram: Program;
@@ -32,23 +35,21 @@ export class PostProcessingRenderer {
   #bigTriangleTexture: Texture;
   #bigTriangleRenderTarget: RenderTarget;
   #bigTriangleBindings: Bindings;
-  // #bigTriangleUniformBuffer: Buffer;
+  #bigTriangleUniformBuffer: Buffer;
 
   constructor(
     private readonly device: Device,
     private readonly swapChain: SwapChain,
     private readonly renderCache: RenderCache,
-    private readonly texturePool: TexturePool,
-    private readonly api: API,
   ) {}
 
-  render(renderPass: RenderPass, texture: Texture) {
+  render(renderPass: RenderPass, texture: Texture, effect: Effect) {
     if (!this.#bigTriangleProgram) {
-      // this.#bigTriangleUniformBuffer = this.device.createBuffer({
-      //   viewOrSize: Float32Array.BYTES_PER_ELEMENT * (4 * 3),
-      //   usage: BufferUsage.UNIFORM,
-      //   hint: BufferFrequencyHint.DYNAMIC,
-      // });
+      this.#bigTriangleUniformBuffer = this.device.createBuffer({
+        viewOrSize: Float32Array.BYTES_PER_ELEMENT * 4,
+        usage: BufferUsage.UNIFORM,
+        hint: BufferFrequencyHint.DYNAMIC,
+      });
 
       const diagnosticDerivativeUniformityHeader =
         this.device.queryVendorInfo().platformString === 'WebGPU'
@@ -60,7 +61,7 @@ export class PostProcessingRenderer {
           glsl: bigTriangleVert,
         },
         fragment: {
-          glsl: fxaaFrag,
+          glsl: postProcessingShaders[effect.type],
           postprocess: (fs) => diagnosticDerivativeUniformityHeader + fs,
         },
       });
@@ -113,13 +114,29 @@ export class PostProcessingRenderer {
             sampler,
           },
         ],
-        // uniformBufferBindings: [
-        //   {
-        //     buffer: this.#bigTriangleUniformBuffer,
-        //   },
-        // ],
+        uniformBufferBindings: [
+          {
+            buffer: this.#bigTriangleUniformBuffer,
+          },
+        ],
       });
     }
+
+    const uniformLegacyObject: Record<string, unknown> = {};
+    const uniformBuffer: number[] = [];
+    if (effect.type === 'noise') {
+      uniformLegacyObject.u_Noise = effect.value;
+      uniformBuffer.push(effect.value);
+    } else if (effect.type === 'brightness') {
+      uniformLegacyObject.u_Brightness = effect.value;
+      uniformBuffer.push(effect.value);
+    }
+
+    this.#bigTriangleUniformBuffer.setSubData(
+      0,
+      new Uint8Array(new Float32Array(uniformBuffer).buffer),
+    );
+    this.#bigTriangleProgram.setUniformsLegacy(uniformLegacyObject);
 
     const { width, height } = this.swapChain.getCanvas();
     renderPass.setViewport(0, 0, width, height);
