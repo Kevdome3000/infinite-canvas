@@ -1,4 +1,4 @@
-import { App, CheckboardStyle, DefaultPlugins, getDefaultAppState, Pen, Task, } from '../../ecs';
+import { App, CheckboardStyle, DefaultPlugins, getDefaultAppState, Pen, Task, } from '@infinite-canvas-tutorial/ecs';
 import { CanvasData, Event, IndexedDbStorageService, UIPlugin } from '../src';
 import '../src/spectrum';
 import { LaserPointerPlugin } from '../../plugin-laser-pointer';
@@ -89,6 +89,15 @@ function createCanvasElement(): HTMLElement {
   const canvas = document.createElement('ic-spectrum-canvas');
   canvas.setAttribute('style', 'width: 100%; height: 100%;');
   canvas.setAttribute('renderer', 'webgl');
+
+  // Add Eraser and Laser Pointer plugins to the dynamic element
+  const eraser = document.createElement('ic-spectrum-penbar-eraser');
+  eraser.setAttribute('slot', 'penbar-item');
+  const laser = document.createElement('ic-spectrum-penbar-laser-pointer');
+  laser.setAttribute('slot', 'penbar-item');
+  canvas.appendChild(eraser);
+  canvas.appendChild(laser);
+
   // Use the full default app state from ECS
   const defaultAppState = getDefaultAppState();
   canvas.setAttribute('app-state', JSON.stringify(defaultAppState));
@@ -169,88 +178,88 @@ async function openCanvas(id?: string) {
         isLoading = false;
       }
     } else {
-  // api.runAtNextTick(() => {
-        api.setAppState({
-          ...api.getAppState(),
-          cameraX: 0,
-    penbarSelected: Pen.SELECT,
-    penbarText: {
-      ...api.getAppState().penbarText,
-      fontFamily: 'system-ui',
-      fontFamilies: ['system-ui', 'serif', 'monospace', 'Gaegu'],
-    },
-    penbarPencil: {
-      ...api.getAppState().penbarPencil,
-      freehand: true,
-    },
-    taskbarAll: [
-      Task.SHOW_CHAT_PANEL,
-      Task.SHOW_LAYERS_PANEL,
-      Task.SHOW_PROPERTIES_PANEL,
-    ],
-          checkboardStyle: CheckboardStyle.GRID,
-          snapToPixelGridEnabled: true,
-    snapToPixelGridSize: 10,
-    // snapToPixelGridEnabled: false,
-    // snapToPixelGridSize: 0,
-    snapToObjectsEnabled: true,
-    // checkboardStyle: CheckboardStyle.NONE,
-    // penbarSelected: Pen.SELECT,
-    // topbarVisible: false,
-    // contextBarVisible: false,
-    // penbarVisible: false,
-    // taskbarVisible: false,
-    // rotateEnabled: false,
-    // flipEnabled: false,
-        });
-
-  // api.updateNodes(nodes);
-        // Create default nodes
-        const node1 = {
-          id: 'rect-1',
-          type: 'rect',
-          x: 0,
-          y: 0,
-          width: 200,
-          height: 200,
-          fill: 'grey',
-        };
-        const node2 = {
-          id: 'text-1',
-          type: 'text',
-          parentId: 'rect-1',
-          anchorX: 10,
-          anchorY: 50,
-          content: 'Hello',
-          fill: 'black',
-          fontSize: 30,
+      // api.runAtNextTick(() => {
+      api.setAppState({
+        ...api.getAppState(),
+        cameraX: 0,
+        penbarSelected: Pen.SELECT,
+        penbarText: {
+          ...api.getAppState().penbarText,
           fontFamily: 'system-ui',
-        };
-        const node3 = {
-          id: 'rect-2',
-          type: 'rect',
-          x: 100,
-          y: 100,
-          width: 200,
-          height: 200,
-          fill: 'red',
-        };
+          fontFamilies: ['system-ui', 'serif', 'monospace', 'Gaegu'],
+        },
+        penbarPencil: {
+          ...api.getAppState().penbarPencil,
+          freehand: true,
+        },
+        taskbarAll: [
+          Task.SHOW_CHAT_PANEL,
+          Task.SHOW_LAYERS_PANEL,
+          Task.SHOW_PROPERTIES_PANEL,
+        ],
+        checkboardStyle: CheckboardStyle.GRID,
+        snapToPixelGridEnabled: true,
+        snapToPixelGridSize: 10,
+        // snapToPixelGridEnabled: false,
+        // snapToPixelGridSize: 0,
+        snapToObjectsEnabled: true,
+        // checkboardStyle: CheckboardStyle.NONE,
+        // penbarSelected: Pen.SELECT,
+        // topbarVisible: false,
+        // contextBarVisible: false,
+        // penbarVisible: false,
+        // taskbarVisible: false,
+        // rotateEnabled: false,
+        // flipEnabled: false,
+      });
 
-  const node4 = {
-    id: 'rect-3',
-    type: 'rect',
-    x: 100,
-    y: 100,
-    width: 100,
-    height: 100,
-    fill: 'green',
-  };
+      // api.updateNodes(nodes);
+      // Create default nodes
+      const node1 = {
+        id: 'rect-1',
+        type: 'rect',
+        x: 0,
+        y: 0,
+        width: 200,
+        height: 200,
+        fill: 'grey',
+      };
+      const node2 = {
+        id: 'text-1',
+        type: 'text',
+        parentId: 'rect-1',
+        anchorX: 10,
+        anchorY: 50,
+        content: 'Hello',
+        fill: 'black',
+        fontSize: 30,
+        fontFamily: 'system-ui',
+      };
+      const node3 = {
+        id: 'rect-2',
+        type: 'rect',
+        x: 100,
+        y: 100,
+        width: 200,
+        height: 200,
+        fill: 'red',
+      };
 
-  api.updateNodes([node1, node3, node4]);
-        api.record();
+      const node4 = {
+        id: 'rect-3',
+        type: 'rect',
+        x: 100,
+        y: 100,
+        width: 100,
+        height: 100,
+        fill: 'green',
+      };
 
-        // Release loading lock
-        isLoading = false;
+      api.updateNodes([node1, node2, node3, node4]);
+      api.record();
+
+      // Release loading lock
+      isLoading = false;
     }
   }
   );
