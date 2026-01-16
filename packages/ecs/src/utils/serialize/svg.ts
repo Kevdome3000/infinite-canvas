@@ -107,6 +107,20 @@ export const defaultAttributes: Record<
     ...fillDefaultAttributes,
     ...strokeDefaultAttributes,
   },
+  'rough-line': {
+    x1: 0,
+    y1: 0,
+    x2: 0,
+    y2: 0,
+    ...commonDefaultAttributes,
+    ...strokeDefaultAttributes,
+  },
+  'rough-polyline': {
+    ...commonDefaultAttributes,
+    ...fillDefaultAttributes,
+    ...strokeDefaultAttributes,
+    ...markerDefaultAttributes,
+  },
   ellipse: {
     cx: 0,
     cy: 0,
@@ -292,6 +306,8 @@ export function serializeNodesToSVGElements(
       markerEnd,
       markerFactor,
       filter,
+      sizeAttenuation,
+      strokeAttenuation,
       ...rest
     } = restAttributes as SerializedNodeAttributes;
 
@@ -372,6 +388,13 @@ export function serializeNodesToSVGElements(
 
     if (textBaseline) {
       element.setAttribute('dominant-baseline', BASELINE_MAP[textBaseline]);
+    }
+
+    if (sizeAttenuation) {
+      element.setAttribute('vector-effect', 'non-scaling-size');
+    }
+    if (strokeAttenuation) {
+      element.setAttribute('vector-effect', 'non-scaling-stroke');
     }
 
     const innerStrokeAlignment = strokeAlignment === 'inner';

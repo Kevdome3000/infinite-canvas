@@ -12,7 +12,9 @@ import { Commands, EntityCommands } from './commands';
 import { AppState, getDefaultAppState } from './context';
 import {
   BitmapFont,
+  BrushSerializedNode,
   copyTextToClipboard,
+  deserializeBrushPoints,
   deserializePoints,
   EASING_FUNCTION,
   getScale,
@@ -20,6 +22,7 @@ import {
   parsePath,
   PathSerializedNode,
   PolylineSerializedNode,
+  serializeBrushPoints,
   SerializedNode,
   serializedNodesToEntities,
   serializePoints,
@@ -28,6 +31,7 @@ import {
 } from './utils';
 import {
   AABB,
+  Brush,
   Camera,
   Canvas,
   Children,
@@ -50,7 +54,6 @@ import {
   Selected,
   ToBeDeleted,
   Transform,
-  Transformable,
   UI,
   VectorNetwork,
   VectorScreenshotRequest,
@@ -439,8 +442,7 @@ export class API {
   /**
    * Calculate anchor's position in canvas coordinate, account for transformer's transform.
    */
-  transformer2Canvas(point: IPointData) {
-    const { mask } = this.#camera.read(Transformable);
+  transformer2Canvas(point: IPointData, mask: Entity) {
     const matrix = Mat3.toGLMat3(mask.read(GlobalTransform).matrix);
     const [x, y] = vec2.transformMat3(
       vec2.create(),
@@ -453,8 +455,7 @@ export class API {
     };
   }
 
-  canvas2Transformer(point: IPointData) {
-    const { mask } = this.#camera.read(Transformable);
+  canvas2Transformer(point: IPointData, mask: Entity) {
     const matrix = Mat3.toGLMat3(mask.read(GlobalTransform).matrix);
     const invMatrix = mat3.invert(mat3.create(), matrix);
     const [x, y] = vec2.transformMat3(
@@ -1045,7 +1046,7 @@ export class API {
     }
 
     if (delta) {
-      if (node.type === 'polyline') {
+      if (node.type === 'polyline' || node.type === 'rough-polyline') {
         const { strokeAlignment = 'center', strokeWidth = 1 } = node;
         const shiftedPoints = maybeShiftPoints(
           deserializePoints((oldNode as PolylineSerializedNode)?.points).map(
@@ -1081,6 +1082,26 @@ export class API {
         // @ts-ignore
         const { minX, minY } = Path.getGeometryBounds({ d }, { points });
         (diff as PathSerializedNode).d = shiftPath(d, -minX, -minY);
+      } else if (node.type === 'brush') {
+        const shiftedPoints = deserializeBrushPoints(
+          (oldNode as BrushSerializedNode)?.points,
+        ).map((point) => {
+          const { x, y, radius } = point;
+          const [newX, newY] = vec2.transformMat3(vec2.create(), [x, y], delta);
+          return { x: newX, y: newY, radius };
+        });
+
+        const { minX, minY } = Brush.getGeometryBounds({
+          points: shiftedPoints,
+        });
+
+        (diff as BrushSerializedNode).points = serializeBrushPoints(
+          shiftedPoints.map((point) => ({
+            x: point.x - minX,
+            y: point.y - minY,
+            radius: point.radius,
+          })),
+        );
       }
     }
 

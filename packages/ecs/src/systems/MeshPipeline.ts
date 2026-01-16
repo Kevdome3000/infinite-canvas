@@ -60,7 +60,7 @@ import {
   Filter,
   Transform,
 } from '../components';
-import { paddingMat3, parseEffect, SerializedNode } from '../utils';
+import { Effect, paddingMat3, parseEffect, SerializedNode } from '../utils';
 import { GridRenderer } from '../render-graph/GridRenderer';
 import { BatchManager } from './BatchManager';
 import { getSceneRoot } from './Transform';
@@ -82,7 +82,7 @@ type GPURenderer = {
   uniformLegacyObject: Record<string, unknown>;
   gridRenderer: GridRenderer;
   batchManager: BatchManager;
-  postProcessingRenderer: PostProcessingRenderer;
+  filters: Record<Effect['type'], PostProcessingRenderer>;
   renderGraph: RenderGraph;
 };
 
@@ -284,11 +284,7 @@ export class MeshPipeline extends System {
       }),
       uniformLegacyObject: null,
       gridRenderer: new GridRenderer(),
-      postProcessingRenderer: new PostProcessingRenderer(
-        device,
-        swapChain,
-        renderCache,
-      ),
+      filters: {} as Record<Effect['type'], PostProcessingRenderer>,
       batchManager: new BatchManager(
         device,
         swapChain,
@@ -335,12 +331,7 @@ export class MeshPipeline extends System {
     }
 
     const { swapChain, device, renderCache, renderGraph } = gpuResource;
-    const {
-      uniformBuffer,
-      gridRenderer,
-      batchManager,
-      postProcessingRenderer,
-    } = renderer;
+    const { uniformBuffer, gridRenderer, batchManager, filters } = renderer;
 
     const { width, height } = swapChain.getCanvas();
     const onscreenTexture = swapChain.getOnscreenTexture();
@@ -429,9 +420,15 @@ export class MeshPipeline extends System {
         const mainColorResolveTextureID =
           builder.resolveRenderTarget(mainColorTargetID);
         pass.attachResolveTexture(mainColorResolveTextureID);
-
         pass.exec((passRenderer, scope) => {
-          postProcessingRenderer.render(
+          if (!filters[effect.type]) {
+            filters[effect.type] = new PostProcessingRenderer(
+              device,
+              swapChain,
+              renderCache,
+            );
+          }
+          filters[effect.type].render(
             passRenderer,
             scope.getResolveTextureForID(mainColorResolveTextureID),
             effect,
@@ -481,7 +478,8 @@ export class MeshPipeline extends System {
           entity.has(Polyline) ||
           entity.has(Path) ||
           entity.has(Text) ||
-          entity.has(Rough)
+          entity.has(Rough) ||
+          entity.has(Brush)
         ) {
           safeAddComponent(entity, GeometryDirty);
         }
@@ -580,9 +578,11 @@ export class MeshPipeline extends System {
 
   finalize() {
     this.renderers.forEach(
-      ({ gridRenderer, batchManager, renderGraph, postProcessingRenderer }) => {
+      ({ gridRenderer, batchManager, renderGraph, filters }) => {
         gridRenderer.destroy();
-        postProcessingRenderer.destroy();
+        Object.values(filters).forEach((filter) => {
+          filter.destroy();
+        });
         batchManager.clear();
         batchManager.destroy();
         renderGraph.destroy();

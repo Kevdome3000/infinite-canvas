@@ -9,6 +9,7 @@ import {
   Path,
   Rect,
   Rough,
+  StampMode,
   Stroke,
   Text,
   TextDecoration,
@@ -226,6 +227,17 @@ export interface RoughEllipseSerializedNode
   Partial<FillAttributes>,
   Partial<StrokeAttributes>,
   Partial<RoughAttributes> { }
+
+export interface RoughLineSerializedNode
+  extends BaseSerializeNode<'rough-line'>,
+    Partial<Pick<Line, 'x1' | 'y1' | 'x2' | 'y2'>>,
+    Partial<StrokeAttributes>,
+    Partial<Pick<AttenuationAttributes, 'strokeAttenuation'>> {}
+export interface RoughPolylineSerializedNode
+  extends BaseSerializeNode<'rough-polyline'>,
+    Partial<PolylineAttributes>,
+    Partial<StrokeAttributes>,
+    Partial<RoughAttributes> {}
 export interface LineSerializedNode
   extends BaseSerializeNode<'line'>,
   Partial<Pick<Line, 'x1' | 'y1' | 'x2' | 'y2'>>,
@@ -247,6 +259,10 @@ export interface BrushAttributes {
   points: string;
   brushType: BrushType;
   brushStamp: string;
+  stampInterval: number;
+  stampMode: StampMode;
+  stampNoiseFactor: number;
+  stampRotationFactor: number;
   stroke: Stroke['color'];
   strokeOpacity: Opacity['strokeOpacity'];
 }
@@ -463,6 +479,8 @@ export type SerializedNode =
   | BrushSerializedNode
   | RoughRectSerializedNode
   | RoughEllipseSerializedNode
+  | RoughLineSerializedNode
+  | RoughPolylineSerializedNode
   | VectorNetworkSerializedNode
   | HtmlSerializedNode
   | EmbedSerializedNode
@@ -479,6 +497,8 @@ export type SerializedNodeAttributes = GSerializedNode &
   BrushSerializedNode &
   RoughRectSerializedNode &
   RoughEllipseSerializedNode &
+  RoughLineSerializedNode &
+  RoughPolylineSerializedNode &
   VectorNetworkSerializedNode &
   HtmlSerializedNode &
   EmbedSerializedNode &

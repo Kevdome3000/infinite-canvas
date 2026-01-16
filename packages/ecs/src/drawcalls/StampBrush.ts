@@ -32,6 +32,7 @@ import {
   Stroke,
   Mat3,
   Brush,
+  StampMode,
 } from '../components';
 
 const brushTypeMap = {
@@ -51,37 +52,10 @@ export class StampBrush extends Drawcall {
   get instanceCount() {
     const instance = this.shapes[0];
     const { points } = instance.read(Brush);
-    return points.length - 1;
+    return points.length;
   }
 
-  validate(shape: Entity) {
-    const result = super.validate(shape);
-    if (!result) {
-      return false;
-    }
-
-    if (this.shapes.length === 0) {
-      return true;
-    }
-
-    if (
-      this.shapes[0].read(Brush).points.length !==
-      shape.read(Brush).points.length
-    ) {
-      return false;
-    }
-
-    const isInstanceFillImage = this.shapes[0].has(FillImage);
-    const isShapeFillImage = shape.has(FillImage);
-
-    if (isInstanceFillImage !== isShapeFillImage) {
-      return false;
-    }
-
-    if (isInstanceFillImage && isShapeFillImage) {
-      return this.shapes[0].read(FillImage).src === shape.read(FillImage).src;
-    }
-
+  validate(_: Entity) {
     return true;
   }
 
@@ -382,7 +356,13 @@ export class StampBrush extends Drawcall {
   }
 
   private generateBuffer(shape: Entity): [number[], Record<string, unknown>] {
-    const { type } = shape.read(Brush);
+    const {
+      type,
+      stampInterval,
+      stampMode,
+      stampNoiseFactor,
+      stampRotationFactor,
+    } = shape.read(Brush);
     const brushType = brushTypeMap[type];
 
     const globalRenderOrder = shape.has(GlobalRenderOrder)
@@ -407,10 +387,10 @@ export class StampBrush extends Drawcall {
     ];
     const u_Opacity = [opacity, 0, strokeOpacity, 0];
     const u_Stamp = [
-      1, // uniform float stampInterval;
-      0, // uniform float noiseFactor;
-      0, // uniform float rotationFactor;
-      1, // uniform int stampMode;
+      stampInterval,
+      stampNoiseFactor,
+      stampRotationFactor,
+      stampMode === StampMode.EQUI_DISTANCE ? 0 : 1,
     ];
 
     return [

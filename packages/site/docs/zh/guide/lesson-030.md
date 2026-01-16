@@ -7,6 +7,7 @@ head:
 
 <script setup>
 import ImageProcessing from '../../components/ImageProcessing.vue'
+import GlobalEffects from '../../components/GlobalEffects.vue'
 </script>
 
 # 课程 30 - 后处理与渲染图
@@ -62,7 +63,9 @@ void main() {
 
 ### 全屏三角形 {#big-triangle}
 
-这里就可以使用全屏三角形了，相比 Quad 可以减少一个顶点：
+这里就可以使用全屏三角形了，相比 Quad 可以减少一个顶点，详见：[Optimizing Triangles for a Full-screen Pass]
+
+![The blue rectangle represents the viewport. Red is the bounds of the geometry](https://wallisc.github.io/assets/FullscreenPass/1tri.jpg)
 
 ```ts
 this.#bigTriangleVertexBuffer = this.device.createBuffer({
@@ -138,9 +141,9 @@ graph.add_node_edge(Labels::B, Labels::A);
 1. 构建阶段（Graph Building）：声明式定义渲染流程。我们在下一小节使用方式会看到它。
 2. 调度阶段（Scheduling）：自动分配和复用资源。其中又可以分解成一下阶段：
 
--   统计阶段：遍历所有 Pass，统计每个 RenderTarget 和 ResolveTexture 的引用次数
--   分配阶段：按需分配资源。首次使用时从对象池获取或创建，相同规格的资源可复用，引用计数归零时回收到对象池
--   释放阶段：引用计数归零时回收到对象池
+    - 统计阶段：遍历所有 Pass，统计每个 RenderTarget 和 ResolveTexture 的引用次数
+    - 分配阶段：按需分配资源。首次使用时从对象池获取或创建，相同规格的资源可复用，引用计数归零时回收到对象池
+    - 释放阶段：引用计数归零时回收到对象池
 
 3. 执行阶段（Execution）：按顺序执行渲染通道
 
@@ -178,9 +181,7 @@ renderGraph.execute();
 
 ### FXAA {#fxaa}
 
-现在我们在主渲染流程（Main Render Pass）之外新建一个 FXAA Pass 用于快速抗锯齿。检测边缘方向，沿边缘方向进行多采样混合，并用亮度范围进行校验，避免过度模糊。相比 MSAA 更轻量，适合实时渲染。
-
-该方法会使用 NTSC 权重 `0.299R + 0.587G + 0.114B` 将 RGB 转为灰度，用于边缘检测。
+现在我们在主渲染流程（Main Render Pass）之外新建一个 FXAA Pass 用于快速抗锯齿。与基于几何采样的 MSAA 等传统方法不同，FXAA 无需额外采样或知道场景几何信息，而是直接对最终像素进行处理，因此性能开销很低。该方法会使用 NTSC 权重 `0.299R + 0.587G + 0.114B` 将 RGB 转为灰度，用于边缘检测：
 
 ```glsl
 float MonochromeNTSC(vec3 t_Color) {
@@ -209,6 +210,16 @@ builder.pushPass((pass) => {
 });
 ```
 
+我们为整个画布应用了以下三个后处理效果：
+
+```ts
+api.setAppState({
+    filter: 'fxaa() brightness(0.8) noise(0.1)',
+});
+```
+
+<GlobalEffects />
+
 ## 扩展阅读 {#extended-reading}
 
 -   [Blob Tracking]
@@ -225,3 +236,4 @@ builder.pushPass((pass) => {
 [课程 2]: /zh/guide/lesson-002
 [Spline - Noise Layer]: https://docs.spline.design/materials-shading/noise-layer
 [Blob Tracking]: https://www.shadertoy.com/view/3fBXDD
+[Optimizing Triangles for a Full-screen Pass]: https://wallisc.github.io/rendering/2021/04/18/Fullscreen-Pass.html

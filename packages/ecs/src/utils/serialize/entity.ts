@@ -1,5 +1,7 @@
 import { Entity } from '@lastolivegames/becsy';
 import {
+  AttenuationAttributes,
+  BrushSerializedNode,
   DropShadowAttributes,
   FillAttributes,
   FilterAttributes,
@@ -48,6 +50,9 @@ import {
   Line,
   LockAspectRatio,
   Filter,
+  Brush,
+  StrokeAttenuation,
+  SizeAttenuation,
   ColumnLayout,
   Connection,
   HTML,
@@ -201,6 +206,25 @@ export function entityToSerializedNodes(
     type = 'embed';
     const { url } = entity.read(Embed);
     (attributes as EmbedSerializedNode).url = url;
+  }
+  else if (entity.has(Brush)) {
+    type = 'brush';
+    const {
+      points,
+      type: brushType,
+      stampInterval,
+      stampMode,
+      stampNoiseFactor,
+      stampRotationFactor,
+    } = entity.read(Brush);
+    Object.assign(attributes as BrushSerializedNode, {
+      points,
+      brushType,
+      stampInterval,
+      stampMode,
+      stampNoiseFactor,
+      stampRotationFactor,
+    });
   } else {
     type = 'g';
   }
@@ -279,6 +303,13 @@ export function entityToSerializedNodes(
 
   if (entity.has(Filter)) {
     (attributes as FilterAttributes).filter = entity.read(Filter).value;
+  }
+
+  if (entity.has(SizeAttenuation)) {
+    (attributes as AttenuationAttributes).sizeAttenuation = true;
+  }
+  if (entity.has(StrokeAttenuation)) {
+    (attributes as AttenuationAttributes).strokeAttenuation = true;
   }
 
   // serialize transform

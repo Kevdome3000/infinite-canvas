@@ -17,6 +17,7 @@ import DrawArrow from '../components/DrawArrow.vue'
 import Pencil from '../components/Pencil.vue'
 import PencilFreehand from '../components/PencilFreehand.vue'
 import Brush from '../components/Brush.vue'
+import BrushWithStamp from '../components/BrushWithStamp.vue'
 import LaserPointer from '../components/LaserPointer.vue'
 import Eraser from '../components/Eraser.vue'
 </script>
@@ -157,9 +158,46 @@ We want to show the dimensions of the rectangle in real time during the drawing 
 
 ![Size label in Figma](/figma-size-label.png)
 
+Similarly, annotations in this type of viewport space are well-suited for placement within SVG containers, as demonstrated by the laser pointer and eraser tools described below. Rectangular labels utilize CSS styles to set background color, padding, centering, and other properties, while text content employs the bounding box's width and height:
+
+```ts
+label.style.visibility = 'visible';
+label.style.top = `${y + height}px`;
+label.style.left = `${x + width / 2}px`;
+label.innerText = `${Math.round(width)} × ${Math.round(height)}`;
+```
+
+If drawing a straight line, labels can rotate along the line's direction while ensuring text always faces forward. You can experience this in the arrow example in the next section:
+
+```ts
+label.style.top = `${y + height / 2}px`;
+const rad = Math.atan2(height, width);
+let deg = rad * (180 / Math.PI);
+if (deg >= 90 && deg <= 180) {
+    deg = deg - 180;
+} else if (deg <= -90 && deg >= -180) {
+    deg = deg + 180;
+}
+label.style.transform = `translate(-50%, -50%) rotate(${deg}deg)`;
+```
+
+### Draw perfect square with shift {#draw-square-with-shift}
+
+Hold down <kbd>Shift</kbd> when dragging to create perfect squares, circles and polygons. At this point, the minimum absolute value of the width and height is used as the side length of the square.
+
+```ts
+if (isSquare) {
+    if (Math.abs(width) > Math.abs(height)) {
+        width = Math.sign(width) * Math.abs(height);
+    } else {
+        height = Math.sign(height) * Math.abs(width);
+    }
+}
+```
+
 ## Draw arrow {#draw-arrow}
 
-In addition to basic shapes such as rectangles, ellipses, and polylines, some commonly used composite shapes such as arrows.
+Beyond basic shapes like rectangles, ellipses, and polylines, composite shapes such as arrows are also commonly used. We will not cover arrow binding relationships (where the arrow's direction changes when the shapes connected by its head and tail move) at this time; this topic will be addressed in a separate chapter. Here, we focus solely on how arrows are drawn.
 
 Arrows are first declared in SVG using a `<marker>`, usually a `<path>`, and then associated with arrows via the [marker-start] and [marker-end] attributes of the target graphic:
 
@@ -361,17 +399,52 @@ In order to support variable widths, the stretched distance is not always equal 
 
 ![source: https://shenciao.github.io/brush-rendering-tutorial/Basics/Vanilla/](https://shenciao.github.io/brush-rendering-tutorial/assets/images/var-parameters-9d4c6d7aa31d0f61fd39ba9f69eaae6d.png)
 
+```glsl
+int MAX_i = 128; float currIndex = startIndex;
+float A = 0.0;
+for(int i = 0; i < MAX_i; i++){
+    // Blend opacity
+    A = A * (1.0-opacity) + opacity;
+}
+```
+
 The effect is as follows:
 
 <Brush />
 
 ### Stamp {#stamp}
 
-This doesn't quite work like a real brushstroke.
+This doesn't quite work like a real brushstroke. We add `brushStamp` property for stamp image url, but it just control the opacity of the brush, `stroke` still effects the color.
 
-![source: https://shenciao.github.io/brush-rendering-tutorial/Basics/Stamp/](https://shenciao.github.io/brush-rendering-tutorial/assets/images/stamp-to-stroke-082a5ddd80c45086b810ed8b9ebcea79.gif)
+```ts
+api.updateNodes([
+    {
+        id: '1',
+        type: 'brush',
+        brushType: BrushType.STAMP,
+        brushStamp: '/stamp.png',
+        points: position.map(([x, y], i) => `${x},${y},${radius[i]}`).join(' '),
+        stroke: 'grey',
+    },
+]);
+```
 
-### Export SVG {#export-brush-to-svg}
+<BrushWithStamp />
+
+Currently, all textures are applied in a fixed orientation. We can add random rotation angles to textures:
+
+```glsl
+float angle = rotationFactor*radians(360.0*fract(sin(currIndex)*1.0));
+pToCurrStamp *= rotate(angle);
+```
+
+We can also use noise factor when blend opacity:
+
+```glsl
+float opacityNoise = noiseFactor*fbm(textureCoordinate*50.0);
+```
+
+### [WIP] Export SVG {#export-brush-to-svg}
 
 Figma is able to export Brush to SVG.
 
