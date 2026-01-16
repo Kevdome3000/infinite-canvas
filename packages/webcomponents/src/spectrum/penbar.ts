@@ -56,7 +56,8 @@ export class Penbar extends LitElement {
     | Pen.DRAW_LINE
     | Pen.DRAW_ARROW
     | Pen.DRAW_ROUGH_RECT
-    | Pen.DRAW_ROUGH_ELLIPSE;
+    | Pen.DRAW_ROUGH_ELLIPSE
+    | Pen.DRAW_ROUGH_LINE;
 
   private binded = false;
 
@@ -96,7 +97,8 @@ export class Penbar extends LitElement {
       pen === Pen.DRAW_LINE ||
       pen === Pen.DRAW_ARROW ||
       pen === Pen.DRAW_ROUGH_RECT ||
-      pen === Pen.DRAW_ROUGH_ELLIPSE
+      pen === Pen.DRAW_ROUGH_ELLIPSE ||
+      pen === Pen.DRAW_ROUGH_LINE
     ) {
       this.lastDrawPen = pen;
     } else if (pen === Pen.IMAGE) {
@@ -160,9 +162,9 @@ export class Penbar extends LitElement {
 
   disconnectedCallback() {
     super.disconnectedCallback();
-    this.api
-      .getCanvasElement()
-      .removeEventListener('keydown', this.handleKeyDown);
+    // this.api
+    //   .getCanvasElement()
+    //   .removeEventListener('keydown', this.handleKeyDown);
   }
 
   render() {
@@ -184,7 +186,8 @@ export class Penbar extends LitElement {
         pen === Pen.DRAW_LINE ||
         pen === Pen.DRAW_ARROW ||
         pen === Pen.DRAW_ROUGH_RECT ||
-        pen === Pen.DRAW_ROUGH_ELLIPSE
+        pen === Pen.DRAW_ROUGH_ELLIPSE ||
+        pen === Pen.DRAW_ROUGH_LINE
           ? pen
           : Pen.DRAW_RECT;
     }
@@ -229,7 +232,8 @@ export class Penbar extends LitElement {
               penbarAll.includes(Pen.DRAW_LINE) ||
               penbarAll.includes(Pen.DRAW_ARROW) ||
               penbarAll.includes(Pen.DRAW_ROUGH_RECT) ||
-              penbarAll.includes(Pen.DRAW_ROUGH_ELLIPSE),
+              penbarAll.includes(Pen.DRAW_ROUGH_ELLIPSE) ||
+              penbarAll.includes(Pen.DRAW_ROUGH_LINE),
             () => html`
               <overlay-trigger placement="top" triggered-by="click hover">
                 <sp-action-button
@@ -267,6 +271,10 @@ export class Penbar extends LitElement {
                   ${when(
                     this.lastDrawPen === Pen.DRAW_ROUGH_ELLIPSE,
                     () => html`<sp-icon-ellipse slot="icon"></sp-icon-ellipse>`,
+                  )}
+                  ${when(
+                    this.lastDrawPen === Pen.DRAW_ROUGH_LINE,
+                    () => html`<sp-icon-line slot="icon"></sp-icon-line>`,
                   )}
                 </sp-action-button>
                 <sp-popover slot="hover-content" style="padding: 8px;">
@@ -330,6 +338,13 @@ export class Penbar extends LitElement {
                         ${msg(str`Rough Ellipse`)}
                       </sp-menu-item>`,
                     )}
+                    ${when(
+                      penbarAll.includes(Pen.DRAW_ROUGH_LINE),
+                      () => html` <sp-menu-item value="${Pen.DRAW_ROUGH_LINE}">
+                        <sp-icon-line slot="icon"></sp-icon-line>
+                        ${msg(str`Rough Line`)}
+                      </sp-menu-item>`,
+                    )}
                   </sp-menu>
                 </sp-popover>
               </overlay-trigger>
@@ -374,6 +389,22 @@ export class Penbar extends LitElement {
                 </sp-action-button>
                 <sp-popover slot="hover-content" style="padding: 8px;">
                   <ic-spectrum-penbar-pencil-settings></ic-spectrum-penbar-pencil-settings>
+                </sp-popover>
+              </overlay-trigger>
+            `,
+          )}
+          ${when(
+            penbarAll.includes(Pen.BRUSH),
+            () => html`
+              <overlay-trigger placement="right">
+                <sp-action-button value="${Pen.BRUSH}" slot="trigger">
+                  <sp-icon-brush slot="icon"></sp-icon-brush>
+                  <sp-tooltip self-managed placement="right">
+                    ${msg(str`Brush`)}
+                  </sp-tooltip>
+                </sp-action-button>
+                <sp-popover slot="hover-content" style="padding: 8px;">
+                  <ic-spectrum-penbar-brush-settings></ic-spectrum-penbar-brush-settings>
                 </sp-popover>
               </overlay-trigger>
             `,

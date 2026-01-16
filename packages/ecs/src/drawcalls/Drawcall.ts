@@ -391,8 +391,6 @@ export abstract class Drawcall {
     width: number,
     height: number,
   ) {
-    console.log('create post..');
-
     this.#filterWidth = width;
     this.#filterHeight = height;
     this.#filterTexture = this.device.createTexture({
@@ -579,8 +577,6 @@ export abstract class Drawcall {
     heightInCanvasCoords: number,
     zoomScale: number,
   ) {
-    console.log('render post..');
-
     let resized = false;
     if (this.#filterWidth !== width || this.#filterHeight !== height) {
       this.#filterRenderTarget.destroy();

@@ -286,9 +286,9 @@ If you want to use it in your own project, you can refer to:
 -   Rotate and change the rotation origin
 -   Nudge shapes with arrow key
 
-|                Rotate anchor                 |                 Resize anchor                  |
-| :------------------------------------------: | :--------------------------------------------: |
-| ![Rotate anchor](./screenshots/lesson21.png) | ![Resize anchor](./screenshots/lesson21-2.png) |
+|                Rotate anchor                 |                 Resize anchor                  |                 Line transformer                  |
+| :------------------------------------------: | :--------------------------------------------: | :-----------------------------------------------: |
+| ![Rotate anchor](./screenshots/lesson21.png) | ![Resize anchor](./screenshots/lesson21-2.png) | ![Line transformer](./screenshots/lesson21-3.gif) |
 
 ## Lesson 22 - VectorNetwork [🔗](https://infinitecanvas.cc/guide/lesson-022)
 
@@ -322,9 +322,9 @@ If you want to use it in your own project, you can refer to:
 -   Eraser tool, try to support non-atomic effect
 -   Laser pointer tool for presentation
 
-|                Draw rect mode                 |                 Draw arrow                  |
-| :-------------------------------------------: | :-----------------------------------------: |
-| ![draw rect mode](./screenshots/lesson25.gif) | ![draw arrow](./screenshots/lesson25-3.gif) |
+|                Draw rect mode                 |                 Draw arrow                  |                 Brush                  |
+| :-------------------------------------------: | :-----------------------------------------: | :------------------------------------: |
+| ![draw rect mode](./screenshots/lesson25.gif) | ![draw arrow](./screenshots/lesson25-3.gif) | ![brush](./screenshots/lesson25-6.gif) |
 
 |                 Pencil tool                  |          Pencil tool with freehand           |                    Eraser                    |
 | :------------------------------------------: | :------------------------------------------: | :------------------------------------------: |

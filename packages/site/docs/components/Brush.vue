@@ -3,6 +3,7 @@ import {
   App,
   Pen,
   DefaultPlugins,
+  BrushType,
 } from '@infinite-canvas-tutorial/ecs';
 import { ref, onMounted, onUnmounted } from 'vue';
 import { Event, UIPlugin } from '@infinite-canvas-tutorial/webcomponents';
@@ -50,15 +51,18 @@ onMounted(async () => {
       radius.push(r);
     }
 
+    const node = {
+      id: 'brush-1',
+      type: 'brush',
+      points: position.map(([x, y], i) => `${x},${y},${radius[i]}`).join(' '),
+      brushType: BrushType.VANILLA,
+      stroke: 'grey',
+      strokeWidth: 10,
+      strokeOpacity: 1,
+    };
+
     api.updateNodes([
-      {
-        id: '1',
-        type: 'brush',
-        points: position.map(([x, y], i) => `${x},${y},${radius[i]}`).join(' '),
-        stroke: 'grey',
-        strokeWidth: 10,
-        strokeOpacity: 1,
-      },
+      node,
     ]);
   };
 

@@ -13,6 +13,7 @@ head:
 
 <script setup>
 import ImageProcessing from '../components/ImageProcessing.vue'
+import GlobalEffects from '../components/GlobalEffects.vue'
 </script>
 
 # Lesson 30 - Post-processing and render graph
@@ -64,7 +65,9 @@ void main() {
 
 ### Big triangle {#big-triangle}
 
-Here we can use a full-screen triangle, which reduces one vertex compared to a Quad:
+Here we can use a full-screen triangle, which reduces one vertex compared to a Quad, see: [Optimizing Triangles for a Full-screen Pass]
+
+![The blue rectangle represents the viewport. Red is the bounds of the geometry](https://wallisc.github.io/assets/FullscreenPass/1tri.jpg)
 
 ```ts
 this.#bigTriangleVertexBuffer = this.device.createBuffer({
@@ -110,6 +113,10 @@ void main() {
 
 <ImageProcessing />
 
+### Noise {#noise}
+
+[Spline - Noise Layer]
+
 ## Render graph {#render-graph}
 
 Render Graph (sometimes called FrameGraph) is a modern rendering architecture that abstracts the rendering process into a directed acyclic graph (DAG). In this architecture, each render pass and the resources they use are treated as graph nodes and edges, and the graph structure automatically manages resource state transitions, synchronization, and lifecycles.
@@ -133,12 +140,12 @@ graph.add_node_edge(Labels::B, Labels::A);
 
 We reference the render graph implementation from [noclip], which employs a three-phase design:
 
-1.  Graph Building Phase: Declaratively defines the rendering pipeline. We'll see how it's used in the next subsection.
-2.  Scheduling Phase: Automatically allocates and reuses resources. This can be further broken down into:
+1. Graph Building Phase: Declaratively defines the rendering pipeline. We'll see how it's used in the next subsection.
+2. Scheduling Phase: Automatically allocates and reuses resources. This can be further broken down into:
 
--   Statistics Phase: Traverse all passes to count references for each RenderTarget and ResolveTexture
--   Allocation Phase: Allocate resources on demand. Retrieve from the object pool or create on first use. Reuse resources with identical specifications. Return to the object pool when reference count reaches zero.
--   Release Phase: Return to the object pool when reference count reaches zero.
+    - Statistics Phase: Traverse all passes to count references for each RenderTarget and ResolveTexture
+    - Allocation Phase: Allocate resources on demand. Retrieve from the object pool or create on first use. Reuse resources with identical specifications. Return to the object pool when reference count reaches zero.
+    - Release Phase: Return to the object pool when reference count reaches zero.
 
 3. Execution Phase: Execute rendering passes sequentially.
 
@@ -207,6 +214,20 @@ builder.pushPass((pass) => {
 });
 ```
 
+We apply 3 post processing effects for the whole canvas:
+
+```ts
+api.setAppState({
+    filter: 'fxaa() brightness(0.8) noise(0.1)',
+});
+```
+
+<GlobalEffects />
+
+## Extended reading {#extended-reading}
+
+-   [Blob Tracking]
+
 [Paper Shaders]: https://shaders.paper.design/
 [Pixi.js filters]: https://github.com/pixijs/filters
 [CSS filter]: https://developer.mozilla.org/en-US/docs/Web/CSS/Reference/Properties/filter
@@ -217,3 +238,6 @@ builder.pushPass((pass) => {
 [Render graph in bevy]: https://github.com/bevyengine/bevy/discussions/2524
 [noclip]: https://github.com/magcius/noclip.website
 [Lesson 2]: /guide/lesson-002
+[Spline - Noise Layer]: https://docs.spline.design/materials-shading/noise-layer
+[Blob Tracking]: https://www.shadertoy.com/view/3fBXDD
+[Optimizing Triangles for a Full-screen Pass]: https://wallisc.github.io/rendering/2021/04/18/Fullscreen-Pass.html

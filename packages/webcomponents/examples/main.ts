@@ -1,9 +1,23 @@
-import { App, CheckboardStyle, DefaultPlugins, getDefaultAppState, Pen, Task, } from '@infinite-canvas-tutorial/ecs';
+
 import { CanvasData, Event, IndexedDbStorageService, UIPlugin } from '../src';
+import {
+  App,
+  svgElementsToSerializedNodes,
+  svgSvgElementToComputedCamera,
+  getDefaultAppState,
+  DefaultPlugins,
+  Pen,
+  Task,
+  CheckboardStyle,
+  BrushType,
+  inferXYWidthHeight,
+  StampMode,
+} from '@infinite-canvas-tutorial/ecs';
+import { Event, UIPlugin } from '../src';
 import '../src/spectrum';
-import { LaserPointerPlugin } from '../../plugin-laser-pointer';
-import { EraserPlugin } from '../../plugin-eraser';
-import { LassoPlugin } from '../../plugin-lasso';
+import { LaserPointerPlugin } from '../../plugin-laser-pointer/src';
+import { EraserPlugin } from '../../plugin-eraser/src';
+import { LassoPlugin } from '../../plugin-lasso/src';
 import '../../plugin-laser-pointer/src/spectrum';
 import '../../plugin-eraser/src/spectrum';
 import '../../plugin-lasso/src/spectrum';
@@ -203,6 +217,8 @@ async function openCanvas(id?: string) {
         // snapToPixelGridEnabled: false,
         // snapToPixelGridSize: 0,
         snapToObjectsEnabled: true,
+        // filter: 'brightness(0.8) noise(0.1)',
+        // penbarDrawSizeLabelVisible: true,
         // checkboardStyle: CheckboardStyle.NONE,
         // penbarSelected: Pen.SELECT,
         // topbarVisible: false,
@@ -214,49 +230,70 @@ async function openCanvas(id?: string) {
         // filter: 'noise(0.5)',
       });
 
-  // api.updateNodes(nodes);
+      const node2 = {
+        id: 'text-1',
+        type: 'text',
+        parentId: 'rect-1',
+        anchorX: 10,
+        anchorY: 50,
+        content: 'Hello',
+        fill: 'black',
+        fontSize: 30,
+        fontFamily: 'system-ui',
+      };
+      const node3 = {
+        id: 'rect-2',
+        type: 'rect',
+        x: 100,
+        y: 100,
+        width: 200,
+        height: 200,
+        fill: 'red',
+      };
 
-  const node1 = {
-    id: 'rect-1',
-    type: 'rect',
-    x: 0,
-    y: 0,
-    width: 200,
-    height: 200,
-    // fill: 'grey',
-    fill: 'https://v3b.fal.media/files/b/tiger/v1lf1EcPP1X1pw_YOKM4o.jpg',
-    // filter: 'noise(0.5)',
-  };
-  const node2 = {
-    id: 'text-1',
-    type: 'text',
-    parentId: 'rect-1',
-    anchorX: 10,
-    anchorY: 50,
-    content: 'Hello',
-    fill: 'black',
-    fontSize: 30,
-    fontFamily: 'system-ui',
-  };
-  const node3 = {
-    id: 'rect-2',
-    type: 'rect',
-    x: 100,
-    y: 100,
-    width: 200,
-    height: 200,
-    fill: 'red',
-  };
+      const node4 = {
+        id: 'rect-3',
+        type: 'rect',
+        x: 100,
+        y: 100,
+        width: 100,
+        height: 100,
+        fill: 'green',
+      };
 
-  const node4 = {
-    id: 'rect-3',
-    type: 'rect',
-    x: 100,
-    y: 100,
-    width: 100,
-    height: 100,
-    fill: 'green',
-  };
+      // Generate sinewave geometry
+      const maxRadius = (1 / 3) * 100;
+      const segmentCount = 32;
+
+      const position: [number, number][] = [];
+      const radius: number[] = [];
+
+      const gr = (1 + Math.sqrt(5)) / 2; // golden ratio
+      const pi = Math.PI;
+
+      for (let i = 0; i <= segmentCount; ++i) {
+        let a = i / segmentCount;
+        let x = -pi + 2 * pi * a;
+        let y = Math.sin(x) / gr;
+        let r = Math.cos(x / 2.0) * maxRadius;
+
+        position.push([x * 100 + 360, y * 100 + 120]);
+        radius.push(r);
+      }
+
+      const node1 = {
+        id: '1',
+        type: 'brush',
+        // brushType: BrushType.VANILLA,
+        brushType: BrushType.STAMP,
+        brushStamp: '/stamp1.png',
+        stampInterval: 0.4,
+        // brushStamp: '/brush.jpg',
+        points: position.map(([x, y], i) => `${x},${y},${radius[i]}`).join(' '),
+        stroke: 'red',
+        strokeWidth: 10,
+        strokeOpacity: 1,
+      };
 
       api.updateNodes([node1, node2, node3, node4]);
       api.record();

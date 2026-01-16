@@ -1,9 +1,17 @@
-import { Pen, CheckboardStyle, Theme, ThemeMode } from './components';
+import {
+  Pen,
+  CheckboardStyle,
+  Theme,
+  ThemeMode,
+  BrushType,
+  StampMode,
+} from './components';
 import {
   TRANSFORMER_ANCHOR_STROKE_COLOR,
   TRANSFORMER_MASK_FILL_COLOR,
 } from './systems/RenderTransformer';
 import {
+  BrushAttributes,
   FillAttributes,
   MarkerAttributes,
   RoughAttributes,
@@ -37,6 +45,7 @@ export interface AppState {
   penbarVisible: boolean;
   penbarAll: Pen[];
   penbarSelected: Pen;
+  penbarDrawSizeLabelVisible: boolean;
   penbarDrawRect: Partial<StrokeAttributes & FillAttributes>;
   penbarDrawEllipse: Partial<StrokeAttributes & FillAttributes>;
   penbarDrawLine: Partial<StrokeAttributes>;
@@ -47,10 +56,18 @@ export interface AppState {
   penbarDrawRoughEllipse: Partial<
     RoughAttributes & StrokeAttributes & FillAttributes
   >;
+  penbarDrawRoughLine: Partial<RoughAttributes & StrokeAttributes>;
   penbarPencil: Partial<
     StrokeAttributes & {
       freehand: boolean;
     }
+  >;
+  penbarBrush: Partial<
+    BrushAttributes &
+      StrokeAttributes & {
+        stamps: { src: string; name: string; preview: string }[];
+        stamp: string;
+      }
   >;
   penbarText: Partial<
     TextSerializedNode & {
@@ -159,16 +176,18 @@ export const getDefaultAppState: () => AppState = () => {
       Pen.DRAW_ARROW,
       Pen.DRAW_ROUGH_RECT,
       Pen.DRAW_ROUGH_ELLIPSE,
+      Pen.DRAW_ROUGH_LINE,
       Pen.IMAGE,
       Pen.TEXT,
       Pen.PENCIL,
-      // Pen.BRUSH,
+      Pen.BRUSH,
       Pen.ERASER,
       // Pen.VECTOR_NETWORK,
       Pen.COMMENT,
       Pen.LASER_POINTER,
     ],
     penbarSelected: Pen.HAND,
+    penbarDrawSizeLabelVisible: true,
     penbarDrawRect: {
       fill: TRANSFORMER_MASK_FILL_COLOR,
       fillOpacity: 0.5,
@@ -199,24 +218,32 @@ export const getDefaultAppState: () => AppState = () => {
       markerFactor: 3,
     },
     penbarDrawRoughRect: {
-      fill: '#000',
+      fill: TRANSFORMER_ANCHOR_STROKE_COLOR,
       fillOpacity: 1,
-      stroke: '#000',
-      strokeWidth: 10,
+      stroke: TRANSFORMER_ANCHOR_STROKE_COLOR,
+      strokeWidth: 4,
       strokeOpacity: 1,
       roughBowing: 1,
       roughRoughness: 1,
       roughFillStyle: 'hachure',
     },
     penbarDrawRoughEllipse: {
-      fill: '#000',
+      fill: TRANSFORMER_ANCHOR_STROKE_COLOR,
       fillOpacity: 1,
-      stroke: '#000',
-      strokeWidth: 10,
+      stroke: TRANSFORMER_ANCHOR_STROKE_COLOR,
+      strokeWidth: 4,
       strokeOpacity: 1,
       roughBowing: 1,
       roughRoughness: 1,
       roughFillStyle: 'hachure',
+    },
+    penbarDrawRoughLine: {
+      fill: 'none',
+      stroke: TRANSFORMER_ANCHOR_STROKE_COLOR,
+      strokeWidth: 1,
+      strokeOpacity: 1,
+      roughBowing: 1,
+      roughRoughness: 4,
     },
     penbarPencil: {
       fill: 'none',
@@ -224,6 +251,30 @@ export const getDefaultAppState: () => AppState = () => {
       strokeWidth: 1,
       strokeOpacity: 1,
       freehand: true,
+    },
+    penbarBrush: {
+      stamps: [
+        {
+          src: '/stamp1.png',
+          name: 'Stamp 1',
+          preview: '/stamp1.png',
+        },
+        {
+          src: '/stamp2.png',
+          name: 'Stamp 2',
+          preview: '/stamp2.png',
+        },
+      ],
+      stamp: '/stamp1.png',
+      brushType: BrushType.STAMP,
+      brushStamp: '/stamp1.png',
+      stampInterval: 0.4,
+      stampMode: StampMode.RATIO_DISTANCE,
+      stampNoiseFactor: 0.4,
+      stampRotationFactor: 0.75,
+      stroke: TRANSFORMER_ANCHOR_STROKE_COLOR,
+      strokeWidth: 20,
+      strokeOpacity: 1,
     },
     penbarText: {
       fontFamily: 'system-ui',
@@ -251,7 +302,7 @@ export const getDefaultAppState: () => AppState = () => {
     editingPoints: [],
     loading: false,
     loadingMessage: '',
-    filter: 'fxaa()',
+    filter: '',
   };
 };
 
