@@ -31,10 +31,10 @@ export type OrderedSerializedNode = Ordered<SerializedNode>;
  */
 export interface BaseSerializeNode<Type extends string>
   extends Partial<TransformAttributes>,
-  Partial<VisibilityAttributes>,
-  Partial<NameAttributes>,
-  Partial<ZIndexAttributes>,
-  Partial<EditableAttributes> {
+    Partial<VisibilityAttributes>,
+    Partial<NameAttributes>,
+    Partial<ZIndexAttributes>,
+    Partial<EditableAttributes> {
   /**
    * Unique identifier
    */
@@ -127,6 +127,27 @@ export interface StrokeAttributes {
   strokeOpacity: Opacity['strokeOpacity'];
 }
 
+export interface ConstraintAttributes {
+  /**
+   * Normalized point, relative to bounding box top-left.
+   */
+  point: [number, number];
+  perimeter: boolean;
+  name?: string;
+  dx?: number;
+  dy?: number;
+}
+
+export interface BindedAttributes {
+  constraints: ConstraintAttributes[];
+}
+
+export interface BindingAttributes {
+  fromId: string;
+  toId: string;
+  orthogonal: boolean;
+}
+
 export interface MarkerAttributes {
   markerStart: Marker['start'];
   markerEnd: Marker['end'];
@@ -212,7 +233,8 @@ export interface RectSerializedNode
   Partial<DropShadowAttributes>,
   Partial<AttenuationAttributes>,
   Partial<WireframeAttributes>,
-  Partial<FilterAttributes> { }
+    Partial<FilterAttributes>,
+    Partial<BindedAttributes> {}
 
 export interface RoughRectSerializedNode
   extends BaseSerializeNode<'rough-rect'>,
@@ -242,7 +264,8 @@ export interface LineSerializedNode
   extends BaseSerializeNode<'line'>,
   Partial<Pick<Line, 'x1' | 'y1' | 'x2' | 'y2'>>,
   Partial<StrokeAttributes>,
-  Partial<Pick<AttenuationAttributes, 'strokeAttenuation'>> { }
+    Partial<Pick<AttenuationAttributes, 'strokeAttenuation'>>,
+    Partial<BindingAttributes> {}
 
 interface PolylineAttributes {
   points: string;

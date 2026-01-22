@@ -1,49 +1,53 @@
 import { isNil } from '@antv/util';
 import toposort from 'toposort';
 import { Entity } from '@lastolivegames/becsy';
+import { IPointData } from '@pixi/math';
 import {
+  AABB,
+  Binded,
+  Binding,
+  Brush,
+  ColumnLayout,
+  Connection,
+  DropShadow,
   Ellipse,
-  FillSolid,
+  Embed,
   FillGradient,
+  FillImage,
+  FillPattern,
+  FillSolid,
+  Filter,
+  Font,
+  HTML,
+  HTMLContainer,
+  InnerShadow,
+  Line,
+  LockAspectRatio,
+  Marker,
+  MaterialDirty,
   Name,
   Opacity,
   Path,
   Polyline,
   Rect,
   Renderable,
-  Stroke,
-  Text,
-  Transform,
-  Visibility,
-  DropShadow,
-  ZIndex,
-  Font,
-  AABB,
-  TextDecoration,
-  FillImage,
-  FillPattern,
-  MaterialDirty,
-  SizeAttenuation,
-  StrokeAttenuation,
-  Brush,
-  Wireframe,
   Rough,
+  SizeAttenuation,
+  Stroke,
+  StrokeAttenuation,
+  Text,
+  TextDecoration,
+  Transform,
   VectorNetwork,
-  Marker,
-  InnerShadow,
-  Line,
-  LockAspectRatio,
-  HTML,
-  HTMLContainer,
-  Embed,
-  Filter,
-  ColumnLayout,
-  Connection,
-  Children,
+  Visibility,
+  Wireframe,
+  ZIndex,
 } from '../../components';
 import {
   AttenuationAttributes,
   BrushSerializedNode,
+  ColumnLayoutSerializedNode,
+  ConnectionSerializedNode,
   DropShadowAttributes,
   EmbedSerializedNode,
   FillAttributes,
@@ -68,99 +72,129 @@ import {
   VectorNetworkSerializedNode,
   VisibilityAttributes,
   WireframeAttributes,
-  ColumnLayoutSerializedNode,
-  ConnectionSerializedNode,
-  ConnectionAttributes,
 } from '../serialize';
 import { deserializeBrushPoints, deserializePoints } from './points';
-import { EntityCommands, Commands } from '../../commands';
+import { Commands, EntityCommands } from '../../commands';
 import { isGradient } from '../gradient';
 import { isPattern } from '../pattern';
-import { computeBidi, measureText } from '../../systems/ComputeTextMetrics';
+import { computeBidi, measureText } from '../../systems';
 import { DOMAdapter } from '../../environment';
 import { safeAddComponent } from '../../history';
+import { updateFloatingTerminalPoints } from '../binding';
 
 export function inferXYWidthHeight(node: SerializedNode) {
-  const { type } = node;
-  let bounds: AABB;
-  if (type === 'ellipse') {
-    bounds = Ellipse.getGeometryBounds(node);
-  } else if (type === 'polyline' || type === 'rough-polyline') {
-    bounds = Polyline.getGeometryBounds(node);
-  } else if (type === 'line' || type === 'rough-line') {
-    bounds = Line.getGeometryBounds(node);
-  } else if (type === 'path') {
-    bounds = Path.getGeometryBounds(node);
-  } else if (type === 'text') {
-    computeBidi(node.content);
-    const metrics = measureText(node);
-    bounds = Text.getGeometryBounds(node, metrics);
-  } else if (type === 'brush') {
-    bounds = Brush.getGeometryBounds(node);
-  } else if (type === 'vector-network') {
-    bounds = VectorNetwork.getGeometryBounds(node);
-  } else if (type === 'column-layout') {
-    // ColumnLayout bounds usually depend on children or Rect if present.
-    // If inferred, we need to know layout size.
-    // For now, assume it might have explicit bounds or we skip inference if not present.
-    // A common pattern for groups/layouts is that they might not have intrinsic geometry bounds
-    // without children being verified first.
-    // Let's assume passed node has x/y/width/height if it was serialized from a Rect.
-    // If not, we might fail here.
-    // However, if we serialized a Rect component, `inferXYWidthHeight` works based on `type`.
-    // If type is 'column-layout', it might NOT have a geometry method.
-    // We should check if it has x/y/width/height already.
-    if (!isNil(node.x) && !isNil(node.width)) return;
-  } else if (type === 'connection') {
-    // Connection usually has a Polyline component too?
-    // Serialization of Connection adds 'connection' type.
-    // Does it also have 'polyline' type?
-    // `entityToSerializedNodes` sets `type = 'connection'` effectively overriding 'polyline'
-    // if the entity has both.
-    // So we need to handle it like polyline if it has points.
-    if ((node as any).points) {
-      bounds = Polyline.getGeometryBounds(node as any);
-    }
-  }
-
-  if (bounds) {
-    node.x = bounds.minX;
-    node.y = bounds.minY;
-    node.width = bounds.maxX - bounds.minX;
-    node.height = bounds.maxY - bounds.minY;
-
-    if (type === 'polyline' || type === 'rough-polyline') {
-      node.points = serializePoints(
-        deserializePoints(node.points).map((point) => {
-          return [point[0] - bounds.minX, point[1] - bounds.minY];
-        }),
-      );
+  if (
+    isNil(node.width) ||
+    isNil(node.height) ||
+    isNil(node.x) ||
+    isNil(node.y)
+  ) {
+    const { type } = node;
+    let bounds: AABB;
+    if (type === 'rect') {
+      bounds = Rect.getGeometryBounds(node);
+    } else if (type === 'ellipse') {
+      bounds = Ellipse.getGeometryBounds(node);
+    } else if (type === 'polyline' || type === 'rough-polyline') {
+      bounds = Polyline.getGeometryBounds(node);
     } else if (type === 'line' || type === 'rough-line') {
-      node.x1 = node.x1 - bounds.minX;
-      node.y1 = node.y1 - bounds.minY;
-      node.x2 = node.x2 - bounds.minX;
-      node.y2 = node.y2 - bounds.minY;
+      bounds = Line.getGeometryBounds(node);
     } else if (type === 'path') {
-      node.d = shiftPath(node.d, -bounds.minX, -bounds.minY);
-    } else if (type === 'brush') {
-      node.points = serializeBrushPoints(
-        deserializeBrushPoints(node.points).map((point) => {
-          return {
-            ...point,
-            x: point.x - bounds.minX,
-            y: point.y - bounds.minY,
-          };
-        }),
-      );
+      bounds = Path.getGeometryBounds(node);
     } else if (type === 'text') {
-      node.anchorX = (node.anchorX ?? 0) - bounds.minX;
-      node.anchorY = (node.anchorY ?? 0) - bounds.minY;
+      computeBidi(node.content);
+      const metrics = measureText(node);
+      bounds = Text.getGeometryBounds(node, metrics);
+    } else if (type === 'brush') {
+      bounds = Brush.getGeometryBounds(node);
+    } else if (type === 'vector-network') {
+      bounds = VectorNetwork.getGeometryBounds(node);
+    } else if (type === 'column-layout') {
+      // ColumnLayout bounds usually depend on children or Rect if present.
+      // If inferred, we need to know layout size.
+      // For now, assume it might have explicit bounds or we skip inference if not present.
+      // A common pattern for groups/layouts is that they might not have intrinsic geometry bounds
+      // without children being verified first.
+      // Let's assume passed node has x/y/width/height if it was serialized from a Rect.
+      // If not, we might fail here.
+      // However, if we serialized a Rect component, `inferXYWidthHeight` works based on `type`.
+      // If type is 'column-layout', it might NOT have a geometry method.
+      // We should check if it has x/y/width/height already.
+      if (!isNil(node.x) && !isNil(node.width)) return;
+    } else if (type === 'connection') {
+      // Connection usually has a Polyline component too?
+      // Serialization of Connection adds 'connection' type.
+      // Does it also have 'polyline' type?
+      // `entityToSerializedNodes` sets `type = 'connection'` effectively overriding 'polyline'
+      // if the entity has both.
+      // So we need to handle it like polyline if it has points.
+      if ((node as any).points) {
+        bounds = Polyline.getGeometryBounds(node as any);
+      }
     }
-  } else {
-    throw new Error('Cannot infer x, y, width or height for node');
-  }
 
-  return node;
+    if (bounds) {
+      node.x = bounds.minX;
+      node.y = bounds.minY;
+      node.width = bounds.maxX - bounds.minX;
+      node.height = bounds.maxY - bounds.minY;
+
+      if (type === 'polyline' || type === 'rough-polyline') {
+        node.points = serializePoints(
+          deserializePoints(node.points).map((point) => {
+            return [point[0] - bounds.minX, point[1] - bounds.minY];
+          }),
+        );
+      } else if (type === 'line' || type === 'rough-line') {
+        node.x1 = node.x1 - bounds.minX;
+        node.y1 = node.y1 - bounds.minY;
+        node.x2 = node.x2 - bounds.minX;
+        node.y2 = node.y2 - bounds.minY;
+      } else if (type === 'path') {
+        node.d = shiftPath(node.d, -bounds.minX, -bounds.minY);
+      } else if (type === 'brush') {
+        node.points = serializeBrushPoints(
+          deserializeBrushPoints(node.points).map((point) => {
+            return {
+              ...point,
+              x: point.x - bounds.minX,
+              y: point.y - bounds.minY,
+            };
+          }),
+        );
+      } else if (type === 'text') {
+        node.anchorX = (node.anchorX ?? 0) - bounds.minX;
+        node.anchorY = (node.anchorY ?? 0) - bounds.minY;
+      }
+    } else {
+      throw new Error('Cannot infer x, y, width or height for node');
+    }
+
+    return node;
+  }
+}
+
+export function inferPointsWithFromIdAndToId(
+  from: SerializedNode,
+  to: SerializedNode,
+  edge: LineSerializedNode,
+) {
+  inferXYWidthHeight(from);
+  inferXYWidthHeight(to);
+
+  const state = edge as SerializedNode & {
+    absolutePoints: (IPointData | null)[];
+  };
+  state.absolutePoints = [null, null];
+  // updateFixedTerminalPoints(edge, from, to, true);
+  // updatePoints(edge, geo.points, from, to);
+  updateFloatingTerminalPoints(state, from, to);
+
+  edge.x1 = state.absolutePoints[0].x;
+  edge.y1 = state.absolutePoints[0].y;
+  edge.x2 = state.absolutePoints[1].x;
+  edge.y2 = state.absolutePoints[1].y;
+  delete state.absolutePoints;
 }
 
 export async function loadImage(url: string, entity: Entity) {
@@ -236,6 +270,17 @@ export function serializedNodesToEntities(
   const edges = nodes
     .filter((node) => !isNil(node.parentId))
     .map((node) => [node.parentId, node.id] as [string, string]);
+
+  // bindings should also be sorted
+  nodes.forEach((node) => {
+    if (node.type === 'line') {
+      if (node.fromId && node.toId) {
+        edges.push([node.fromId, node.id]);
+        edges.push([node.toId, node.id]);
+      }
+    }
+  });
+
   const sorted = toposort.array(vertices, edges);
 
   if (!idEntityMap) {
@@ -253,18 +298,41 @@ export function serializedNodesToEntities(
     const { parentId, type } = node;
     const attributes = node;
 
-    const entity = commands.spawn();
-    idEntityMap.set(id, entity);
+    const entityCommands = commands.spawn();
+    idEntityMap.set(id, entityCommands);
+
+    // Infer points with fromId and toId first
+    if (type === 'line') {
+      const { fromId, toId } = attributes as LineSerializedNode;
+      if (fromId && toId) {
+        const fromNode = nodes.find((node) => node.id === fromId);
+        const toNode = nodes.find((node) => node.id === toId);
+        if (fromNode && toNode) {
+          inferPointsWithFromIdAndToId(
+            fromNode,
+            toNode,
+            attributes as LineSerializedNode,
+          );
+        }
+
+        const fromEntityCommands = idEntityMap.get(fromId);
+        const fromEntity = fromEntityCommands?.id().hold();
+        const toEntityCommands = idEntityMap.get(toId);
+        const toEntity = toEntityCommands?.id().hold();
+
+        safeAddComponent(fromEntity, Binded);
+        safeAddComponent(toEntity, Binded);
+        entityCommands.insert(
+          new Binding({
+            from: fromEntity,
+            to: toEntity,
+          }),
+        );
+      }
+    }
 
     // Make sure the entity has a width and height
-    if (
-      isNil(attributes.width) ||
-      isNil(attributes.height) ||
-      isNil(attributes.x) ||
-      isNil(attributes.y)
-    ) {
-      inferXYWidthHeight(attributes);
-    }
+    inferXYWidthHeight(attributes);
 
     if (isNil(attributes.rotation)) {
       attributes.rotation = 0;
@@ -278,7 +346,7 @@ export function serializedNodesToEntities(
 
     const { x, y, width, height, rotation, scaleX, scaleY } = attributes;
 
-    entity.insert(
+    entityCommands.insert(
       new Transform({
         translation: {
           x,
@@ -293,11 +361,11 @@ export function serializedNodesToEntities(
     );
 
     if (type !== 'g') {
-      entity.insert(new Renderable());
+      entityCommands.insert(new Renderable());
     }
 
     if (type === 'ellipse' || type === 'rough-ellipse') {
-      entity.insert(
+      entityCommands.insert(
         new Ellipse({
           cx: width / 2,
           cy: height / 2,
@@ -307,25 +375,29 @@ export function serializedNodesToEntities(
       );
 
       if (type === 'rough-ellipse') {
-        serializeRough(attributes as RoughAttributes, entity);
+        serializeRough(attributes as RoughAttributes, entityCommands);
       }
     } else if (type === 'rect' || type === 'rough-rect') {
       const { cornerRadius } = attributes as RectSerializedNode;
-      entity.insert(new Rect({ x: 0, y: 0, width, height, cornerRadius }));
+      entityCommands.insert(
+        new Rect({ x: 0, y: 0, width, height, cornerRadius }),
+      );
       if (type === 'rough-rect') {
-        serializeRough(attributes as RoughAttributes, entity);
+        serializeRough(attributes as RoughAttributes, entityCommands);
       }
     } else if (type === 'polyline' || type === 'rough-polyline') {
       const { points } = attributes as PolylineSerializedNode;
-      entity.insert(new Polyline({ points: deserializePoints(points) }));
+      entityCommands.insert(
+        new Polyline({ points: deserializePoints(points) }),
+      );
       if (type === 'rough-polyline') {
-        serializeRough(attributes as RoughAttributes, entity);
+        serializeRough(attributes as RoughAttributes, entityCommands);
       }
     } else if (type === 'line' || type === 'rough-line') {
       const { x1, y1, x2, y2 } = attributes as LineSerializedNode;
-      entity.insert(new Line({ x1, y1, x2, y2 }));
+      entityCommands.insert(new Line({ x1, y1, x2, y2 }));
       if (type === 'rough-line') {
-        serializeRough(attributes as RoughAttributes, entity);
+        serializeRough(attributes as RoughAttributes, entityCommands);
       }
     } else if (type === 'brush') {
       const {
@@ -337,7 +409,7 @@ export function serializedNodesToEntities(
         stampNoiseFactor,
         stampRotationFactor,
       } = attributes as BrushSerializedNode;
-      entity.insert(
+      entityCommands.insert(
         new Brush({
           points: deserializeBrushPoints(points),
           type: brushType,
@@ -349,12 +421,12 @@ export function serializedNodesToEntities(
       );
 
       if (brushStamp) {
-        loadImage(brushStamp, entity.id());
+        loadImage(brushStamp, entityCommands.id());
       }
     } else if (type === 'path') {
       const { d, fillRule, tessellationMethod } =
         attributes as PathSerializedNode;
-      entity.insert(new Path({ d, fillRule, tessellationMethod }));
+      entityCommands.insert(new Path({ d, fillRule, tessellationMethod }));
     } else if (type === 'text') {
       const {
         anchorX,
@@ -401,7 +473,7 @@ export function serializedNodesToEntities(
         (font) => font.fontFamily === fontFamily,
       );
 
-      entity.insert(
+      entityCommands.insert(
         new Text({
           anchorX,
           anchorY,
@@ -423,7 +495,7 @@ export function serializedNodesToEntities(
       );
 
       if (decorationLine !== 'none' && decorationThickness > 0) {
-        entity.insert(
+        entityCommands.insert(
           new TextDecoration({
             color: decorationColor,
             line: decorationLine,
@@ -435,34 +507,37 @@ export function serializedNodesToEntities(
     } else if (type === 'vector-network') {
       const { vertices, segments, regions } =
         attributes as VectorNetworkSerializedNode;
-      entity.insert(new VectorNetwork({ vertices, segments, regions }));
+      entityCommands.insert(new VectorNetwork({ vertices, segments, regions }));
     } else if (type === 'html') {
       const { html } = attributes as HtmlSerializedNode;
-      entity.insert(new HTML({ x: 0, y: 0, width, height, html }));
-      entity.insert(new HTMLContainer());
+      entityCommands.insert(new HTML({ x: 0, y: 0, width, height, html }));
+      entityCommands.insert(new HTMLContainer());
 
       // Add ColumnLayout for card stacks to enable ECS-based child positioning
       const metadata = (attributes as HtmlSerializedNode).metadata;
       const cardType = metadata?.cardType?.toLowerCase();
       if (cardType === 'stack') {
-        entity.insert(new ColumnLayout({
-          isAutoLayout: true,
-          direction: 'vertical',
-          gap: 8,
-          padding: 12,
-          alignItems: 'stretch',
-        }));
-        entity.insert(new Rect({ x: 0, y: 0, width, height }));
+        entityCommands.insert(
+          new ColumnLayout({
+            isAutoLayout: true,
+            direction: 'vertical',
+            gap: 8,
+            padding: 12,
+            alignItems: 'stretch',
+          }),
+        );
+        entityCommands.insert(new Rect({ x: 0, y: 0, width, height }));
       }
     } else if (type === 'embed') {
       const { url } = attributes as EmbedSerializedNode;
-      entity.insert(new Embed({ x: 0, y: 0, width, height, url }));
-      entity.insert(new HTMLContainer());
+      entityCommands.insert(new Embed({ x: 0, y: 0, width, height, url }));
+      entityCommands.insert(new HTMLContainer());
     } else if (type === 'column-layout') {
-      const {
-        gap, padding, alignItems, isAutoLayout
-      } = attributes as ColumnLayoutSerializedNode;
-      entity.insert(new ColumnLayout({ gap, padding, alignItems, isAutoLayout }));
+      const { gap, padding, alignItems, isAutoLayout } =
+        attributes as ColumnLayoutSerializedNode;
+      entityCommands.insert(
+        new ColumnLayout({ gap, padding, alignItems, isAutoLayout }),
+      );
       // Usually ColumnLayouts also have a Rect component which is handled by general props?
       // No, `Rect` component addition is specific to `type === 'rect'`.
       // If ColumnLayout entity had Rect, `entityToSerializedNodes` would serialize Rect props
@@ -476,12 +551,10 @@ export function serializedNodesToEntities(
       // as ColumnLayout usually implies a container.
 
       // Keep it simple: Add Rect with transform dims.
-      entity.insert(new Rect({ x: 0, y: 0, width, height }));
-
+      entityCommands.insert(new Rect({ x: 0, y: 0, width, height }));
     } else if (type === 'connection') {
-      const {
-        source, target, routingType, strokeStyle
-      } = attributes as ConnectionSerializedNode;
+      const { source, target, routingType, strokeStyle } =
+        attributes as ConnectionSerializedNode;
       // source and target are IDs. We need to resolve them to Entities.
       // But `entities` might not be created yet.
       // We can use a deferred application or valid Entity ID check?
@@ -505,7 +578,6 @@ export function serializedNodesToEntities(
       // Actually, `Connection` component might need to support nulls temporarily or we defer.
 
       // BUT, `Connection` component has `@field.ref` which expects Entity.
-
       const sourceEntity = idEntityMap.get(source);
       const targetEntity = idEntityMap.get(target);
 
@@ -518,7 +590,7 @@ export function serializedNodesToEntities(
           targetAnchor: (attributes as any).targetAnchor,
           cornerRadius: (attributes as any).cornerRadius,
         });
-        entity.insert(connection);
+        entityCommands.insert(connection);
         // Note: source and target entity refs need to be set via the ECS world
         // after the component is attached to an entity. This requires Commands API.
         // For now, we store the connection info and handle refs in a second pass.
@@ -527,7 +599,6 @@ export function serializedNodesToEntities(
         // Or simply: relying on the fact that if we just hold the ID, we can resolve later.
         // But existing code doesn't support a 2nd pass.
         // Let's add it with non-null assertions if we trust the order? (Unlikely to trust order for random connections).
-
         // TODO: Real separate pass for connections.
         // For now, to satisfy "round trip", let's attempt to resolve.
         // If we really need to support out-of-order, we need a 2nd pass.
@@ -537,25 +608,28 @@ export function serializedNodesToEntities(
 
       // Also add Polyline if points exist (visuals)
       if ((attributes as any).points) {
-        entity.insert(new Polyline({ points: deserializePoints((attributes as any).points) }));
+        entityCommands.insert(
+          new Polyline({
+            points: deserializePoints((attributes as any).points),
+          }),
+        );
       }
-
     }
 
     const { fill, fillOpacity, opacity } = attributes as FillAttributes;
     if (fill) {
       if (isGradient(fill)) {
-        entity.insert(new FillGradient(fill));
+        entityCommands.insert(new FillGradient(fill));
       } else if (isDataUrl(fill) || isUrl(fill)) {
-        loadImage(fill, entity.id());
+        loadImage(fill, entityCommands.id());
       } else {
         try {
           const parsed = JSON.parse(fill) as FillPattern;
           if (isPattern(parsed)) {
-            entity.insert(new FillPattern(parsed));
+            entityCommands.insert(new FillPattern(parsed));
           }
         } catch (e) {
-          entity.insert(new FillSolid(fill));
+          entityCommands.insert(new FillSolid(fill));
         }
       }
     }
@@ -572,7 +646,7 @@ export function serializedNodesToEntities(
       strokeAlignment,
     } = attributes as StrokeAttributes;
     if (stroke) {
-      entity.insert(
+      entityCommands.insert(
         new Stroke({
           color: stroke,
           width: strokeWidth,
@@ -581,9 +655,9 @@ export function serializedNodesToEntities(
             strokeDasharray === 'none'
               ? [0, 0]
               : ((strokeDasharray?.includes(',')
-                ? strokeDasharray?.split(',')
-                : strokeDasharray?.split(' ')
-              )?.map(Number) as [number, number]),
+                  ? strokeDasharray?.split(',')
+                  : strokeDasharray?.split(' ')
+                )?.map(Number) as [number, number]),
           linecap: strokeLinecap,
           linejoin: strokeLinejoin,
           miterlimit: strokeMiterlimit,
@@ -596,7 +670,7 @@ export function serializedNodesToEntities(
     const { markerStart, markerEnd, markerFactor } =
       attributes as MarkerAttributes;
     if (markerStart || markerEnd) {
-      entity.insert(
+      entityCommands.insert(
         new Marker({
           start: markerStart,
           end: markerEnd,
@@ -606,7 +680,7 @@ export function serializedNodesToEntities(
     }
 
     if (opacity || fillOpacity || strokeOpacity) {
-      entity.insert(
+      entityCommands.insert(
         new Opacity({
           opacity,
           fillOpacity,
@@ -622,7 +696,7 @@ export function serializedNodesToEntities(
       dropShadowOffsetY,
     } = attributes as DropShadowAttributes;
     if (dropShadowBlurRadius) {
-      entity.insert(
+      entityCommands.insert(
         new DropShadow({
           color: dropShadowColor,
           blurRadius: dropShadowBlurRadius,
@@ -639,7 +713,7 @@ export function serializedNodesToEntities(
       innerShadowOffsetY,
     } = attributes as InnerShadowAttributes;
     if (innerShadowBlurRadius) {
-      entity.insert(
+      entityCommands.insert(
         new InnerShadow({
           color: innerShadowColor,
           blurRadius: innerShadowBlurRadius,
@@ -650,52 +724,52 @@ export function serializedNodesToEntities(
     }
 
     const { visibility } = attributes as VisibilityAttributes;
-    entity.insert(new Visibility(visibility));
+    entityCommands.insert(new Visibility(visibility));
 
     const { name } = attributes as NameAttributes;
-    entity.insert(new Name(name));
+    entityCommands.insert(new Name(name));
 
     const { lockAspectRatio } = attributes;
     if (lockAspectRatio) {
-      entity.insert(new LockAspectRatio());
+      entityCommands.insert(new LockAspectRatio());
     }
 
     const { zIndex } = attributes;
-    entity.insert(new ZIndex(zIndex));
+    entityCommands.insert(new ZIndex(zIndex));
 
     const { sizeAttenuation, strokeAttenuation } =
       attributes as AttenuationAttributes;
     if (sizeAttenuation) {
-      entity.insert(new SizeAttenuation());
+      entityCommands.insert(new SizeAttenuation());
     }
     if (strokeAttenuation) {
-      entity.insert(new StrokeAttenuation());
+      entityCommands.insert(new StrokeAttenuation());
     }
 
     const { wireframe } = attributes as WireframeAttributes;
     if (wireframe) {
-      entity.insert(new Wireframe(true));
+      entityCommands.insert(new Wireframe(true));
     }
 
     const { filter } = attributes as FilterAttributes;
     if (filter) {
-      entity.insert(new Filter({ value: filter }));
+      entityCommands.insert(new Filter({ value: filter }));
     }
 
     if (parentId) {
-      idEntityMap.get(parentId)?.appendChild(entity);
+      idEntityMap.get(parentId)?.appendChild(entityCommands);
     }
 
-    entities.push(entity.id().hold());
+    entities.push(entityCommands.id().hold());
   }
-
 
   // 2nd pass for delayed connections
   // We need to find "Connection" nodes that weren't fully linked?
   // Or just iterate `nodes` again for connections
   for (const node of nodes) {
     if (node.type === 'connection') {
-      const { id, source, target, routingType, strokeStyle } = node as ConnectionSerializedNode;
+      const { id, source, target, routingType, strokeStyle } =
+        node as ConnectionSerializedNode;
       const entity = idEntityMap.get(id)?.id();
       const sourceEntity = idEntityMap.get(source)?.id();
       const targetEntity = idEntityMap.get(target)?.id();
@@ -705,7 +779,7 @@ export function serializedNodesToEntities(
           source: sourceEntity,
           target: targetEntity,
           routingType,
-          strokeStyle
+          strokeStyle,
         });
       }
     }
