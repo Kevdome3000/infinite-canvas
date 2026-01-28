@@ -352,7 +352,7 @@ export class API {
    * Create a new camera.
    */
   createCamera(cameraProps: Partial<ComputedCamera>) {
-    const { zoom } = cameraProps;
+    const { zoom, x, y } = cameraProps;
     this.#camera = this.commands
       .spawn(
         new Camera({
@@ -362,6 +362,10 @@ export class API {
           scale: {
             x: 1 / zoom,
             y: 1 / zoom,
+          },
+          translation: {
+            x,
+            y,
           },
         }),
       )

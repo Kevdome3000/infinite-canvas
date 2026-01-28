@@ -3,45 +3,45 @@ import toposort from 'toposort';
 import { Entity } from '@lastolivegames/becsy';
 import { IPointData } from '@pixi/math';
 import {
-  AABB,
-  Binded,
-  Binding,
-  Brush,
-  ColumnLayout,
-  Connection,
-  DropShadow,
   Ellipse,
-  Embed,
-  FillGradient,
-  FillImage,
-  FillPattern,
   FillSolid,
-  Filter,
-  Font,
-  HTML,
-  HTMLContainer,
-  InnerShadow,
-  Line,
-  LockAspectRatio,
-  Marker,
-  MaterialDirty,
+  FillGradient,
   Name,
   Opacity,
   Path,
   Polyline,
   Rect,
   Renderable,
-  Rough,
-  SizeAttenuation,
   Stroke,
-  StrokeAttenuation,
   Text,
-  TextDecoration,
   Transform,
-  VectorNetwork,
   Visibility,
-  Wireframe,
+  DropShadow,
   ZIndex,
+  Font,
+  AABB,
+  TextDecoration,
+  FillImage,
+  FillPattern,
+  MaterialDirty,
+  SizeAttenuation,
+  StrokeAttenuation,
+  Brush,
+  Wireframe,
+  Rough,
+  VectorNetwork,
+  Marker,
+  InnerShadow,
+  Line,
+  LockAspectRatio,
+  HTML,
+  HTMLContainer,
+  Embed,
+  Filter,
+  Binding,
+  Binded,
+  ColumnLayout,
+  Connection
 } from '../../components';
 import {
   AttenuationAttributes,
@@ -49,6 +49,7 @@ import {
   ColumnLayoutSerializedNode,
   ConnectionSerializedNode,
   DropShadowAttributes,
+  EdgeSerializedNode,
   EmbedSerializedNode,
   FillAttributes,
   FilterAttributes,
@@ -77,10 +78,10 @@ import { deserializeBrushPoints, deserializePoints } from './points';
 import { Commands, EntityCommands } from '../../commands';
 import { isGradient } from '../gradient';
 import { isPattern } from '../pattern';
-import { computeBidi, measureText } from '../../systems';
+import { computeBidi, measureText } from '../../systems/ComputeTextMetrics';
 import { DOMAdapter } from '../../environment';
 import { safeAddComponent } from '../../history';
-import { updateFloatingTerminalPoints } from '../binding';
+import { updateFixedTerminalPoints, updateFloatingTerminalPoints, updatePoints } from '../binding';
 
 export function inferXYWidthHeight(node: SerializedNode) {
   if (
@@ -99,7 +100,7 @@ export function inferXYWidthHeight(node: SerializedNode) {
       bounds = Polyline.getGeometryBounds(node);
     } else if (type === 'line' || type === 'rough-line') {
       bounds = Line.getGeometryBounds(node);
-    } else if (type === 'path') {
+    } else if (type === 'path' || type === 'rough-path') {
       bounds = Path.getGeometryBounds(node);
     } else if (type === 'text') {
       computeBidi(node.content);
@@ -150,7 +151,7 @@ export function inferXYWidthHeight(node: SerializedNode) {
         node.y1 = node.y1 - bounds.minY;
         node.x2 = node.x2 - bounds.minX;
         node.y2 = node.y2 - bounds.minY;
-      } else if (type === 'path') {
+      } else if (type === 'path' || type === 'rough-path') {
         node.d = shiftPath(node.d, -bounds.minX, -bounds.minY);
       } else if (type === 'brush') {
         node.points = serializeBrushPoints(
@@ -182,12 +183,10 @@ export function inferPointsWithFromIdAndToId(
   inferXYWidthHeight(from);
   inferXYWidthHeight(to);
 
-  const state = edge as SerializedNode & {
-    absolutePoints: (IPointData | null)[];
-  };
+  const state = edge as LineSerializedNode & { absolutePoints: (IPointData | null)[] };
   state.absolutePoints = [null, null];
-  // updateFixedTerminalPoints(edge, from, to, true);
-  // updatePoints(edge, geo.points, from, to);
+  updateFixedTerminalPoints(state, from, to);
+  updatePoints(state, null, from, to);
   updateFloatingTerminalPoints(state, from, to);
 
   edge.x1 = state.absolutePoints[0].x;
@@ -273,10 +272,11 @@ export function serializedNodesToEntities(
 
   // bindings should also be sorted
   nodes.forEach((node) => {
-    if (node.type === 'line') {
-      if (node.fromId && node.toId) {
-        edges.push([node.fromId, node.id]);
-        edges.push([node.toId, node.id]);
+    if (node.type === 'line' || node.type === 'polyline' || node.type === 'path') {
+      const { fromId, toId } = node as EdgeSerializedNode;
+      if (fromId && toId) {
+        edges.push([fromId, node.id]);
+        edges.push([toId, node.id]);
       }
     }
   });
@@ -302,8 +302,8 @@ export function serializedNodesToEntities(
     idEntityMap.set(id, entityCommands);
 
     // Infer points with fromId and toId first
-    if (type === 'line') {
-      const { fromId, toId } = attributes as LineSerializedNode;
+    if (type === 'line' || type === 'rough-line') {
+      const { fromId, toId } = attributes as EdgeSerializedNode;
       if (fromId && toId) {
         const fromNode = nodes.find((node) => node.id === fromId);
         const toNode = nodes.find((node) => node.id === toId);
@@ -655,9 +655,9 @@ export function serializedNodesToEntities(
             strokeDasharray === 'none'
               ? [0, 0]
               : ((strokeDasharray?.includes(',')
-                  ? strokeDasharray?.split(',')
-                  : strokeDasharray?.split(' ')
-                )?.map(Number) as [number, number]),
+                ? strokeDasharray?.split(',')
+                : strokeDasharray?.split(' ')
+              )?.map(Number) as [number, number]),
           linecap: strokeLinecap,
           linejoin: strokeLinejoin,
           miterlimit: strokeMiterlimit,

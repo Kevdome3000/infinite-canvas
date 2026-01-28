@@ -239,8 +239,8 @@ async function openCanvas(id?: string) {
         fill: 'grey',
         constraints: [
           {
-            point: [0, 0],
-            perimeter: true,
+            x: 0.5,
+            y: 0.5,
           },
         ],
         // fill: 'https://v3b.fal.media/files/b/tiger/v1lf1EcPP1X1pw_YOKM4o.jpg',
@@ -248,12 +248,16 @@ async function openCanvas(id?: string) {
       };
       const edge1 = {
         id: 'line-1',
+    // type: 'rough-line',
         type: 'line',
         fromId: 'rect-1',
         toId: 'rect-2',
         stroke: 'black',
         strokeWidth: 10,
         markerEnd: 'line',
+    exitX: 0.5,
+    exitY: 0.5,
+    exitPerimeter: true,
         // orthogonal: true,
       };
       const edge2 = {

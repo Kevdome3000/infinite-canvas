@@ -36,7 +36,11 @@
     "@infinite-canvas-tutorial/upscaler": "workspace:*",
     "@infinite-canvas-tutorial/chat": "workspace:*",
     "@infinite-canvas-tutorial/laser-pointer": "workspace:*",
-    "@infinite-canvas-tutorial/lasso": "workspace:*"
+    "@infinite-canvas-tutorial/lasso": "workspace:*",
+    "@infinite-canvas-tutorial/eraser": "workspace:*",
+    "@infinite-canvas-tutorial/d2": "workspace:*",
+    "@infinite-canvas-tutorial/yoga": "workspace:*",
+    "@infinite-canvas-tutorial/mermaid": "workspace:*"
   },
   "devDependencies": {
     "@ant-design/icons-vue": "^7.0.1",

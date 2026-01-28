@@ -138,7 +138,15 @@ export const en = defineConfig({
               {
                 text: 'Lesson 031 - Bindings between shapes',
                 link: 'lesson-031',
-              }
+              },
+              {
+                text: 'Lesson 032 - Text to diagram',
+                link: 'lesson-032',
+              },
+              {
+                text: 'Lesson 033 - Layout engine',
+                link: 'lesson-033',
+              },
             ],
           },
         ],
@@ -190,6 +198,9 @@ export const en = defineConfig({
               { text: 'Laser pointer', link: 'laser-pointer' },
               { text: 'Lasso', link: 'lasso' },
               { text: 'Eraser', link: 'eraser' },
+              { text: 'Mermaid', link: 'mermaid' },
+              { text: 'D2', link: 'd2' },
+              { text: 'Yoga', link: 'yoga' },
             ],
           },
           {
@@ -489,6 +500,7 @@ export const en = defineConfig({
             link: 'lama-in-worker',
           },
           { text: 'Audio visualizer', link: 'audio-visualizer' },
+          { text: 'Mermaid', link: 'mermaid' },
         ],
       },
     },

@@ -2,8 +2,8 @@
 <script type="module" src="./main.ts"></script>
   <style>
     html, body {
-      margin: 0;
-      padding: 0;
+    margin: 0;
+    padding: 0;
       height: 100%;
       font-family: system-ui, sans-serif;
     }
@@ -26,7 +26,7 @@
       z-index: 1000;
       padding: 8px 16px;
       cursor: pointer;
-    }
+  }
 
     .canvas-list {
       display: grid;
@@ -44,9 +44,10 @@
 
     .canvas-card:hover {
       background: #f5f5f5;
-    }
-  </style>
-  <body>
+  }
+</style>
+
+<body>
     <div id="home-screen">
       <h1>My Canvases</h1>
       <button id="create-btn">+ New Canvas</button>
@@ -57,13 +58,12 @@
       <button id="back-btn">← Back</button>
       <div id="canvas-container" style="width: 100%; height: 100%;">
         <ic-spectrum-canvas id="canvas1" style="width: 100%; height: 100%;"
-                            app-state='{"topbarVisible":true, "cameraZoom": 1}'
-                            renderer="webgl"
-        >
+      app-state='{"topbarVisible":true, "cameraZoom": 1}' renderer="webgl">
           <ic-spectrum-penbar-eraser slot="penbar-item"></ic-spectrum-penbar-eraser>
           <ic-spectrum-penbar-laser-pointer slot="penbar-item"></ic-spectrum-penbar-laser-pointer>
         </ic-spectrum-canvas>
       </div>
     </div>
-  </body>
+</body>
+
 </html>
