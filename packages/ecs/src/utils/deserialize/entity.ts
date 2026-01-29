@@ -525,7 +525,7 @@ export function serializedNodesToEntities(
             alignItems: 'stretch',
           }),
         );
-        entityCommands.insert(new Rect({ x: 0, y: 0, width, height }));
+        entityCommands.insert(new Rect({ x: 0, y: 0, width: absoluteWidth, height: absoluteHeight }));
       }
     } else if (type === 'embed') {
       const { url } = attributes as EmbedSerializedNode;
@@ -550,7 +550,7 @@ export function serializedNodesToEntities(
       // as ColumnLayout usually implies a container.
 
       // Keep it simple: Add Rect with transform dims.
-      entityCommands.insert(new Rect({ x: 0, y: 0, width, height }));
+      entityCommands.insert(new Rect({ x: 0, y: 0, width: absoluteWidth, height: absoluteHeight }));
     } else if (type === 'connection') {
       const { source, target, routingType, strokeStyle } =
         attributes as ConnectionSerializedNode;
