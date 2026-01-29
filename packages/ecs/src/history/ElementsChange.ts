@@ -2,7 +2,7 @@
  * Borrow from https://github.com/excalidraw/excalidraw/blob/master/packages/excalidraw/change.ts#L399
  */
 import { ComponentType, Entity } from '@lastolivegames/becsy';
-import { isNil } from '@antv/util';
+import { isNil, isString } from '@antv/util';
 import { Change } from './Change';
 import { Delta } from './Delta';
 import { newElementWith } from './Snapshot';
@@ -560,13 +560,16 @@ export const mutateElement = <TElement extends Mutable<SerializedNode>>(
   entity: Entity,
   element: TElement,
   updates: ElementUpdate<TElement>,
+  skipOverrideKeys: string[] = [],
 ): TElement => {
   let didChange = false;
 
   for (const key in updates) {
     const value = (updates as any)[key];
     if (typeof value !== 'undefined') {
-      (element as any)[key] = value;
+      if (!skipOverrideKeys.includes(key)) {
+        (element as any)[key] = value;
+      }
       didChange = true;
     }
   }
@@ -645,6 +648,7 @@ export const mutateElement = <TElement extends Mutable<SerializedNode>>(
     editable,
     isEditing,
     filter,
+    brushStamp
   } = updates as unknown as SerializedNodeAttributes;
 
   if (!isNil(name)) {
@@ -685,6 +689,12 @@ export const mutateElement = <TElement extends Mutable<SerializedNode>>(
 
       safeRemoveComponent(entity, FillGradient);
       safeAddComponent(entity, FillSolid, { value: fill });
+    }
+  }
+  if (!isNil(brushStamp)) {
+    if (isDataUrl(brushStamp) || isUrl(brushStamp)) {
+      console.log('loadImage', brushStamp);
+      loadImage(brushStamp, entity);
     }
   }
   if (!isNil(stroke)) {
@@ -858,10 +868,10 @@ export const mutateElement = <TElement extends Mutable<SerializedNode>>(
   }
   // TODO: Other text properties e.g. fontFamily
 
-  if (!isNil(x)) {
+  if (!isNil(x) && !isString(x)) {
     entity.write(Transform).translation.x = x;
   }
-  if (!isNil(y)) {
+  if (!isNil(y) && !isString(y)) {
     entity.write(Transform).translation.y = y;
   }
   if (!isNil(rotation)) {
@@ -873,7 +883,7 @@ export const mutateElement = <TElement extends Mutable<SerializedNode>>(
   if (!isNil(scaleY)) {
     entity.write(Transform).scale.y = scaleY;
   }
-  if (!isNil(width)) {
+  if (!isNil(width) && !isString(width)) {
     if (entity.has(Rect)) {
       entity.write(Rect).width = width;
     } else if (entity.has(Ellipse)) {
@@ -887,7 +897,7 @@ export const mutateElement = <TElement extends Mutable<SerializedNode>>(
       entity.write(Embed).width = width;
     }
   }
-  if (!isNil(height)) {
+  if (!isNil(height) && !isString(height)) {
     if (entity.has(Rect)) {
       entity.write(Rect).height = height;
     } else if (entity.has(Ellipse)) {
@@ -946,7 +956,7 @@ export const mutateElement = <TElement extends Mutable<SerializedNode>>(
     element.version = 0;
   }
 
-  Object.assign(element, updates);
+  // Object.assign(element, updates);
 
   element.version++;
   element.versionNonce = randomInteger();
