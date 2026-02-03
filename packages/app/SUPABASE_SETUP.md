@@ -1,174 +1,225 @@
-# Supabase 认证设置指南
+# Supabase Authentication Setup Guide
 
-本指南将帮助您配置 Supabase 用户认证功能。
+This guide will help you configure the Supabase user authentication feature.
 
-## 1. 创建 Supabase 项目
+## 1. Create a Supabase project
 
-1. 访问 [Supabase](https://supabase.com) 并登录
-2. 创建一个新项目
-3. 等待项目初始化完成
+1. Go to [Supabase](https://supabase.com) and log in
+2. Create a new project
+3. Wait for the project initialization to complete
 
-## 2. 获取 API 密钥
+## 2. Get an API key
 
-1. 在 Supabase 项目仪表板中，进入 **Settings** > **API**
-2. 复制以下信息：
+1. In the Supabase project dashboard, go to Settings > API
+2. Copy the following information:
     - **Project URL** (NEXT_PUBLIC_SUPABASE_URL)
     - **anon/public key** (NEXT_PUBLIC_SUPABASE_ANON_KEY)
 
-## 3. 配置环境变量
+## 3. Configure environment variables
 
-1. 在 `packages/app` 目录下创建 `.env.local` 文件
-2. 添加以下环境变量：
+1. Create a .env.local file in the packages/app directory
+2. Add the following environment variables:
 
 ```env
 NEXT_PUBLIC_SUPABASE_URL=your-supabase-project-url
 NEXT_PUBLIC_SUPABASE_ANON_KEY=your-supabase-anon-key
 ```
 
-## 4. 配置 Supabase 认证
+## 4. Configure Supabase authentication
 
-### 启用邮箱认证
+### Enable email authentication
 
-1. 在 Supabase 项目仪表板中，进入 **Authentication** > **Providers**
-2. 确保 **Email** 提供商已启用
-3. 配置邮箱设置（可选）：
-    - 自定义邮箱模板
-    - 设置邮箱验证链接有效期
-    - 配置重定向 URL
+1. In the Supabase project dashboard, go to **Authentication** > **Providers**
+2. Make sure the Email provider is enabled
+3. Configure Mailbox Settings (Optional):
+    - Custom email templates
+    - Set the email verification link validity period
+    - Configure the redirect URL
 
-### 配置重定向 URL
+### Configure the redirect URL
 
-在 **Authentication** > **URL Configuration** 中设置：
+Set up in Authentication > URL Configuration:
 
--   **Site URL**: `http://localhost:3000` (开发环境) 或您的生产环境 URL
--   **Redirect URLs**: 添加以下 URL：
-    -   `http://localhost:3000/**` (开发环境)
-    -   `http://localhost:3000/auth/callback` (OAuth 回调)
-    -   如果部署到生产环境，也要添加生产环境的 URL
+- Site URL: 'http://localhost:3000' (development environment) or your production environment URL
+- **Redirect URLs**: Add the following URLs:
+    - 'http://localhost:3000/**' (development environment)
+    - 'http://localhost:3000/auth/callback' (OAuth callback)
+    - If deploying to production, add the URL of the production environment as well
 
-### 启用 Google OAuth 登录
+### Enable Google OAuth sign-in
 
-1. 在 Supabase 项目仪表板中，进入 **Authentication** > **Providers**
-2. 找到 **Google** 提供商并点击启用
-3. 配置 Google OAuth：
+1. In the Supabase project dashboard, go to **Authentication** > **Providers**
+2. Find the Google provider and click Enable
+3. Configure Google OAuth:
 
-#### 在 Google Cloud Console 中创建 OAuth 凭据
+#### Create OAuth credentials in the Google Cloud Console
 
-    1. 访问 [Google Cloud Console](https://console.cloud.google.com/)
-    2. 创建新项目或选择现有项目
-    3. 启用 **Google+ API**：
-        - 进入 **APIs & Services** > **Library**
-        - 搜索 "Google+ API" 并启用
-    4. 创建 OAuth 2.0 客户端 ID：
+1. Access the Google Cloud Console (https://console.cloud.google.com/)
+2. Create a new project or select an existing one
+3. Enable the **Google+ API**:
+    - Go to APIs & Services > Library
+    - Search for "Google+ API" and enable it
+4. Create an OAuth 2.0 Client ID:
 
-        - 进入 **APIs & Services** > **Credentials**
-        - 点击 **Create Credentials** > **OAuth client ID**
-        - 选择 **Web application**
-        - 添加授权重定向 URI：
+   - Go to APIs & Services > Credentials
+   - Click Create Credentials > OAuth client ID
+   - Select Web application
+   - Add authorization redirect URI:
 
-            ```
-            https://<your-project-ref>.supabase.co/auth/v1/callback
-            ```
+    ```
+    https://<your-project-ref>.supabase.co/auth/v1/callback
+    ```
 
-            （您可以在 Supabase 项目的 **Authentication** > **Providers** > **Google** 页面找到这个 URL）
-        - 点击 **Create**
-        - 复制 **Client ID** 和 **Client Secret**
+    (You can find this URL on the **Authentication** > **Providers** > **Google** pages of the Supabase project)
+        - Click Create.
+        - Copy the Client ID and Client Secret
 
-    5. 在 Supabase 中配置：
-        - 回到 Supabase 的 **Authentication** > **Providers** > **Google** 页面
-        - 粘贴 **Client ID** 和 **Client Secret**
-        - 点击 **Save**
+5. Configure in Supabase:
+        - Go back to Supabase's Authentication> Providers> Google
+        - Paste the Client ID and Client Secret
+        - Click **Save**
 
-    **注意**：确保重定向 URI 与 Supabase 提供的完全匹配，包括协议（https）和路径。
+**Note**: Ensure that the redirect URI matches exactly what Supabase provides, including the protocol (https) and path.
 
-## 5. 运行应用
+### Enable GitHub OAuth sign-in
+
+1. In the Supabase project dashboard, go to **Authentication** > **Providers**
+2. Find the GitHub provider and click Enable
+3. Configure GitHub OAuth:
+
+#### Create an OAuth App in GitHub
+
+1. Visit GitHub Developer Settings (https://github.com/settings/developers)
+2. Click on **OAuth Apps** > **New OAuth App**
+3. Fill in the application information:
+
+   - **Application name**: The name of your app (e.g., My App)
+     - Homepage URL: 'http://localhost:3000' (development environment) or your production environment URL
+   - **Authorization callback URL**:
+
+    ```plaintext
+    https://<your-project-ref>.supabase.co/auth/v1/callback
+    ```
+
+    (You can find this URL on the Supabase project's Authentication> Providers> GitHub pages.)
+
+4. Click **Register application**
+5. Copy the Client ID
+6. Click Generate a new client secret to generate and copy the client secret
+
+7. Configure in Supabase:
+    - Go back to Supabase's Authentication > Providers > GitHub pages
+    - Paste the Client ID and Client Secret
+    - Click **Save**
+
+**Note**:
+
+- Ensure that the callback URL matches exactly what Supabase provides, including the protocol (https) and path
+- If your app needs access to a user's private repository, you can configure the appropriate permission scope in the GitHub OAuth App settings
+
+## 5. Run the app
 
 ```bash
 cd packages/app
 pnpm dev
 ```
 
-## 功能说明
+## Function description
 
-### 已实现的功能
+### Implemented features
 
--   ✅ 用户注册（邮箱 + 密码）
--   ✅ 用户登录（邮箱 + 密码）
--   ✅ Google OAuth 登录
--   ✅ 会话管理
--   ✅ 路由保护（未登录用户自动重定向到登录页）
--   ✅ 认证状态监听
+- ✅ User registration (email + password)
+- ✅ User login (email + password)
+- ✅ Google OAuth sign-in
+- ✅ GitHub OAuth login
+- ✅ Session management
+- ✅ Routing protection (non-logged-in users are automatically redirected to the login page)
+- ✅ Authentication status listening
 
-### 使用方式
+### Usage
 
-1. **注册新用户**：
+1. **Register as a New User**:
 
-    - 访问应用首页
-    - 点击"注册"标签
-    - 输入邮箱和密码（至少 6 个字符）
-    - 点击"注册"按钮
-    - 检查邮箱以验证账户（如果启用了邮箱验证）
+   - Visit the app homepage
+   - Click on the "Register" tab
+   - Enter your email address and password (at least 6 characters)
+   - Click on the "Sign Up" button
+   - Check your email address to verify your account (if email verification is enabled)
 
-2. **登录**：
+2. **Login**:
 
-    - 访问应用首页
-    - 在"登录"标签中输入邮箱和密码
-    - 点击"登录"按钮
+   - Visit the app homepage
+   - Enter your email address and password in the "Login" tab
+   - Click on the "Sign In" button
 
-3. **使用 Google 登录**：
+3. **Sign in with Google**:
 
-    - 访问应用首页
-    - 点击"使用 Google 登录"按钮
-    - 在弹出窗口中选择 Google 账户
-    - 授权后自动登录
+   - Visit the app homepage
+   - Click on the "Sign in with Google" button
+   - Select Google Account in the pop-up window
+   - Automatic login after authorization
 
-4. **登出**：
-    - 点击右上角的用户头像
-    - 在下拉菜单中选择"登出"
+4. **Log in with GitHub**:
 
-## 自定义配置
+   - Visit the app homepage
+   - Click the "Sign in with GitHub" button
+   - Select your GitHub account in the pop-up window
+   - Automatic login after authorization
 
-### 修改认证流程
+5. **Log Out**:
+    - Tap the user avatar in the top right corner
+    - Select "Sign out" in the drop-down menu
 
--   登录组件：`packages/app/components/auth/login-form.tsx`
--   认证上下文：`packages/app/contexts/auth-context.tsx`
--   中间件配置：`packages/app/middleware.ts`
+## Custom configuration
 
-### 添加其他认证方式
+### Modify the certification process
 
-Supabase 支持多种认证提供商（GitHub、Apple、Discord 等）。您可以在 Supabase 仪表板中启用这些提供商，然后在代码中使用类似的方式添加登录方法。
+- Login Components: 'packages/app/components/auth/login-form.tsx'
+- Authentication context: 'packages/app/contexts/auth-context.tsx'
+- Middleware configuration: 'packages/app/middleware.ts'
 
-例如，要添加 GitHub 登录：
+### Add additional authentication methods
 
-1. 在 Supabase 中启用 GitHub 提供商
-2. 在 `auth-context.tsx` 中添加 `signInWithGitHub` 方法
-3. 在 `login-form.tsx` 中添加 GitHub 登录按钮
+Supabase supports multiple certification providers (Apple, Discord, Twitter, etc.). You can enable these providers in your Supabase dashboard and then add sign-in methods in a similar way in your code.
 
-## 故障排除
+For example, to add additional OAuth providers:
 
-### 常见问题
+1. Enable the appropriate provider in Supabase
+2. Add the corresponding login method in 'auth-context.tsx' (e.g. 'signInWithApple')
+3. Add the corresponding login button in 'login-form.tsx'
+
+## Troubleshooting
+
+### FAQs
 
 1. **"Cannot find module '@supabase/ssr'"**
 
-    - 运行 `pnpm install` 确保依赖已安装
+   - Run 'pnpm install' to make sure the dependency is installed
 
-2. **环境变量未加载**
+2. **Environment Variables Not Loading**
 
-    - 确保 `.env.local` 文件在 `packages/app` 目录下
-    - 重启开发服务器
+   - Make sure the '.env.local' file is in the 'packages/app' directory
+   - Restart the development server
 
-3. **认证状态不更新**
+3. **Certification status not updated**
 
-    - 检查浏览器控制台是否有错误
-    - 确认 Supabase URL 和密钥配置正确
+   - Check the browser console for errors
+   - Verify that the Supabase URL and key are configured correctly
 
-4. **Google 登录失败**
-    - 确认已在 Supabase 中正确配置 Google OAuth 凭据
-    - 检查 Google Cloud Console 中的重定向 URI 是否与 Supabase 提供的完全匹配
-    - 确保 Google+ API 已启用
-    - 检查浏览器控制台是否有错误信息
+4. **Google sign-in failed**
 
-## 参考资源
+   - Verify that Google OAuth credentials are properly configured in Supabase
+   - Check that the redirect URI in the Google Cloud Console matches the exact match provided by Supabase
+   - Make sure the Google+ API is enabled
+   - Check the browser console for error messages
+
+5. **GitHub Login Failed**
+    - Verify that GitHub OAuth credentials are properly configured in Supabase
+    - Check that the callback URL in your GitHub OAuth app matches the exact match provided by Supabase
+    - Make sure the Client ID and Client Secret are copied correctly (be careful not to have extra spaces)
+    - Check the browser console for error messages
+
+## reference resources
 
 -   [Supabase 文档](https://supabase.com/docs)
 -   [Supabase Auth 文档](https://supabase.com/docs/guides/auth)

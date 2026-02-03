@@ -11,8 +11,6 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
-import { ThemeToggle } from '@/components/ui/theme-toggle'
-import { LocaleSwitcher } from '@/components/ui/locale-switcher'
 import { useTranslations } from 'next-intl'
 
 export function UserMenu() {
@@ -31,11 +29,9 @@ export function UserMenu() {
 
   return (
     <div className="flex items-center gap-2">
-      <ThemeToggle />
-      <LocaleSwitcher />
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          <Button variant="ghost" className="relative h-8 w-8 rounded-full">
+          <Button variant="ghost" className="relative h-8 w-8 rounded-full cursor-pointer">
             <Avatar className="h-8 w-8">
               <AvatarFallback>{userInitials}</AvatarFallback>
             </Avatar>

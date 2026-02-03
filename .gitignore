@@ -20,3 +20,4 @@ playwright/.cache
 /.junie/
 
 .vercel
+.env*.local

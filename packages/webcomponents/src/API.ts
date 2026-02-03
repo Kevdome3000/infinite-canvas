@@ -1,3 +1,4 @@
+import { v4 as uuidv4 } from 'uuid';
 import {
   Canvas,
   ComputedCamera,
@@ -5,9 +6,14 @@ import {
   API,
   StateManagement,
   Commands,
+  ThemeMode,
 } from '@infinite-canvas-tutorial/ecs';
 import { type LitElement } from 'lit';
 import { Event } from './event';
+import { ImageLoader } from '@loaders.gl/images';
+import { load } from '@loaders.gl/core';
+import { getDataURL, updateAndSelectNodes } from './utils';
+import { isString } from '@antv/util';
 
 export interface Comment {
   type: 'comment';
@@ -163,5 +169,63 @@ export class ExtendedAPI extends API {
   }
   getLocale() {
     throw new Error('Method not implemented.');
+  }
+
+  setThemeMode(themeMode: ThemeMode) {
+    this.element.dispatchEvent(
+      new CustomEvent('theme-change', {
+        detail: {
+          themeMode,
+        },
+        bubbles: true,
+        composed: true,
+      }),
+    );
+
+    this.setAppState({
+      themeMode,
+    });
+  }
+
+  async createImageFromFile(file: File | string, position?: { x: number; y: number }) {
+    const size = {
+      width: this.element.clientWidth,
+      height: this.element.clientHeight,
+      zoom: this.getAppState().cameraZoom,
+    };
+
+    const [image, dataURL] = await Promise.all([
+      load(file, ImageLoader),
+      isString(file) ? Promise.resolve(file) : getDataURL(file),
+    ]);
+
+    let cdnUrl: string;
+    if (!isString(file) && this.upload) {
+      cdnUrl = await this.upload(file);
+    }
+
+    // Heuristic to calculate the size of the image.
+    // @see https://github.com/excalidraw/excalidraw/blob/master/packages/excalidraw/components/App.tsx#L10059
+    const minHeight = Math.max(size.height - 120, 160);
+    // max 65% of canvas height, clamped to <300px, vh - 120px>
+    const maxHeight = Math.min(
+      minHeight,
+      Math.floor(size.height * 0.5) / size.zoom,
+    );
+    const height = Math.min(image.height, maxHeight);
+    const width = height * (image.width / image.height);
+
+    updateAndSelectNodes(this, this.getAppState(), [
+      {
+        id: uuidv4(),
+        type: 'rect',
+        x: (position?.x ?? 0) - width / 2,
+        y: (position?.y ?? 0) - height / 2,
+        width,
+        height,
+        fill: cdnUrl ?? dataURL,
+        lockAspectRatio: true,
+      },
+    ]);
   }
 }

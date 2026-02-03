@@ -210,18 +210,7 @@ export const defaultAttributes: Record<
     direction: 'vertical',
     maxChildren: 0,
     showDropZone: false,
-  },
-  connection: {
-    ...commonDefaultAttributes,
-    ...strokeDefaultAttributes,
-    source: '',
-    target: '',
-    sourceAnchor: 'auto',
-    targetAnchor: 'auto',
-    routingType: 'orthogonal',
-    strokeStyle: 'solid',
-    cornerRadius: 0,
-  },
+  }
 };
 
 // @see https://github.com/plouc/nivo/issues/164

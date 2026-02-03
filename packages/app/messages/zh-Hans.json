@@ -1,0 +1,69 @@
+{
+  "common": {
+    "loading": "加载中...",
+    "error": "错误",
+    "success": "成功",
+    "cancel": "取消",
+    "confirm": "确认",
+    "save": "保存",
+    "delete": "删除",
+    "edit": "编辑",
+    "close": "关闭"
+  },
+  "auth": {
+    "title": "用户登录",
+    "description": "使用您的账户登录或注册新账户",
+    "login": "登录",
+    "logout": "退出",
+    "email": "邮箱",
+    "password": "密码",
+    "signIn": "登录",
+    "signUp": "注册",
+    "signingIn": "登录中...",
+    "signingUp": "注册中...",
+    "signInWithGoogle": "使用 Google 登录",
+    "signInWithGitHub": "使用 GitHub 登录",
+    "redirecting": "正在跳转...",
+    "or": "或",
+    "signUpSuccess": "注册成功！请检查您的邮箱以验证账户。",
+    "loginRequired": "需要登录",
+    "loginToUseChat": "请登录以使用聊天功能"
+  },
+  "theme": {
+    "light": "浅色",
+    "dark": "深色",
+    "system": "跟随系统"
+  },
+  "language": {
+    "chinese": "中文",
+    "english": "English",
+    "spanish": "Español"
+  },
+  "projects": {
+    "title": "我的项目",
+    "description": "管理您的所有项目",
+    "createProject": "创建项目",
+    "createDescription": "创建一个新项目来开始您的工作",
+    "projectName": "项目名称",
+    "projectNamePlaceholder": "输入项目名称",
+    "projectDescription": "项目描述",
+    "projectDescriptionPlaceholder": "输入项目描述（可选）",
+    "noProjects": "您还没有创建任何项目",
+    "createFirstProject": "创建第一个项目",
+    "deleteConfirm": "确定要删除这个项目吗？此操作无法撤销。",
+    "editProject": "编辑项目",
+    "editDescription": "修改项目的名称和描述",
+    "rename": "重命名",
+    "renameDescription": "修改项目的名称",
+    "modified": "修改于"
+  },
+  "zoom": {
+    "zoomIn": "放大",
+    "zoomOut": "缩小",
+    "zoomTo50": "缩放至50%",
+    "zoomTo100": "缩放至100%",
+    "zoomTo200": "缩放至200%",
+    "fitToProject": "适应项目",
+    "fitToSelection": "适应选中"
+  }
+}

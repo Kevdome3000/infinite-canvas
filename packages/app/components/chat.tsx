@@ -21,20 +21,9 @@ import {
   MessageBranchSelector,
   MessageContent,
   MessageResponse,
+  MessageActions,
+  MessageAction,
 } from "@/components/ai-elements/message";
-import {
-  ModelSelector,
-  ModelSelectorContent,
-  ModelSelectorEmpty,
-  ModelSelectorGroup,
-  ModelSelectorInput,
-  ModelSelectorItem,
-  ModelSelectorList,
-  ModelSelectorLogo,
-  ModelSelectorLogoGroup,
-  ModelSelectorName,
-  ModelSelectorTrigger,
-} from "@/components/ai-elements/model-selector";
 import {
   PromptInput,
   PromptInputActionAddAttachments,
@@ -46,6 +35,11 @@ import {
   PromptInputFooter,
   PromptInputHeader,
   type PromptInputMessage,
+  PromptInputSelect,
+  PromptInputSelectContent,
+  PromptInputSelectItem,
+  PromptInputSelectTrigger,
+  PromptInputSelectValue,
   PromptInputSubmit,
   PromptInputTextarea,
   PromptInputTools,
@@ -62,275 +56,31 @@ import {
   SourcesContent,
   SourcesTrigger,
 } from "@/components/ai-elements/sources";
-import { Suggestion, Suggestions } from "@/components/ai-elements/suggestion";
-import type { ToolUIPart } from "ai";
-import { CheckIcon } from "lucide-react";
-import { nanoid } from "nanoid";
-import { useCallback, useState } from "react";
-import { toast } from "sonner";
-
-interface MessageType {
-  key: string;
-  from: "user" | "assistant";
-  sources?: { href: string; title: string }[];
-  versions: {
-    id: string;
-    content: string;
-  }[];
-  reasoning?: {
-    content: string;
-    duration: number;
-  };
-  tools?: {
-    name: string;
-    description: string;
-    status: ToolUIPart["state"];
-    parameters: Record<string, unknown>;
-    result: string | undefined;
-    error: string | undefined;
-  }[];
-}
-
-const initialMessages: MessageType[] = [
-  {
-    key: nanoid(),
-    from: "user",
-    versions: [
-      {
-        id: nanoid(),
-        content: "Can you explain how to use React hooks effectively?",
-      },
-    ],
-  },
-  {
-    key: nanoid(),
-    from: "assistant",
-    sources: [
-      {
-        href: "https://react.dev/reference/react",
-        title: "React Documentation",
-      },
-      {
-        href: "https://react.dev/reference/react-dom",
-        title: "React DOM Documentation",
-      },
-    ],
-    tools: [
-      {
-        name: "mcp",
-        description: "Searching React documentation",
-        status: "input-available",
-        parameters: {
-          query: "React hooks best practices",
-          source: "react.dev",
-        },
-        result: `{
-  "query": "React hooks best practices",
-  "results": [
-    {
-      "title": "Rules of Hooks",
-      "url": "https://react.dev/warnings/invalid-hook-call-warning",
-      "snippet": "Hooks must be called at the top level of your React function components or custom hooks. Don't call hooks inside loops, conditions, or nested functions."
-    },
-    {
-      "title": "useState Hook",
-      "url": "https://react.dev/reference/react/useState",
-      "snippet": "useState is a React Hook that lets you add state to your function components. It returns an array with two values: the current state and a function to update it."
-    },
-    {
-      "title": "useEffect Hook",
-      "url": "https://react.dev/reference/react/useEffect",
-      "snippet": "useEffect lets you synchronize a component with external systems. It runs after render and can be used to perform side effects like data fetching."
-    }
-  ]
-}`,
-        error: undefined,
-      },
-    ],
-    versions: [
-      {
-        id: nanoid(),
-        content: `# React Hooks Best Practices
-
-React hooks are a powerful feature that let you use state and other React features without writing classes. Here are some tips for using them effectively:
-
-## Rules of Hooks
-
-1. **Only call hooks at the top level** of your component or custom hooks
-2. **Don't call hooks inside loops, conditions, or nested functions**
-
-## Common Hooks
-
-- **useState**: For local component state
-- **useEffect**: For side effects like data fetching
-- **useContext**: For consuming context
-- **useReducer**: For complex state logic
-- **useCallback**: For memoizing functions
-- **useMemo**: For memoizing values
-
-## Example of useState and useEffect
-
-\`\`\`jsx
-function ProfilePage({ userId }) {
-  const [user, setUser] = useState(null);
-
-  useEffect(() => {
-    // This runs after render and when userId changes
-    fetchUser(userId).then(userData => {
-      setUser(userData);
-    });
-  }, [userId]);
-
-  return user ? <Profile user={user} /> : <Loading />;
-}
-\`\`\`
-
-Would you like me to explain any specific hook in more detail?`,
-      },
-    ],
-  },
-  {
-    key: nanoid(),
-    from: "user",
-    versions: [
-      {
-        id: nanoid(),
-        content:
-          "Yes, could you explain useCallback and useMemo in more detail? When should I use one over the other?",
-      },
-      {
-        id: nanoid(),
-        content:
-          "I'm particularly interested in understanding the performance implications of useCallback and useMemo. Could you break down when each is most appropriate?",
-      },
-      {
-        id: nanoid(),
-        content:
-          "Thanks for the overview! Could you dive deeper into the specific use cases where useCallback and useMemo make the biggest difference in React applications?",
-      },
-    ],
-  },
-  {
-    key: nanoid(),
-    from: "assistant",
-    reasoning: {
-      content: `The user is asking for a detailed explanation of useCallback and useMemo. I should provide a clear and concise explanation of each hook's purpose and how they differ.
-
-The useCallback hook is used to memoize functions to prevent unnecessary re-renders of child components that receive functions as props.
-
-The useMemo hook is used to memoize values to avoid expensive recalculations on every render.
-
-Both hooks help with performance optimization, but they serve different purposes.`,
-      duration: 10,
-    },
-    versions: [
-      {
-        id: nanoid(),
-        content: `## useCallback vs useMemo
-
-Both hooks help with performance optimization, but they serve different purposes:
-
-### useCallback
-
-\`useCallback\` memoizes **functions** to prevent unnecessary re-renders of child components that receive functions as props.
-
-\`\`\`jsx
-// Without useCallback - a new function is created on every render
-const handleClick = () => {
-  console.log(count);
-};
-
-// With useCallback - the function is only recreated when dependencies change
-const handleClick = useCallback(() => {
-  console.log(count);
-}, [count]);
-\`\`\`
-
-### useMemo
-
-\`useMemo\` memoizes **values** to avoid expensive recalculations on every render.
-
-\`\`\`jsx
-// Without useMemo - expensive calculation runs on every render
-const sortedList = expensiveSort(items);
-
-// With useMemo - calculation only runs when items change
-const sortedList = useMemo(() => expensiveSort(items), [items]);
-\`\`\`
-
-### When to use which?
-
-- Use **useCallback** when:
-  - Passing callbacks to optimized child components that rely on reference equality
-  - Working with event handlers that you pass to child components
-
-- Use **useMemo** when:
-  - You have computationally expensive calculations
-  - You want to avoid recreating objects that are used as dependencies for other hooks
-
-### Performance Note
-
-Don't overuse these hooks! They come with their own overhead. Only use them when you have identified a genuine performance issue.`,
-      },
-    ],
-  },
-];
+import {
+  Tool,
+  ToolContent,
+  ToolHeader,
+  ToolInput,
+  ToolOutput,
+  type ToolPart,
+} from "@/components/ai-elements/tool";
+import { ImageGallery } from "@/components/ai-elements/image-gallery";
+import { cn } from "@/lib/utils";
+import type { ToolUIPart, DynamicToolUIPart } from "ai";
+import { Copy, GlobeIcon, RefreshCcw } from "lucide-react";
+import { useState } from "react";
+import { useChat, UIMessage } from '@ai-sdk/react';
+import { Loader } from "./ai-elements/loader";
 
 const models = [
   {
-    id: "gpt-4o",
-    name: "GPT-4o",
-    chef: "OpenAI",
-    chefSlug: "openai",
-    providers: ["openai", "azure"],
+    name: 'GPT 4o',
+    value: 'openai/gpt-4o',
   },
   {
-    id: "gpt-4o-mini",
-    name: "GPT-4o Mini",
-    chef: "OpenAI",
-    chefSlug: "openai",
-    providers: ["openai", "azure"],
+    name: 'Deepseek R1',
+    value: 'deepseek/deepseek-r1',
   },
-  {
-    id: "claude-opus-4-20250514",
-    name: "Claude 4 Opus",
-    chef: "Anthropic",
-    chefSlug: "anthropic",
-    providers: ["anthropic", "azure", "google", "amazon-bedrock"],
-  },
-  {
-    id: "claude-sonnet-4-20250514",
-    name: "Claude 4 Sonnet",
-    chef: "Anthropic",
-    chefSlug: "anthropic",
-    providers: ["anthropic", "azure", "google", "amazon-bedrock"],
-  },
-  {
-    id: "gemini-2.0-flash-exp",
-    name: "Gemini 2.0 Flash",
-    chef: "Google",
-    chefSlug: "google",
-    providers: ["google"],
-  },
-];
-
-const suggestions = [
-  "What are the latest trends in AI?",
-  "How does machine learning work?",
-  "Explain quantum computing",
-  "Best practices for React development",
-  "Tell me about TypeScript benefits",
-  "How to optimize database queries?",
-  "What is the difference between SQL and NoSQL?",
-  "Explain cloud computing basics",
-];
-
-const mockResponses = [
-  "That's a great question! Let me help you understand this concept better. The key thing to remember is that proper implementation requires careful consideration of the underlying principles and best practices in the field.",
-  "I'd be happy to explain this topic in detail. From my understanding, there are several important factors to consider when approaching this problem. Let me break it down step by step for you.",
-  "This is an interesting topic that comes up frequently. The solution typically involves understanding the core concepts and applying them in the right context. Here's what I recommend...",
-  "Great choice of topic! This is something that many developers encounter. The approach I'd suggest is to start with the fundamentals and then build up to more complex scenarios.",
-  "That's definitely worth exploring. From what I can see, the best way to handle this is to consider both the theoretical aspects and practical implementation details.",
 ];
 
 const PromptInputAttachmentsDisplay = () => {
@@ -356,271 +106,300 @@ const PromptInputAttachmentsDisplay = () => {
   );
 };
 
-const Chat = () => {
-  const [model, setModel] = useState<string>(models[0].id);
-  const [modelSelectorOpen, setModelSelectorOpen] = useState(false);
-  const [text, setText] = useState<string>("");
-  const [status, setStatus] = useState<
-    "submitted" | "streaming" | "ready" | "error"
-  >("ready");
-  const [messages, setMessages] = useState<MessageType[]>(initialMessages);
-  const [, setStreamingMessageId] = useState<string | null>(
-    null
-  );
-
-  const selectedModelData = models.find((m) => m.id === model);
-
-  const streamResponse = useCallback(
-    async (messageId: string, content: string) => {
-      setStatus("streaming");
-      setStreamingMessageId(messageId);
-
-      const words = content.split(" ");
-      let currentContent = "";
-
-      for (let i = 0; i < words.length; i++) {
-        currentContent += (i > 0 ? " " : "") + words[i];
-
-        setMessages((prev) =>
-          prev.map((msg) => {
-            if (msg.versions.some((v) => v.id === messageId)) {
-              return {
-                ...msg,
-                versions: msg.versions.map((v) =>
-                  v.id === messageId ? { ...v, content: currentContent } : v
-                ),
-              };
-            }
-            return msg;
-          })
-        );
-
-        await new Promise((resolve) =>
-          setTimeout(resolve, Math.random() * 100 + 50)
-        );
+const Chat = ({ 
+  className, 
+  initialMessages,
+  chatId,
+  onFinish,
+  onData,
+}: { 
+  className?: string;
+  initialMessages?: UIMessage[];
+  chatId?: string;
+  onFinish?: (options: { message: UIMessage }) => void;
+  onData?: (options: { data: any }) => void;
+}) => {
+  const [input, setInput] = useState('');
+  const [model, setModel] = useState<string>(models[0].value);
+  const [webSearch, setWebSearch] = useState(false);
+  const { messages, sendMessage, status, regenerate } = useChat({
+    messages: initialMessages,
+    onData: (data) => {
+      if (onData) {
+        onData(data);
       }
-
-      setStatus("ready");
-      setStreamingMessageId(null);
     },
-    []
-  );
-
-  const addUserMessage = useCallback(
-    (content: string) => {
-      const userMessage: MessageType = {
-        key: `user-${Date.now()}`,
-        from: "user",
-        versions: [
-          {
-            id: `user-${Date.now()}`,
-            content,
-          },
-        ],
-      };
-
-      setMessages((prev) => [...prev, userMessage]);
-
-      setTimeout(() => {
-        const assistantMessageId = `assistant-${Date.now()}`;
-        const randomResponse =
-          mockResponses[Math.floor(Math.random() * mockResponses.length)];
-
-        const assistantMessage: MessageType = {
-          key: `assistant-${Date.now()}`,
-          from: "assistant",
-          versions: [
-            {
-              id: assistantMessageId,
-              content: "",
-            },
-          ],
-        };
-
-        setMessages((prev) => [...prev, assistantMessage]);
-        streamResponse(assistantMessageId, randomResponse);
-      }, 500);
+    onFinish: async (message) => {
+      if (onFinish) {
+        onFinish(message);
+      }
     },
-    [streamResponse]
-  );
-
+  });
   const handleSubmit = (message: PromptInputMessage) => {
     const hasText = Boolean(message.text);
     const hasAttachments = Boolean(message.files?.length);
-
     if (!(hasText || hasAttachments)) {
       return;
     }
-
-    setStatus("submitted");
-
-    if (message.files?.length) {
-      toast.success("Files attached", {
-        description: `${message.files.length} file(s) attached to message`,
-      });
-    }
-
-    addUserMessage(message.text || "Sent with attachments");
-    setText("");
+    sendMessage(
+      { 
+        text: message.text || 'Sent with attachments',
+        files: message.files 
+      },
+      {
+        body: {
+          model: model,
+          webSearch: webSearch,
+          chatId: chatId, // 传递 chatId 到 API
+        },
+      },
+    );
+    setInput('');
   };
-
-  const handleSuggestionClick = (suggestion: string) => {
-    setStatus("submitted");
-    addUserMessage(suggestion);
-  };
-
   return (
-    <div className="relative flex size-full flex-col overflow-hidden">
-      <div className="flex-1 min-h-0 overflow-hidden">
-        <Conversation>
+    <div className={cn("relative flex-1 min-h-0 p-4", className)}>
+      <div className="flex flex-col h-full">
+        <Conversation className="h-full flex-1 min-h-0">
           <ConversationContent>
-            {messages.map(({ versions, ...message }) => (
-              <MessageBranch defaultBranch={0} key={message.key}>
-                <MessageBranchContent>
-                  {versions.map((version) => (
-                    <Message
-                      from={message.from}
-                      key={`${message.key}-${version.id}`}
-                    >
-                      <div>
-                        {message.sources?.length && (
-                          <Sources>
-                            <SourcesTrigger count={message.sources.length} />
-                            <SourcesContent>
-                              {message.sources.map((source) => (
-                                <Source
-                                  href={source.href}
-                                  key={source.href}
-                                  title={source.title}
-                                />
-                              ))}
-                            </SourcesContent>
-                          </Sources>
-                        )}
-                        {message.reasoning && (
-                          <Reasoning duration={message.reasoning.duration}>
-                            <ReasoningTrigger />
-                            <ReasoningContent>
-                              {message.reasoning.content}
-                            </ReasoningContent>
-                          </Reasoning>
-                        )}
-                        <MessageContent>
-                          <MessageResponse>{version.content}</MessageResponse>
-                        </MessageContent>
-                      </div>
-                    </Message>
-                  ))}
-                </MessageBranchContent>
-                {versions.length > 1 && (
-                  <MessageBranchSelector from={message.from}>
-                    <MessageBranchPrevious />
-                    <MessageBranchPage />
-                    <MessageBranchNext />
-                  </MessageBranchSelector>
+            {messages.map((message) => (
+              <div key={message.id}>
+                {message.role === 'assistant' && message.parts.filter((part) => part.type === 'source-url').length > 0 && (
+                  <Sources>
+                    <SourcesTrigger
+                      count={
+                        message.parts.filter(
+                          (part) => part.type === 'source-url',
+                        ).length
+                      }
+                    />
+                    {message.parts.filter((part) => part.type === 'source-url').map((part, i) => (
+                      <SourcesContent key={`${message.id}-${i}`}>
+                        <Source
+                          key={`${message.id}-${i}`}
+                          href={part.url}
+                          title={part.url}
+                        />
+                      </SourcesContent>
+                    ))}
+                  </Sources>
                 )}
-              </MessageBranch>
+                {message.parts.map((part, i) => {
+                  switch (part.type) {
+                    case 'text':
+                      return (
+                        <Message key={`${message.id}-${i}`} from={message.role}>
+                          <MessageContent>
+                            <MessageResponse>
+                              {part.text}
+                            </MessageResponse>
+                          </MessageContent>
+                          {message.role === 'assistant' && (
+                            <MessageActions>
+                              <MessageAction
+                                onClick={() => regenerate()}
+                                label="Retry"
+                                size="icon"
+                              >
+                                <RefreshCcw className="size-2" />
+                              </MessageAction>
+                              <MessageAction
+                                onClick={() =>
+                                  navigator.clipboard.writeText(part.text)
+                                }
+                                label="Copy"
+                                size="icon"
+                              >
+                                <Copy className="size-1" />
+                              </MessageAction>
+                            </MessageActions>
+                          )}
+                        </Message>
+                      );
+                    case 'reasoning':
+                      return (
+                        <Reasoning
+                          key={`${message.id}-${i}`}
+                          className="w-full"
+                          isStreaming={status === 'streaming' && i === message.parts.length - 1 && message.id === messages.at(-1)?.id}
+                        >
+                          <ReasoningTrigger />
+                          <ReasoningContent>{part.text}</ReasoningContent>
+                        </Reasoning>
+                      );
+                    default:
+                      // 处理 tool parts (tool-* 或 dynamic-tool)
+                      if (part.type.startsWith('tool-') || part.type === 'dynamic-tool') {
+                        const toolPart = part as ToolPart;
+                        const isCompleted = toolPart.state === 'output-available';
+                        const isError = toolPart.state === 'output-error';
+                        const isDenied = toolPart.state === 'output-denied';
+                        // 如果 tool 已完成、出错或被拒绝，默认展开
+                        const defaultOpen = isCompleted || isError || isDenied;
+                        
+                        // 根据 tool 类型渲染不同的 ToolHeader
+                        if (toolPart.type === 'dynamic-tool') {
+                          const dynamicTool = toolPart as DynamicToolUIPart;
+                          
+                          // 检查是否是 generateImage tool
+                          if (dynamicTool.toolName === 'generateImage') {
+                            const images = (dynamicTool.output as { images: string[] })?.images || [];
+                            return (
+                              <Tool
+                                key={`${message.id}-${i}`}
+                                defaultOpen={defaultOpen}
+                              >
+                                <ToolHeader
+                                  type="dynamic-tool"
+                                  state={dynamicTool.state}
+                                  toolName={dynamicTool.toolName}
+                                  title={dynamicTool.title}
+                                />
+                                <ToolContent>
+                                  {dynamicTool.input !== undefined && (
+                                    <ToolInput input={dynamicTool.input} />
+                                  )}
+                                  <div className="p-4 flex gap-2">
+                                    <ImageGallery
+                                      images={images}
+                                      alt={dynamicTool.title || 'Generated Image'}
+                                    />
+                                  </div>
+                                </ToolContent>
+                              </Tool>
+                            );
+                          }
+                          
+                          return (
+                            <Tool
+                              key={`${message.id}-${i}`}
+                              defaultOpen={defaultOpen}
+                            >
+                              <ToolHeader
+                                type="dynamic-tool"
+                                state={dynamicTool.state}
+                                toolName={dynamicTool.toolName}
+                                title={dynamicTool.title}
+                              />
+                              <ToolContent>
+                                {dynamicTool.input !== undefined && (
+                                  <ToolInput input={dynamicTool.input} />
+                                )}
+                                <ToolOutput
+                                  output={dynamicTool.output}
+                                  errorText={dynamicTool.errorText}
+                                />
+                              </ToolContent>
+                            </Tool>
+                          );
+                        } else {
+                          // 静态 tool (tool-${NAME})
+                          const staticTool = toolPart as ToolUIPart;
+
+                          if (staticTool.type.startsWith('tool-generateImage')) {
+                            const images = (staticTool.output as { images: string[] })?.images || [];
+                            return (
+                              <Tool
+                                key={`${message.id}-${i}`}
+                                defaultOpen={defaultOpen}
+                              >
+                                <ToolHeader
+                                  type={staticTool.type}
+                                  state={staticTool.state}
+                                  title={staticTool.title}
+                                />
+                                <ToolContent>
+                                  {staticTool.input !== undefined && (
+                                    <ToolInput input={staticTool.input} />
+                                  )}
+                                  <div className="p-2 pt-0 flex flex-col gap-2">
+                                    <ImageGallery
+                                      images={images}
+                                      alt={staticTool.title || 'Generated Image'}
+                                    />
+                                  </div>
+                                </ToolContent>
+                              </Tool>
+                            );
+                          }
+
+                          return (
+                            <Tool
+                              key={`${message.id}-${i}`}
+                              defaultOpen={defaultOpen}
+                            >
+                              <ToolHeader
+                                type={staticTool.type}
+                                state={staticTool.state}
+                                title={staticTool.title}
+                              />
+                              <ToolContent>
+                                {staticTool.input !== undefined && (
+                                  <ToolInput input={staticTool.input} />
+                                )}
+                                <ToolOutput
+                                  output={staticTool.output}
+                                  errorText={staticTool.errorText}
+                                />
+                              </ToolContent>
+                            </Tool>
+                          );
+                        }
+                      }
+                      return null;
+                  }
+                })}
+              </div>
             ))}
+            {status === 'submitted' && <Loader />}
           </ConversationContent>
           <ConversationScrollButton />
         </Conversation>
-      </div>
-      <div className="shrink-0 border-t bg-background">
-        <div className="grid gap-4 pt-4">
-          <Suggestions className="px-4">
-            {suggestions.map((suggestion) => (
-              <Suggestion
-                key={suggestion}
-                onClick={() => handleSuggestionClick(suggestion)}
-                suggestion={suggestion}
-              />
-            ))}
-          </Suggestions>
-          <div className="w-full px-4 pb-4">
-            <PromptInput globalDrop multiple onSubmit={handleSubmit}>
-              <PromptInputHeader>
-                <PromptInputAttachmentsDisplay />
-              </PromptInputHeader>
-              <PromptInputBody>
-                <PromptInputTextarea
-                  onChange={(event) => setText(event.target.value)}
-                  value={text}
-                />
-              </PromptInputBody>
-              <PromptInputFooter>
-                <PromptInputTools>
-                  <PromptInputActionMenu>
-                    <PromptInputActionMenuTrigger />
-                    <PromptInputActionMenuContent>
-                      <PromptInputActionAddAttachments />
-                    </PromptInputActionMenuContent>
-                  </PromptInputActionMenu>
-                  <ModelSelector
-                    onOpenChange={setModelSelectorOpen}
-                    open={modelSelectorOpen}
-                  >
-                    <ModelSelectorTrigger asChild>
-                      <PromptInputButton>
-                        {selectedModelData?.chefSlug && (
-                          <ModelSelectorLogo
-                            provider={selectedModelData.chefSlug}
-                          />
-                        )}
-                        {selectedModelData?.name && (
-                          <ModelSelectorName>
-                            {selectedModelData.name}
-                          </ModelSelectorName>
-                        )}
-                      </PromptInputButton>
-                    </ModelSelectorTrigger>
-                    <ModelSelectorContent>
-                      <ModelSelectorInput placeholder="Search models..." />
-                      <ModelSelectorList>
-                        <ModelSelectorEmpty>No models found.</ModelSelectorEmpty>
-                        {["OpenAI", "Anthropic", "Google"].map((chef) => (
-                          <ModelSelectorGroup heading={chef} key={chef}>
-                            {models
-                              .filter((m) => m.chef === chef)
-                              .map((m) => (
-                                <ModelSelectorItem
-                                  key={m.id}
-                                  onSelect={() => {
-                                    setModel(m.id);
-                                    setModelSelectorOpen(false);
-                                  }}
-                                  value={m.id}
-                                >
-                                  <ModelSelectorLogo provider={m.chefSlug} />
-                                  <ModelSelectorName>{m.name}</ModelSelectorName>
-                                  <ModelSelectorLogoGroup>
-                                    {m.providers.map((provider) => (
-                                      <ModelSelectorLogo
-                                        key={provider}
-                                        provider={provider}
-                                      />
-                                    ))}
-                                  </ModelSelectorLogoGroup>
-                                  {model === m.id ? (
-                                    <CheckIcon className="ml-auto size-4" />
-                                  ) : (
-                                    <div className="ml-auto size-4" />
-                                  )}
-                                </ModelSelectorItem>
-                              ))}
-                          </ModelSelectorGroup>
-                        ))}
-                      </ModelSelectorList>
-                    </ModelSelectorContent>
-                  </ModelSelector>
-                </PromptInputTools>
-                <PromptInputSubmit
-                  disabled={!(text.trim() || status) || status === "streaming"}
-                  status={status}
-                />
-              </PromptInputFooter>
-            </PromptInput>
-          </div>
-        </div>
+        <PromptInput onSubmit={handleSubmit} className="mt-4" globalDrop multiple>
+          <PromptInputHeader>
+            <PromptInputAttachmentsDisplay />
+          </PromptInputHeader>
+          <PromptInputBody>
+            <PromptInputTextarea
+              onChange={(e) => setInput(e.target.value)}
+              value={input}
+            />
+          </PromptInputBody>
+          <PromptInputFooter>
+            <PromptInputTools>
+              <PromptInputActionMenu>
+                <PromptInputActionMenuTrigger />
+                <PromptInputActionMenuContent>
+                  <PromptInputActionAddAttachments />
+                </PromptInputActionMenuContent>
+              </PromptInputActionMenu>
+              <PromptInputButton
+                variant={webSearch ? 'default' : 'ghost'}
+                onClick={() => setWebSearch(!webSearch)}
+              >
+                <GlobeIcon size={16} />
+                <span>Search</span>
+              </PromptInputButton>
+              <PromptInputSelect
+                onValueChange={(value) => {
+                  setModel(value);
+                }}
+                value={model}
+              >
+                <PromptInputSelectTrigger>
+                  <PromptInputSelectValue />
+                </PromptInputSelectTrigger>
+                <PromptInputSelectContent>
+                  {models.map((model) => (
+                    <PromptInputSelectItem key={model.value} value={model.value}>
+                      {model.name}
+                    </PromptInputSelectItem>
+                  ))}
+                </PromptInputSelectContent>
+              </PromptInputSelect>
+            </PromptInputTools>
+            <PromptInputSubmit disabled={!input && !status} status={status} />
+          </PromptInputFooter>
+        </PromptInput>
       </div>
     </div>
   );
