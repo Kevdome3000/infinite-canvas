@@ -528,27 +528,6 @@ export interface ColumnLayoutSerializedNode
   extends BaseSerializeNode<'column-layout'>,
     Partial<ColumnLayoutAttributes> {}
 
-export interface ConnectionAttributes {
-  /** Source entity ID */
-  source: string;
-  /** Target entity ID */
-  target: string;
-  /** Anchor point on source entity: 'auto' | 'top' | 'right' | 'bottom' | 'left' | 'center' */
-  sourceAnchor: 'auto' | 'top' | 'right' | 'bottom' | 'left' | 'center';
-  /** Anchor point on target entity: 'auto' | 'top' | 'right' | 'bottom' | 'left' | 'center' */
-  targetAnchor: 'auto' | 'top' | 'right' | 'bottom' | 'left' | 'center';
-  /** Routing algorithm: 'orthogonal' | 'straight' | 'bezier' */
-  routingType: 'orthogonal' | 'straight' | 'bezier';
-  /** Stroke style: 'solid' | 'dashed' */
-  strokeStyle: 'solid' | 'dashed';
-  /** Corner radius for smoothing bends in orthogonal routing */
-  cornerRadius: number;
-}
-export interface ConnectionSerializedNode
-  extends BaseSerializeNode<'connection'>,
-    Partial<ConnectionAttributes>,
-    Partial<StrokeAttributes> {}
-
 export type SerializedNode =
   | GSerializedNode
   | EllipseSerializedNode
@@ -566,8 +545,7 @@ export type SerializedNode =
   | VectorNetworkSerializedNode
   | HtmlSerializedNode
   | EmbedSerializedNode
-  | ColumnLayoutSerializedNode
-  | ConnectionSerializedNode;
+  | ColumnLayoutSerializedNode;
 
 export type SerializedNodeAttributes = GSerializedNode &
   EllipseSerializedNode &
@@ -585,5 +563,4 @@ export type SerializedNodeAttributes = GSerializedNode &
   VectorNetworkSerializedNode &
   HtmlSerializedNode &
   EmbedSerializedNode &
-  ColumnLayoutSerializedNode &
-  ConnectionSerializedNode;
+  ColumnLayoutSerializedNode;

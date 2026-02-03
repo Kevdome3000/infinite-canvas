@@ -11,4 +11,3 @@ export * from './Pen';
 export * from './Culling';
 export * from './HTML';
 export * from './Layout';
-export * from './Connection';

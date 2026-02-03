@@ -16,8 +16,6 @@ import {
   TextDecorationAttributes,
   TextSerializedNode,
   ColumnLayoutSerializedNode,
-  ConnectionSerializedNode,
-  ConnectionAttributes,
   ColumnLayoutAttributes,
   HtmlSerializedNode,
   EmbedSerializedNode,
@@ -54,7 +52,6 @@ import {
   StrokeAttenuation,
   SizeAttenuation,
   ColumnLayout,
-  Connection,
   HTML,
   Embed,
 } from '../../components';
@@ -116,19 +113,6 @@ export function entityToSerializedNodes(
       padding,
       alignItems,
       isAutoLayout,
-    });
-  } else if (entity.has(Connection)) {
-    type = 'connection';
-    const connection = entity.read(Connection);
-    // Serialize entity references as IDs
-    const sourceId = connection.source?.__id;
-    const targetId = connection.target?.__id;
-
-    Object.assign(attributes as ConnectionSerializedNode, {
-      source: sourceId,
-      target: targetId,
-      routingType: connection.routingType,
-      strokeStyle: connection.strokeStyle,
     });
   } else if (entity.has(Text)) {
     type = 'text';
