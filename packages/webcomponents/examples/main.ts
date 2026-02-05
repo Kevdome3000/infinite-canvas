@@ -226,7 +226,7 @@ async function openCanvas(id?: string) {
         // penbarVisible: false,
         // taskbarVisible: false,
         // rotateEnabled: false,
-        // flipEnabled: false,
+    flipEnabled: false,
         // filter: 'noise(0.5)',
       });
 
@@ -313,21 +313,32 @@ async function openCanvas(id?: string) {
         width: 200,
         height: 200,
     fill: 'grey',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
+    // display: 'flex',
+    // alignItems: 'center',
+    // justifyContent: 'center',
       };
+
   const child = {
     id: 'child',
     parentId: 'parent',
         type: 'rect',
     fill: 'red',
-    width: '50%',
-    height: '50%',
-      };
+    x: 0,
+    y: 0,
+    width: 100,
+    height: 100,
+  }
+  // const child = {
+  //   id: 'child',
+  //   parentId: 'parent',
+  //   type: 'rect',
+  //   fill: 'red',
+  //   width: '50%',
+  //   height: '50%',
+  // };
   api.updateNodes([parent, child]);
-      // api.updateNode(node1);
-      // api.record();
+      api.selectNodes([parent]);
+       api.record();
 
       // Release loading lock
       isLoading = false;

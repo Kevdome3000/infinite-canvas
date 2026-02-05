@@ -49,6 +49,8 @@ import {
   Editable,
   Filter,
   Brush,
+  Children,
+  Parent,
 } from '../components';
 
 export type SceneElementsMap = Map<SerializedNode['id'], SerializedNode>;
@@ -504,8 +506,8 @@ export class ElementsChange implements Change<SceneElementsMap> {
     );
 
     const addedElements = applyDeltas(this.added);
-    // const removedElements = applyDeltas(this.removed);
-    // const updatedElements = applyDeltas(this.updated);
+    const removedElements = applyDeltas(this.removed);
+    const updatedElements = applyDeltas(this.updated);
 
     if (this.api) {
       this.added.forEach((delta, id) => {
@@ -561,6 +563,7 @@ export const mutateElement = <TElement extends Mutable<SerializedNode>>(
   element: TElement,
   updates: ElementUpdate<TElement>,
   skipOverrideKeys: string[] = [],
+  api: API,
 ): TElement => {
   let didChange = false;
 
@@ -580,6 +583,7 @@ export const mutateElement = <TElement extends Mutable<SerializedNode>>(
 
   const { name, visibility } = updates;
   const {
+    parentId,
     zIndex,
     fill,
     stroke,
@@ -650,6 +654,15 @@ export const mutateElement = <TElement extends Mutable<SerializedNode>>(
     filter,
     brushStamp
   } = updates as unknown as SerializedNodeAttributes;
+
+  if (!isNil(parentId)) {
+    const newParentEntity = api.getEntity(api.getNodeById(parentId));
+    if (entity.has(Children)) {
+      const oldParentEntity = entity.read(Children).parent;
+      safeAddComponent(newParentEntity, Parent);
+      entity.write(Children).parent = newParentEntity;
+    }
+  }
 
   if (!isNil(name)) {
     entity.write(Name).value = name;

@@ -21,6 +21,8 @@ export enum Event {
   SELECTED_NODES_CHANGED = 'ic-selected-nodes-changed',
   TRANSFORMABLE_STATUS_CHANGED = 'ic-transformable-status-changed',
   COMMENT_ADDED = 'ic-comment-added',
+  RECT_DRAWN = 'ic-rect-drawn',
+  PENCIL_DRAWN = 'ic-pencil-drawn',
 }
 
 declare global {
@@ -46,6 +48,12 @@ declare global {
       canvasY: number;
       viewportX: number;
       viewportY: number;
+    }>;
+    [Event.RECT_DRAWN]: CustomEvent<{
+      node: SerializedNode;
+    }>;
+    [Event.PENCIL_DRAWN]: CustomEvent<{
+      node: SerializedNode;
     }>;
   }
 }

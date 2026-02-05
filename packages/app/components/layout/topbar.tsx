@@ -22,6 +22,10 @@ import {
 import { Github, Menu } from 'lucide-react';
 import Link from 'next/link';
 import { useRouter, usePathname } from 'next/navigation';
+import { useAtomValue } from 'jotai';
+import { isSingleImageAtom } from '@/atoms/canvas-selection';
+import { ImageToolbar } from '@/components/image-toolbar';
+import { ColorToolbar } from '../color-toolbar';
 
 interface TopbarProps {
   /** 左侧菜单项，可选 */
@@ -30,16 +34,19 @@ interface TopbarProps {
     onClick?: () => void;
     href?: string;
   }>;
+  leftMenuContent?: React.ReactNode;
   /** 中间内容，可选 */
   centerContent?: React.ReactNode;
 }
 
-export function Topbar({ leftMenuItems, centerContent }: TopbarProps) {
+export function Topbar({ leftMenuItems, leftMenuContent, centerContent }: TopbarProps) {
   const { user, loading } = useAuth();
   const authT = useTranslations('auth');
   const router = useRouter();
   const pathname = usePathname();
   const [loginDialogOpen, setLoginDialogOpen] = useState(false);
+  const t = useTranslations('toolbar');
+  const isSingleImage = useAtomValue(isSingleImageAtom);
 
   // 登录成功后自动关闭弹窗
   useEffect(() => {
@@ -51,14 +58,14 @@ export function Topbar({ leftMenuItems, centerContent }: TopbarProps) {
   // 默认菜单项
   const defaultMenuItems = [
     {
-      label: '首页',
+      label: t('home'),
       onClick: () => {
         const locale = pathname?.split('/')[1] || 'zh-Hans';
         router.push(`/${locale}`);
       },
     },
     {
-      label: '我的项目',
+      label: t('myProjects'),
       onClick: () => {
         const locale = pathname?.split('/')[1] || 'zh-Hans';
         router.push(`/${locale}/projects`);
@@ -71,12 +78,12 @@ export function Topbar({ leftMenuItems, centerContent }: TopbarProps) {
   return (
     <>
       <div className="w-full border-b bg-background/95 backdrop-blur supports-backdrop-filter:bg-background/60">
-        <div className="flex h-10 items-center justify-between px-4 relative">
+        <div className="flex h-10 items-center justify-between px-2 pl-3 relative">
           {/* 左侧下拉菜单 */}
           <div className="flex items-center">
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="icon">
+                <Button variant="ghost" size="icon" className="h-8 w-8">
                   <Menu className="h-5 w-5" />
                 </Button>
               </DropdownMenuTrigger>
@@ -89,16 +96,21 @@ export function Topbar({ leftMenuItems, centerContent }: TopbarProps) {
                     <span>{item.label}</span>
                   </DropdownMenuItem>
                 ))}
+                {leftMenuContent}
               </DropdownMenuContent>
             </DropdownMenu>
           </div>
 
-          {/* 中间内容 */}
-          {centerContent && (
-            <div className="absolute left-1/2 transform -translate-x-1/2">
-              {centerContent}
-            </div>
-          )}
+          {/* 中间内容区域 */}
+          <div className="absolute left-1/2 transform -translate-x-1/2 flex items-center gap-4">
+            <ImageToolbar />
+            <ColorToolbar />
+            {centerContent && (
+              <div>
+                {centerContent}
+              </div>
+            )}
+          </div>
 
           {/* 右侧：Github 图标和登录按钮 */}
           <div className="flex items-center gap-1.5">
