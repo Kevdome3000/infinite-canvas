@@ -12,6 +12,7 @@ import {
   BrushType,
   inferXYWidthHeight,
   StampMode,
+  EdgeStyle,
 } from '@infinite-canvas-tutorial/ecs';
 import '../src/spectrum';
 import { LaserPointerPlugin } from '../../plugin-laser-pointer/src';
@@ -88,6 +89,18 @@ async function renderCanvasList() {
   `,
     )
     .join('');
+const res = await fetch('/test.svg');
+// const res = await fetch('/maslow-hierarchy.svg');
+// const res = await fetch('/mindmap.svg');
+// const res = await fetch('/test-camera.svg');
+// const res = await fetch(
+//   '/62f5208ddbc232ac973f53d9cfd91ba463c50b8bfd846349247709fe4a7a9053.svg',
+// );
+// const svg = await res.text();
+// TODO: extract semantic groups inside comments
+// const $container = document.createElement('div');
+// $container.innerHTML = svg;
+// const $svg = $container.children[0] as SVGSVGElement;
 
   // Add click handlers to canvas cards
   container.querySelectorAll('.canvas-card').forEach((card) => {
@@ -103,6 +116,16 @@ function createCanvasElement(): HTMLElement {
   const canvas = document.createElement('ic-spectrum-canvas');
   canvas.setAttribute('style', 'width: 100%; height: 100%;');
   canvas.setAttribute('renderer', 'webgl');
+// const root = {
+//   id: 'root',
+//   type: 'rect',
+//   x: 0,
+//   y: 0,
+//   width: 1000,
+//   height: 1000
+// };
+// nodes.forEach((node) => node.parentId = root.id);
+// console.log('nodes', nodes);
 
   // Add Eraser and Laser Pointer plugins to the dynamic element
   const eraser = document.createElement('ic-spectrum-penbar-eraser');
@@ -196,7 +219,14 @@ async function openCanvas(id?: string) {
       api.setAppState({
         ...api.getAppState(),
         cameraX: 0,
+    // cameraZoom: 0.35,
+    // penbarSelected: Pen.VECTOR_NETWORK,
+    // penbarSelected: Pen.LASSO,
         penbarSelected: Pen.SELECT,
+    penbarLasso: {
+      ...api.getAppState().penbarLasso,
+      mode: 'draw',
+    },
         penbarText: {
           ...api.getAppState().penbarText,
           fontFamily: 'system-ui',
@@ -230,104 +260,105 @@ async function openCanvas(id?: string) {
         // filter: 'noise(0.5)',
       });
 
-      //const node1 = {
-      //  id: 'rect-1',
-      //  type: 'rect',
-      //  x: 0,
-      //  y: 0,
-      //  width: 200,
-      //  height: 200,
-      //  fill: 'grey',
+  const node1 = {
+    id: 'rect-1',
+    type: 'rect',
+    // locked: true,
+    x: 0,
+    y: 0,
+    width: 200,
+    height: 200,
+    fill: '/brush.jpg',
       //  constraints: [
       //    {
       //      x: 0.5,
       //      y: 0.5,
       //     },
       //   ],
-        // //fill: 'https://v3b.fal.media/files/b/tiger/v1lf1EcPP1X1pw_YOKM4o.jpg',
-        // //filter: 'noise(0.5)',
-      //};
-      //const edge1 = {
-      //   id: 'line-1',
-  //   //type: 'rough-line',
-      //  type: 'line',
-      //  fromId: 'rect-1',
-      //  toId: 'rect-2',
-      //  stroke: 'black',
-      //  strokeWidth: 10,
-      //   markerEnd: 'line',
-  //   exitX: 0.5,
-  //   exitY: 0.5,
-  //  exitPerimeter: true,
-        // //orthogonal: true,
-      //};
-      //const edge2 = {
-      //  id: 'line-2',
-      //  type: 'line',
-      //  fromId: 'rect-2',
-      //  toId: 'rect-3',
-      //  stroke: 'black',
-      //  strokeWidth: 10,
-      //  markerEnd: 'line',
-        // //orthogonal: true,
-      // };
-  // // const node2 = {
-  // //   id: 'text-1',
-  // //   type: 'text',
-  // //   parentId: 'rect-1',
-  // //   anchorX: 10,
-  // //   anchorY: 50,
-  // //   content: 'Hello',
-  // //   fill: 'black',
-  // //   fontSize: 30,
-  // //   fontFamily: 'system-ui',
-  // // };
+        // fill: 'https://v3b.fal.media/files/b/tiger/v1lf1EcPP1X1pw_YOKM4o.jpg',
+        // filter: 'noise(0.5)',
+      };
+      const edge1 = {
+        id: 'line-1',
+    // type: 'rough-line',
+        type: 'line',
+        fromId: 'rect-1',
+        toId: 'rect-2',
+        stroke: 'black',
+        strokeWidth: 10,
+        markerEnd: 'line',
+    exitX: 0.5,
+    exitY: 0.5,
+    exitPerimeter: true,
+        // orthogonal: true,
+      };
+      const edge2 = {
+        id: 'line-2',
+        type: 'polyline',
+        fromId: 'rect-1',
+        toId: 'rect-3',
+        stroke: 'black',
+        strokeWidth: 10,
+        markerEnd: 'line',
+        edgeStyle: EdgeStyle.ORTHOGONAL,// orthogonal: true,
+      };
       // const node2 = {
-  //   id: 'rect-2',
-  //   // type: 'rect',
-  //   type: 'ellipse',
-  //   x: 300,
-  //   y: 200,
-  //   width: 200,
-  //   height: 200,
-  //   fill: 'red',
+  //   id: 'text-1',
+  //   type: 'text',
+  //   parentId: 'rect-1',
+  //   anchorX: 10,
+  //   anchorY: 50,
+  //   content: 'Hello',
+  //   fill: 'black',
+  //   fontSize: 30,
+  //   fontFamily: 'system-ui',
       // };
-
-  // const node3 = {
-  //   id: 'rect-3',
+  const node2 = {
+    id: 'rect-2',
         // type: 'rect',
-  //   x: 100,
-  //   y: 300,
-  //   width: 100,
-  //   height: 100,
-  //   fill: 'green',
-  // };
-
-  // api.updateNodes([node1, node2, node3, edge1, edge2]);
-
-  const parent = {
-    id: 'parent',
-    type: 'rect',
-    x: 100,
-    y: 100,
+    type: 'ellipse',
+    x: 300,
+    y: 200,
         width: 200,
         height: 200,
-    fill: 'grey',
-    // display: 'flex',
-    // alignItems: 'center',
-    // justifyContent: 'center',
-      };
-
-  const child = {
-    id: 'child',
-    parentId: 'parent',
-        type: 'rect',
     fill: 'red',
-    x: 0,
-    y: 0,
+  };
+
+  const node3 = {
+    id: 'rect-3',
+    type: 'rect',
+    x: -200,
+    y: -200,
     width: 100,
     height: 100,
-  }
+    fill: 'green',
+  };
+
+  api.updateNodes([node1, node3, edge2]);
+
+  // const parent = {
+  //   id: 'parent',
+  //   type: 'rect',
+  //   x: 100,
+  //   y: 100,
+  //   width: 200,
+  //   height: 200,
+  //   fill: 'grey',
+  //   // display: 'flex',
+  //   // alignItems: 'center',
+  //   // justifyContent: 'center',
+  // };
+
+  // const child = {
+  //   id: 'child',
+  //   parentId: 'parent',
+  //   type: 'rect',
+  //   fill: 'red',
+  //   x: 0,
+  //   y: 0,
+  //   width: 100,
+  //   height: 100,
+  // }
   // const child = {
   //   id: 'child',
   //   parentId: 'parent',
@@ -336,14 +367,15 @@ async function openCanvas(id?: string) {
   //   width: '50%',
   //   height: '50%',
   // };
-  api.updateNodes([parent, child]);
-      api.selectNodes([parent]);
-       api.record();
-
-      // Release loading lock
       isLoading = false;
-    }
-  });
+  // api.updateNodes([parent, child]);
+  //     api.selectNodes([parent]);
+  //      api.record();
+  //
+  //     // Release loading lock
+  //     isLoading = false;
+  //   }
+  // });
 
   // Wait a tick to ensure READY event is processed
   await new Promise((resolve) => setTimeout(resolve, 0));
@@ -390,6 +422,7 @@ try {
     UIPlugin,
     EraserPlugin,
     LaserPointerPlugin,
+    LassoPlugin,
     YogaPlugin
   );
   app.run();

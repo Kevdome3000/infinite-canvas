@@ -19,7 +19,7 @@ import { EraserPlugin } from '@infinite-canvas-tutorial/eraser';
 import { useEffect, useRef, useCallback } from 'react';
 import { useTheme } from 'next-themes';
 import { useParams } from 'next/navigation';
-import { useAtom, useSetAtom } from 'jotai';
+import { useAtom } from 'jotai';
 import { selectedNodesAtom, canvasApiAtom } from '@/atoms/canvas-selection';
 import { CanvasYjsManager } from '@/lib/yjs/canvas-yjs-manager';
 import ZoomToolbar from './zoom-toolbar';
@@ -39,18 +39,18 @@ const Canvas = ({ id = 'default', initialData }: CanvasProps) => {
   const params = useParams();
   const locale = params.locale as string;
 
-  const setSelectedNodes = useSetAtom(selectedNodesAtom);
+  const [selectedNodes, setSelectedNodes] = useAtom(selectedNodesAtom);
   const [canvasApi, setCanvasApi] = useAtom(canvasApiAtom);
 
-  // Update projectIdRef when the id changes
+  // 更新 projectIdRef 当 id 改变时
   useEffect(() => {
     projectIdRef.current = id;
   }, [id]);
 
-  // A function that saves canvas data to a database
+  // 保存画布数据到数据库的函数
   const saveCanvasData = useCallback(async (nodes: SerializedNode[]) => {
     const projectId = projectIdRef.current;
-    // If the id is 'default', it means that it is not a project page and does not need to be saved
+    // 如果 id 是 'default'，说明不是项目页面，不需要保存
     if (projectId === 'default') {
       return;
     }
@@ -74,7 +74,7 @@ const Canvas = ({ id = 'default', initialData }: CanvasProps) => {
     }
   }, []);
 
-  // Create a throttle version of the save function, which is executed up to once every 1 second
+  // 创建 throttle 版本的保存函数，每 1 秒最多执行一次
   const throttledSaveCanvasData = useRef(
     throttle(saveCanvasData, 1000)
   ).current;
@@ -94,24 +94,22 @@ const Canvas = ({ id = 'default', initialData }: CanvasProps) => {
       return blob.url;
     };
 
-    // initialize the yjs manager
+    // 初始化 Yjs 管理器
     if (!yjsManagerRef.current) {
       yjsManagerRef.current = new CanvasYjsManager(id);
       await yjsManagerRef.current.waitForSync();
 
-      // Set up the API's onchange callback to sync canvas changes to Yjs and save them to the database
-      api.onchange = (snapshot) => {
-        const { nodes } = snapshot;
+      // 设置 API 的 onNodesChange 回调，将画布变化同步到 Yjs 并保存到数据库
+      api.onNodesChange = (nodes) => {
         if (yjsManagerRef.current) {
           yjsManagerRef.current.recordLocalOps(nodes);
         }
-        // Convert nodes to SerializedNode[] and save to database (use throttle to limit frequency)
         const serializedNodes = nodes.filter((node) => !node.isDeleted) as SerializedNode[];
         throttledSaveCanvasData(serializedNodes);
       };
     }
 
-    // load saved nodes from yjs if any
+    // 从 Yjs 加载已保存的节点（如果有）
     const savedNodes = yjsManagerRef.current.loadNodes();
     const nodes: SerializedNode[] = initialData || savedNodes;
 
@@ -152,14 +150,24 @@ const Canvas = ({ id = 'default', initialData }: CanvasProps) => {
     });
   };
 
-  const onSelectedNodesChanged = async (e: CustomEvent<any>) => {
-    setSelectedNodes(e.detail.selected);
+  const onSelectedNodesChanged = (e: CustomEvent<any>) => {
+    const newSelectedNodes = e.detail.selected;
+
+    // console.log('onSelectedNodesChanged... ', newSelectedNodes, selectedNodes);
+    // If the selected nodes are the same as the previous selected nodes, do nothing
+    // if (
+    //   newSelectedNodes.length === 0 && selectedNodes.length === 0
+    // ) {
+    //   return;
+    // }
+    
+    setSelectedNodes(newSelectedNodes);
   };
 
   useEffect(() => {
     if (!appRunning) {
       new App().addPlugins(...DefaultPlugins, UIPlugin
-        , LaserPointerPlugin, LassoPlugin, EraserPlugin,
+        , LaserPointerPlugin, LassoPlugin, EraserPlugin, 
         // SAMPlugin
     ).run();
       appRunning = true;
@@ -201,14 +209,14 @@ const Canvas = ({ id = 'default', initialData }: CanvasProps) => {
     import('@infinite-canvas-tutorial/laser-pointer/spectrum');
   }, []);
 
-  return (
+  return ( 
     <div className="relative w-full h-full">
       <ic-spectrum-canvas ref={canvasRef} className="w-full h-full" app-state='{"topbarVisible":false}'>
         <ic-spectrum-penbar-laser-pointer slot="penbar-item" />
         <ic-spectrum-penbar-eraser slot="penbar-item" />
       </ic-spectrum-canvas>
-      <ZoomToolbar
-        canvasApi={canvasApi}
+      <ZoomToolbar 
+        canvasApi={canvasApi} 
         canvasRef={canvasRef}
       />
     </div>

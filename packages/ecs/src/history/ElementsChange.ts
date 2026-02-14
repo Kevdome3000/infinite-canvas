@@ -51,6 +51,7 @@ import {
   Brush,
   Children,
   Parent,
+  Locked,
 } from '../components';
 
 export type SceneElementsMap = Map<SerializedNode['id'], SerializedNode>;
@@ -651,6 +652,7 @@ export const mutateElement = <TElement extends Mutable<SerializedNode>>(
     lockAspectRatio,
     editable,
     isEditing,
+    locked,
     filter,
     brushStamp
   } = updates as unknown as SerializedNodeAttributes;
@@ -958,6 +960,17 @@ export const mutateElement = <TElement extends Mutable<SerializedNode>>(
   if (!isNil(isEditing)) {
     safeAddComponent(entity, Editable);
     entity.write(Editable).isEditing = !!isEditing;
+  }
+
+  if (!isNil(locked)) {
+    if (locked) {
+      safeAddComponent(entity, Locked);
+      const node = api.getNodeByEntity(entity);
+      api.deselectNodes([node]);
+      api.unhighlightNodes([node]);
+    } else {
+      safeRemoveComponent(entity, Locked);
+    }
   }
 
   if (!isNil(filter)) {

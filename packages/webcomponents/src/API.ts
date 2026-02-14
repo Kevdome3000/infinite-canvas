@@ -9,13 +9,14 @@ import {
   ThemeMode,
   DOMAdapter,
   deserializePoints,
+  RectSerializedNode,
 } from '@infinite-canvas-tutorial/ecs';
 import { type LitElement } from 'lit';
 import { Event } from './event';
 import { ImageLoader } from '@loaders.gl/images';
 import { load } from '@loaders.gl/core';
 import { getDataURL, updateAndSelectNodes } from './utils';
-import { isString } from '@antv/util';
+import { isString, path2Absolute } from '@antv/util';
 
 export interface Comment {
   type: 'comment';
@@ -227,18 +228,20 @@ export class ExtendedAPI extends API {
       width = height * (image.width / image.height);
     }
 
+    const node: RectSerializedNode = {
+      id: uuidv4(),
+      type: 'rect',
+      x: (position?.x ?? 0) - width / 2,
+      y: (position?.y ?? 0) - height / 2,
+      width,
+      height,
+      fill: cdnUrl,
+      lockAspectRatio: true,
+    };
     updateAndSelectNodes(this, this.getAppState(), [
-      {
-        id: uuidv4(),
-        type: 'rect',
-        x: (position?.x ?? 0) - width / 2,
-        y: (position?.y ?? 0) - height / 2,
-        width,
-        height,
-        fill: cdnUrl,
-        lockAspectRatio: true,
-      },
+      node,
     ]);
+    return node;
   }
 
   /**
@@ -261,7 +264,21 @@ export class ExtendedAPI extends API {
         const { x, y, width, height } = node;
         ctx.fillRect(x as number, y as number, width as number, height as number);
       } else if (node.type === 'path') {
-
+        const { d, strokeWidth, x, y } = node;
+        ctx.beginPath();
+        path2Absolute(d).forEach(([command, ...data]) => {
+          if (command === 'M') {
+            ctx.moveTo(data[0] + (x as number), data[1] + (y as number));
+          } else if (command === 'L') {
+            ctx.lineTo(data[0] + (x as number), data[1] + (y as number));
+          } else if (command === 'C') {
+            ctx.bezierCurveTo(data[0] + (x as number), data[1] + (y as number), data[2] + (x as number), data[3] + (y as number), data[4] + (x as number), data[5] + (y as number));
+          }
+        });
+        ctx.closePath();
+        ctx.fill();
+        ctx.lineWidth = strokeWidth;
+        ctx.stroke();
       } else if (node.type === 'polyline') {
         const { points, strokeWidth, strokeLinecap, strokeLinejoin, x, y } = node;
         deserializePoints(points).forEach((point, index) => {

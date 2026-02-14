@@ -45,6 +45,8 @@ import {
   HTML,
   Embed,
   Editable,
+  Locked,
+  Line,
 } from '../components';
 import { Commands } from '../commands/Commands';
 import {
@@ -68,7 +70,7 @@ import {
   TRANSFORMER_MASK_FILL_COLOR,
 } from './RenderTransformer';
 import { updateGlobalTransform } from './Transform';
-import { safeAddComponent, safeRemoveComponent } from '../history';
+import { safeAddComponent } from '../history';
 import { updateComputedPoints } from './ComputePoints';
 import { DOMAdapter } from '../environment';
 import { hideLabel, initLabel, showLabel } from '..';
@@ -143,7 +145,7 @@ export class Select extends System {
     this.query(
       (q) =>
         q
-          .using(Canvas, ComputedCameraControl, Culled, Brush, Input)
+          .using(Canvas, ComputedCameraControl, Culled, Brush, Input, Locked)
           .read.update.and.using(
             GlobalTransform,
             InputPoint,
@@ -167,6 +169,7 @@ export class Select extends System {
             Text,
             Path,
             Polyline,
+            Line,
             Brush,
             Visibility,
             ZIndex,
@@ -376,9 +379,19 @@ export class Select extends System {
         [x1y1Cx, x1y1Cy],
         [x2y2Cx, x2y2Cy],
       ];
-      api.updateNode(node, {
-        points: points.map((point) => point.join(',')).join(' '),
-      });
+
+      if (node.type === 'line' || node.type === 'rough-line') {
+        api.updateNode(node, {
+          x1: x1y1Cx,
+          y1: x1y1Cy,
+          x2: x2y2Cx,
+          y2: x2y2Cy,
+        });
+      } else {
+        api.updateNode(node, {
+          points: points.map((point) => point.join(',')).join(' '),
+        });
+      }
 
       const selected = api.getEntity(node);
       updateGlobalTransform(selected);
@@ -813,39 +826,39 @@ export class Select extends System {
         }
       }
 
-      if (input.doubleClickTrigger) {
-        // FIXME: Only support Polyline for now
-        const { selecteds } = camera.read(Transformable);
-        if (selecteds.length === 1) {
-          const selected = selecteds[0];
-
-          const selection = this.selections.get(camera.__id);
-          selection.mode = SelectionMode.EDITING;
-
-          // Enter edit mode
-          const nodeToEdit = api.getNodeByEntity(selected);
-          if (nodeToEdit) {
-            api.updateNode(nodeToEdit, { isEditing: true });
-          }
-          selection.editing = selected;
-
-          if (selected.has(Polyline)) {
-            const vectorNetwork = VectorNetwork.fromEntity(selected);
-            safeRemoveComponent(selected, Polyline);
-
-            api.runAtNextTick(() => {
-              safeAddComponent(selected, VectorNetwork, vectorNetwork);
-            });
-
-            // Enter VectorNetwork edit mode
-            api.setAppState({
-              penbarSelected: Pen.VECTOR_NETWORK,
-            });
-          }
-
-          return;
-        }
-      }
+      // if (input.doubleClickTrigger) {
+      //   // FIXME: Only support Polyline for now
+      //   const { selecteds } = camera.read(Transformable);
+      //   if (selecteds.length === 1) {
+      //     const selected = selecteds[0];
+      //
+      //     const selection = this.selections.get(camera.__id);
+      //     selection.mode = SelectionMode.EDITING;
+      //
+      //     // Enter edit mode
+      //     const nodeToEdit = api.getNodeByEntity(selected);
+      //     if (nodeToEdit) {
+      //       api.updateNode(nodeToEdit, { isEditing: true });
+      //     }
+      //     selection.editing = selected;
+      //
+      //     if (selected.has(Polyline)) {
+      //       const vectorNetwork = VectorNetwork.fromEntity(selected);
+      //       safeRemoveComponent(selected, Polyline);
+      //
+      //       api.runAtNextTick(() => {
+      //         safeAddComponent(selected, VectorNetwork, vectorNetwork);
+      //       });
+      //
+      //       // Enter VectorNetwork edit mode
+      //       api.setAppState({
+      //         penbarSelected: Pen.VECTOR_NETWORK,
+      //       });
+      //     }
+      //
+      //     return;
+      //   }
+      // }
 
       const selection = this.selections.get(camera.__id);
       if (input.pointerDownTrigger) {
