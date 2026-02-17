@@ -50,25 +50,25 @@ Let's get started!
 
 ## Getting Started
 
-The course project uses pnpm workspace, so you need to install pnpm first.
+The course project uses Bun workspace, so you need to install Bun first.
 
 ```bash
-pnpm i
+bun install
 ```
 
 After entering the course directory, run Vite devserver:
 
 ```bash
 cd packages/lesson_001
-pnpm run dev
+bun run dev
 ```
 
 Or you can run the site locally:
 
 ```bash
-pnpm run build
+bun run build
 cd packages/site
-pnpm run dev
+bun run dev
 ```
 
 If you want to use it in your own project, you can refer to:
