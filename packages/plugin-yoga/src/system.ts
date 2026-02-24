@@ -16,7 +16,6 @@ import {
   API,
 } from '@infinite-canvas-tutorial/ecs';
 // import workerUrl from './worker.js?worker&url';
-// @ts-expect-error - import.meta is only available in ES modules, but this code will run in ES module environments
 import { loadYoga } from 'yoga-layout/load';
 
 let Yoga;
