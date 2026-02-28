@@ -55,24 +55,9 @@ export {
   IMAGE_MIME_TYPES,
   EdgeStyle,
   type Gradient,
-  type Effect,
-  type SerializedNode,
-  type OrderedSerializedNode,
-  type EllipseSerializedNode,
-  type RectSerializedNode,
-  type LineSerializedNode,
-  type PolylineSerializedNode,
-  type PathSerializedNode,
-  type TextSerializedNode,
-  type HtmlSerializedNode,
-  type CardMetadata,
-  type RoughAttributes,
-  type StrokeAttributes,
-  type FillAttributes,
-  type MarkerAttributes,
-  type BindingAttributes,
-  type BindedAttributes
+  type Effect
 } from './utils';
+export * from './types/serialized-node';
 export { TexturePool } from './resources';
 
 export {

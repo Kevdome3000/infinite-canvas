@@ -19,7 +19,7 @@ import {
   ColumnLayoutAttributes,
   HtmlSerializedNode,
   EmbedSerializedNode,
-} from './type';
+} from '../../types/serialized-node';
 import {
   Children,
   Circle,

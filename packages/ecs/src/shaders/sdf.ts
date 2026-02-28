@@ -351,19 +351,21 @@ void main() {
   vec4 color = fillColor;
   float d1;
   float d2;
-  if (strokeAlignment < 0.5) {
-    d1 = distance + strokeWidth;
-    d2 = distance + strokeWidth / 2.0;
-    color = mix_border_inside(over(fillColor, strokeColor), fillColor, d1);
-    color = mix_border_inside(strokeColor, color, d2);
-  } else if (strokeAlignment < 1.5) {
-    d1 = distance + strokeWidth;
-    d2 = distance;
-    color = mix_border_inside(over(fillColor, strokeColor), fillColor, d1);
-    color = mix_border_inside(strokeColor, color, d2);
-  } else if (strokeAlignment < 2.5) {
-    d2 = distance + strokeWidth;
-    color = mix_border_inside(strokeColor, color, d2);
+  if (strokeWidth > 0.0) {
+    if (strokeAlignment < 0.5) {
+      d1 = distance + strokeWidth;
+      d2 = distance + strokeWidth / 2.0;
+      color = mix_border_inside(over(fillColor, strokeColor), fillColor, d1);
+      color = mix_border_inside(strokeColor, color, d2);
+    } else if (strokeAlignment < 1.5) {
+      d1 = distance + strokeWidth;
+      d2 = distance;
+      color = mix_border_inside(over(fillColor, strokeColor), fillColor, d1);
+      color = mix_border_inside(strokeColor, color, d2);
+    } else if (strokeAlignment < 2.5) {
+      d2 = distance + strokeWidth;
+      color = mix_border_inside(strokeColor, color, d2);
+    }
   }
   outputColor = color;
 
@@ -385,7 +387,16 @@ void main() {
 
   ${wireframe_frag}
 
+#ifdef USE_STENCIL
+  // Stencil pass: discard by geometry (SDF distance), not alpha. Include the same
+  // anti-alias band as the normal pass (fwidth(distance)) so the stencil boundary
+  // matches the visible shape and avoids edge holes.
+  float outerBoundary = (strokeAlignment < 1.5) ? 0.0 : strokeWidth;
+  if (distance > outerBoundary)
+    discard;
+#else
   if (outputColor.a < epsilon)
     discard;
+#endif
 }
 `;

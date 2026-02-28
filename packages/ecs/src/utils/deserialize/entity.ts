@@ -1,4 +1,4 @@
-import { isNil, isString } from '@antv/util';
+import { isNil } from '@antv/util';
 import toposort from 'toposort';
 import { Entity } from '@lastolivegames/becsy';
 import { IPointData } from '@pixi/math';
@@ -41,9 +41,10 @@ import {
   Binding,
   Binded,
   Locked,
+  ClipMode,
   ColumnLayout
 } from '../../components';
-import {
+import type {
   AttenuationAttributes,
   BrushSerializedNode,
   ColumnLayoutSerializedNode,
@@ -54,8 +55,6 @@ import {
   FilterAttributes,
   HtmlSerializedNode,
   InnerShadowAttributes,
-  isDataUrl,
-  isUrl,
   LineSerializedNode,
   MarkerAttributes,
   NameAttributes,
@@ -64,15 +63,19 @@ import {
   PolylineSerializedNode,
   RectSerializedNode,
   RoughAttributes,
-  serializeBrushPoints,
   SerializedNode,
-  serializePoints,
-  shiftPath,
-  StrokeAttributes,
   TextSerializedNode,
   VectorNetworkSerializedNode,
+  StrokeAttributes,
   VisibilityAttributes,
   WireframeAttributes,
+} from '../../types/serialized-node';
+import {
+  isDataUrl,
+  isUrl,
+  serializePoints,
+  shiftPath,
+  serializeBrushPoints,
 } from '../serialize';
 import { deserializeBrushPoints, deserializePoints } from './points';
 import { Commands, EntityCommands } from '../../commands';
@@ -86,10 +89,7 @@ import simplify from 'simplify-js';
 
 export function inferXYWidthHeight(node: SerializedNode) {
   const { x, y, width, height } = node;
-  if (isString(x) || isString(y) || isString(width) || isString(height)) {
-    return node;
-  }
-
+  // Already resolved: x/y/width/height are number | undefined
   if (
     isNil(node.width) ||
     isNil(node.height) ||
@@ -179,11 +179,12 @@ export function inferPointsWithFromIdAndToId(
   inferXYWidthHeight(from);
   inferXYWidthHeight(to);
 
+  type NodeWithBounds = SerializedNode & { width: number; height: number; x: number; y: number };
   const state = edge as PolylineSerializedNode & { width: number; height: number; x: number; y: number } & { absolutePoints: (IPointData | null)[] };
   state.absolutePoints = [null, null];
-  updateFixedTerminalPoints(state, from as SerializedNode & { width: number; height: number; x: number; y: number }, to as SerializedNode & { width: number; height: number; x: number; y: number });
-  updatePoints(state, null, from as NodeSerializedNode & { width: number; height: number; x: number; y: number }, to as NodeSerializedNode & { width: number; height: number; x: number; y: number });
-  updateFloatingTerminalPoints(state, from as SerializedNode & { width: number; height: number; x: number; y: number }, to as SerializedNode & { width: number; height: number; x: number; y: number });
+  updateFixedTerminalPoints(state, from as NodeWithBounds, to as NodeWithBounds);
+  updatePoints(state, null, from as NodeSerializedNode, to as NodeSerializedNode);
+  updateFloatingTerminalPoints(state, from as NodeWithBounds, to as NodeWithBounds);
 
   state.absolutePoints = simplify(state.absolutePoints);
 
@@ -343,10 +344,10 @@ export function serializedNodesToEntities(
     inferXYWidthHeight(attributes);
 
     const { x, y, width, height, rotation = 0, scaleX = 1, scaleY = 1 } = attributes;
-    const absoluteX = isString(x) ? 0 : x;
-    const absoluteY = isString(y) ? 0 : y;
-    const absoluteWidth = isString(width) ? 0 : width;
-    const absoluteHeight = isString(height) ? 0 : height;
+    const absoluteX = x ?? 0;
+    const absoluteY = y ?? 0;
+    const absoluteWidth = width ?? 0;
+    const absoluteHeight = height ?? 0;
 
     entityCommands.insert(
       new Transform({
@@ -561,6 +562,10 @@ export function serializedNodesToEntities(
           }),
         );
       }
+    }
+
+    if (attributes.clipMode) {
+      entityCommands.insert(new ClipMode(attributes.clipMode));
     }
 
     const { fill, fillOpacity, opacity } = attributes as FillAttributes;

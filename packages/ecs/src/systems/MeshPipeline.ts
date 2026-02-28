@@ -1,4 +1,5 @@
 import * as d3 from 'd3-color';
+import { mat3 } from 'gl-matrix';
 import { co, Entity, System } from '@lastolivegames/becsy';
 import {
   Buffer,
@@ -61,8 +62,10 @@ import {
   Transform,
   Mat3,
   Locked,
+  ClipMode,
 } from '../components';
-import { Effect, paddingMat3, parseEffect, SerializedNode } from '../utils';
+import { Effect, paddingMat3, parseEffect } from '../utils';
+import type { SerializedNode } from '../types/serialized-node';
 import { GridRenderer } from '../render-graph/GridRenderer';
 import { BatchManager } from './BatchManager';
 import { getSceneRoot } from './Transform';
@@ -192,6 +195,9 @@ export class MeshPipeline extends System {
   private filters = this.query(
     (q) => q.addedChangedOrRemoved.with(Filter).trackWrites,
   );
+  private clipModes = this.query(
+    (q) => q.addedChangedOrRemoved.with(ClipMode).trackWrites,
+  );
 
   renderers: Map<Entity, GPURenderer> = new Map();
 
@@ -248,6 +254,7 @@ export class MeshPipeline extends System {
             ZIndex,
             Marker,
             Locked,
+            ClipMode,
           )
           .read.and.using(
             RasterScreenshotRequest,
@@ -322,6 +329,61 @@ export class MeshPipeline extends System {
     const shouldRenderGrid = !request || grid;
     const shouldRenderPartially = nodes.length > 0;
 
+    const PADDING = 0;
+    let exportViewOverride: {
+      projectionMatrix: Mat3;
+      viewMatrix: Mat3;
+      viewProjectionMatrixInv: Mat3;
+      zoom: number;
+    } | null = null;
+
+    if (shouldRenderPartially) {
+      const bounds = api.getBounds(nodes);
+      const exportLogicalWidth = bounds.maxX - bounds.minX + 2 * PADDING;
+      const exportLogicalHeight = bounds.maxY - bounds.minY + 2 * PADDING;
+      if (
+        bounds.minX <= bounds.maxX &&
+        bounds.minY <= bounds.maxY &&
+        exportLogicalWidth > 0 &&
+        exportLogicalHeight > 0
+      ) {
+        const { devicePixelRatio } = canvas.read(Canvas);
+        const exportPixelWidth = Math.ceil(exportLogicalWidth * devicePixelRatio);
+        const exportPixelHeight = Math.ceil(
+          exportLogicalHeight * devicePixelRatio,
+        );
+        this.setupDevice.resizeOffscreen(exportPixelWidth, exportPixelHeight);
+
+        const viewMatrixGL = mat3.create();
+        mat3.translate(viewMatrixGL, viewMatrixGL, [
+          -(bounds.minX - PADDING),
+          -(bounds.minY - PADDING),
+        ]);
+        const projectionMatrixGL = mat3.projection(
+          mat3.create(),
+          exportLogicalWidth,
+          exportLogicalHeight,
+        );
+        const viewProjectionMatrix = mat3.multiply(
+          mat3.create(),
+          projectionMatrixGL,
+          viewMatrixGL,
+        );
+        const viewProjectionMatrixInv = mat3.invert(
+          mat3.create(),
+          viewProjectionMatrix,
+        );
+        exportViewOverride = {
+          projectionMatrix: Mat3.fromGLMat3(projectionMatrixGL),
+          viewMatrix: Mat3.fromGLMat3(viewMatrixGL),
+          viewProjectionMatrixInv: viewProjectionMatrixInv
+            ? Mat3.fromGLMat3(viewProjectionMatrixInv)
+            : Mat3.IDENTITY,
+          zoom: 1,
+        };
+      }
+    }
+
     if (shouldRenderPartially) {
       // Render to offscreen canvas.
       gpuResource = this.setupDevice.getOffscreenGPUResource();
@@ -348,6 +410,7 @@ export class MeshPipeline extends System {
       camera,
       shouldRenderGrid,
       swapChain,
+      exportViewOverride,
     );
     renderer.uniformLegacyObject = legacyObject;
 
@@ -391,7 +454,17 @@ export class MeshPipeline extends System {
         gridRenderer.render(device, renderPass, uniformBuffer, legacyObject);
         if (shouldRenderPartially) {
           const { api } = canvas.read(Canvas);
+          // Add clip parent if exists.
+          const clipParents = new Set<Entity>();
           nodes.forEach((node: SerializedNode) => {
+            const parentNode = node.parentId && api.getNodeById(node.parentId);
+            const parentEntity = parentNode && api.getEntity(parentNode);
+            const needRenderClipParent = parentNode && !nodes.includes(parentNode) && parentNode.clipMode && !clipParents.has(parentEntity);
+            if (needRenderClipParent) {
+              clipParents.add(parentEntity);
+              batchManager.add(parentEntity);
+            }
+
             const entity = api.getEntity(node);
             batchManager.add(entity);
           });
@@ -567,7 +640,8 @@ export class MeshPipeline extends System {
             !!this.sizeAttenuations.addedChangedOrRemoved.length ||
             !!this.strokeAttenuations.addedChangedOrRemoved.length ||
             !!this.markers.addedChangedOrRemoved.length ||
-            !!this.filters.addedChangedOrRemoved.length)
+            !!this.filters.addedChangedOrRemoved.length ||
+            !!this.clipModes.addedChangedOrRemoved.length)
         ) {
           toRender = true;
         }
@@ -598,6 +672,12 @@ export class MeshPipeline extends System {
     camera: Entity,
     shouldRenderGrid: boolean,
     swapChain: SwapChain,
+    viewOverride?: {
+      projectionMatrix: Mat3;
+      viewMatrix: Mat3;
+      viewProjectionMatrixInv: Mat3;
+      zoom: number;
+    } | null,
   ): [Float32Array, Record<string, unknown>] {
     const { mode, colors } = canvas.read(Theme);
     const { checkboardStyle } = canvas.read(Grid);
@@ -622,7 +702,7 @@ export class MeshPipeline extends System {
     } = d3.rgb(gridColor)?.rgb() || d3.rgb(0, 0, 0, 1);
 
     const { projectionMatrix, viewMatrix, viewProjectionMatrixInv, zoom } =
-      computedCamera;
+      viewOverride ?? computedCamera;
 
     const u_ProjectionMatrix = projectionMatrix;
     const u_ViewMatrix = viewMatrix;
