@@ -1,51 +1,51 @@
-# 数据库设置指南
+# Database setup guide
 
-本指南将帮助您设置 projects 表和相关的数据库功能。
+This guide will help you set up the projects table and related database features.
 
-## 1. 安装依赖
+## 1. Install dependencies
 
-确保已安装以下依赖：
+Make sure you have the following dependencies installed:
 
 ```bash
 pnpm add drizzle-orm postgres
 pnpm add -D drizzle-kit
 ```
 
-## 2. 配置环境变量
+## 2. Configure environment variables
 
-在 `packages/app/.env.local` 文件中添加数据库连接字符串：
+Add the database connection string in the 'packages/app/.env.local' file:
 
 ```env
-# Supabase 数据库连接字符串
-# 格式：postgresql://postgres:[password]@[host]:[port]/postgres
-# 您可以在 Supabase 项目设置 > Database > Connection string 中找到
+# Supabase DATABASE CONNECTION STRING
+# FORMAT：postgresql://postgres:[password]@[host]:[port]/postgres
+# You can set it up in your Supabase project > Database > Connection string 中找到
 DATABASE_URL=postgresql://postgres:[YOUR-PASSWORD]@[YOUR-PROJECT-REF].supabase.co:5432/postgres
 ```
 
-**注意**：请使用 Supabase 的数据库连接字符串，而不是 API URL。
+**Note**: Use Supabase's database connection string instead of the API URL.
 
-## 3. 运行数据库迁移
+## 3. Run a database migration
 
-### 方法 1：使用 Supabase Dashboard（推荐）
+### Method 1: Use Supabase Dashboard (Recommended)
 
-1. 登录 Supabase Dashboard
-2. 进入 **SQL Editor**
-3. 复制 `lib/db/migrations/0000_create_projects.sql` 文件的内容
-4. 在 SQL Editor 中执行该 SQL 脚本
+1. Log in to the Supabase Dashboard
+2. Go to SQL Editor
+3. Copy the contents of the 'lib/db/migrations/0000_create_projects.sql' file
+4. Execute the SQL script in SQL Editor
 
-### 方法 2：使用 Drizzle Kit（如果已配置）
+### Method 2: Use Drizzle Kit (If Configured)
 
 ```bash
-# 生成迁移文件
+# Generate the migration file
 pnpm drizzle-kit generate
 
-# 应用迁移（需要配置数据库连接）
+# Application migration (database connection required)
 pnpm drizzle-kit migrate
 ```
 
-## 4. 使用 Projects API
+## 4. Use the Projects API
 
-### 获取用户的所有项目
+### Get all the items of the user
 
 ```typescript
 import { getUserProjects } from '@/lib/db/projects';
@@ -53,19 +53,19 @@ import { getUserProjects } from '@/lib/db/projects';
 const projects = await getUserProjects(userId);
 ```
 
-### 创建新项目
+### Create a new project
 
 ```typescript
 import { createProject } from '@/lib/db/projects';
 
 const newProject = await createProject({
   userId: 'user-id',
-  name: '我的项目',
-  description: '项目描述',
+  name: 'My Project',
+  description: 'Project Description',
 });
 ```
 
-### 更新项目
+### Update the project
 
 ```typescript
 import { updateProject } from '@/lib/db/projects';
@@ -74,8 +74,8 @@ const updated = await updateProject(
   'project-id',
   'user-id',
   {
-    name: '更新后的项目名',
-    description: '更新后的描述',
+    name: 'updated project name',
+    description: 'updated description',
   }
 );
 ```
@@ -88,9 +88,9 @@ import { deleteProject } from '@/lib/db/projects';
 const deleted = await deleteProject('project-id', 'user-id');
 ```
 
-## 5. 在 API Route 中使用
+## 5. Used in API Route
 
-示例：创建 API route 来管理项目
+Example: Create an API route to manage a project
 
 ```typescript
 // app/api/projects/route.ts
@@ -131,41 +131,41 @@ export async function POST(request: Request) {
 
 ## 6. Row Level Security (RLS)
 
-迁移文件已经配置了 Row Level Security 策略，确保：
+The migration file is configured with a Row Level Security policy to ensure:
 
-- 用户只能查看自己的项目
-- 用户只能创建自己的项目
-- 用户只能更新自己的项目
-- 用户只能删除自己的项目
+- Users can only view their own projects
+- Users can only create their own projects
+- Users can only update their own projects
+- Users can only delete their own projects
 
-这些策略在数据库层面强制执行，提供了额外的安全保障。
+These policies are enforced at the database level, providing an additional layer of security.
 
-## 7. 表结构
+## 7. Table structure
 
-projects 表包含以下字段：
+The projects table contains the following fields:
 
-- `id` (UUID): 主键，自动生成
-- `user_id` (UUID): 关联到 auth.users(id)，外键约束
-- `name` (TEXT): 项目名称，必填
-- `description` (TEXT): 项目描述，可选
-- `created_at` (TIMESTAMP): 创建时间，自动设置
-- `updated_at` (TIMESTAMP): 更新时间，自动更新
+- 'id' (UUID): Primary key, automatically generated
+- 'user_id' (UUID): Associated with auth.users(id), foreign key constraints
+- 'name' (TEXT): The name of the project, required
+- 'description' (TEXT): Optional project description
+- 'created_at' (TIMESTAMP): Create a time, set automatically
+- 'updated_at' (TIMESTAMP): Update time, automatic update
 
-## 故障排除
+## Troubleshooting
 
-### 连接错误
+### Connection error
 
-- 确保 `DATABASE_URL` 环境变量已正确设置
-- 检查 Supabase 项目的数据库连接字符串是否正确
-- 确保网络可以访问 Supabase 数据库
+- Ensure that the 'DATABASE_URL' environment variable is set correctly
+- Check that the database connection string for the Supabase project is correct
+- Ensure that the network has access to the Supabase database
 
-### 权限错误
+### Wrong permissions
 
-- 确保已运行迁移 SQL 脚本
-- 检查 RLS 策略是否正确创建
-- 验证用户已通过 Supabase 认证
+- Ensure that the migration SQL script is run
+- Check that the RLS policy is created correctly
+- Verify that the user is Supabase certified
 
-### 外键约束错误
+### Foreign key constraint error
 
-- 确保 `auth.users` 表存在（Supabase 自动创建）
-- 验证外键约束已正确创建
+- Make sure the 'auth.users' table exists (Supabase creates it automatically)
+- Verify that foreign key constraints have been created correctly
