@@ -39,6 +39,7 @@ import '@spectrum-web-components/tooltip/sp-tooltip.js';
 import '@spectrum-web-components/picker/sp-picker.js';
 import '@spectrum-web-components/popover/sp-popover.js';
 import '@spectrum-web-components/overlay/overlay-trigger.js';
+import '@spectrum-web-components/divider/sp-divider.js';
 
 import '@spectrum-web-components/icons-workflow/icons/sp-icon-add.js';
 import '@spectrum-web-components/icons-workflow/icons/sp-icon-add-to.js';
@@ -94,6 +95,8 @@ import '@spectrum-web-components/icons-workflow/icons/sp-icon-image-auto-mode.js
 import '@spectrum-web-components/icons-workflow/icons/sp-icon-vector-draw.js';
 import '@spectrum-web-components/icons-workflow/icons/sp-icon-region-select.js';
 import '@spectrum-web-components/icons-workflow/icons/sp-icon-crop.js';
+import '@spectrum-web-components/icons-workflow/icons/sp-icon-checkmark.js';
+import '@spectrum-web-components/icons-workflow/icons/sp-icon-cancel.js';
 
 export const TOP_NAVBAR_HEIGHT = 48;
 
@@ -119,6 +122,12 @@ export class InfiniteCanvas extends LitElement {
       left: 50%;
       transform: translateX(-50%) scale(2);
       transform-origin: bottom center;
+    }
+
+    ic-spectrum-penbar-crop {
+      position: absolute;
+      bottom: 0;
+      left: 50%;
     }
 
     ic-spectrum-taskbar {
@@ -309,6 +318,7 @@ export class InfiniteCanvas extends LitElement {
             >
               <slot name="penbar-item" slot="penbar-item"></slot>
             </ic-spectrum-penbar>
+            <ic-spectrum-penbar-crop></ic-spectrum-penbar-crop>
             <ic-spectrum-taskbar
               style=${`top: ${topbarVisible ? TOP_NAVBAR_HEIGHT : 0
             }px; right: 0;`}

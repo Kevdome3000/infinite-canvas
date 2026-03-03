@@ -257,46 +257,29 @@ async function openCanvas(id?: string) {
       // filter: 'noise(0.5)',
     });
 
-  const frame = {
-    id: 'frame-1',
-    type: 'rect',
-    clipMode: 'clip',
-    x: 100,
-    y: 100,
-    width: 100,
-    height: 100,
-    fill: 'none',
-  };
   const child = {
-    id: 'rect-1',
+    id: 'child-1',
     type: 'rect',
-    parentId: 'frame-1',
-    x: 0,
-    y: 0,
+    // parentId: 'frame-1',
+    x: 200,
+    y: 200,
     width: 200,
     height: 200,
-    fill: '/brush.jpg',
-  };
-  const child2 = {
-    id: 'rect-2',
-    type: 'rect',
-    parentId: 'frame-1',
-    x: 0,
-    y: 0,
-    width: 200,
-    height: 200,
-    fill: 'red',
-  }
+    zIndex: 0,
+    fill: '/canvas.png',
+    lockAspectRatio: true,
+  } as const;
 
     const node1 = {
       id: 'rect-1',
       type: 'rect',
       // locked: true,
-      x: 0,
-      y: 0,
+    x: 100,
+    y: 100,
       width: 200,
       height: 200,
       fill: '/brush.jpg',
+    zIndex: 1
       // constraints: [
       //   {
       //     x: 0.5,
@@ -331,18 +314,6 @@ async function openCanvas(id?: string) {
       markerEnd: 'line',
       edgeStyle: EdgeStyle.ORTHOGONAL, // orthogonal: true,
     } as const;
-    // const node2 = {
-    //   id: 'text-1',
-    //   type: 'text',
-    //   parentId: 'rect-1',
-    //   anchorX: 10,
-    //   anchorY: 50,
-    //   content: 'Hello',
-    //   fill: 'black',
-    //   fontSize: 30,
-    //   fontFamily: 'system-ui',
-    // };
-
     const node2 = {
       id: 'rect-2',
       // type: 'rect',
@@ -364,7 +335,7 @@ async function openCanvas(id?: string) {
       fill: 'green',
   } as const;
 
-  api.updateNodes([frame, child, child2]);
+  api.updateNodes([node1, child]);
 
     // const parent = {
     //   id: 'parent',

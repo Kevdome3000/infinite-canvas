@@ -52,7 +52,7 @@ onMounted(async () => {
     }
 
     const node = {
-      id: '1',
+      id: 'brush-with-stamp-1',
       type: 'brush',
       // brushType: BrushType.VANILLA,
       brushType: BrushType.STAMP,

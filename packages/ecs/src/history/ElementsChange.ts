@@ -340,18 +340,6 @@ export class ElementsChange implements Change<SceneElementsMap> {
     //   });
     // }
 
-    // if (isImageElement(element)) {
-    //   const _delta = delta as Delta<ElementPartial<ExcalidrawImageElement>>;
-    //   // we want to override `crop` only if modified so that we don't reset
-    //   // when undoing/redoing unrelated change
-    //   if (_delta.deleted.crop || _delta.inserted.crop) {
-    //     Object.assign(directlyApplicablePartial, {
-    //       // apply change verbatim
-    //       crop: _delta.inserted.crop ?? null,
-    //     });
-    //   }
-    // }
-
     if (!flags.containsVisibleDifference) {
       // strip away fractional as even if it would be different, it doesn't have to result in visible change
       const { fractionalIndex, ...rest } = directlyApplicablePartial;
@@ -571,12 +559,12 @@ export const mutateElement = <TElement extends Mutable<SerializedNode>>(
 
   for (const key in updates) {
     const value = (updates as any)[key];
-    if (typeof value !== 'undefined') {
+    // if (typeof value !== 'undefined') {
       if (!skipOverrideKeys.includes(key)) {
         (element as any)[key] = value;
       }
       didChange = true;
-    }
+    // }
   }
 
   if (!didChange) {
@@ -678,8 +666,8 @@ export const mutateElement = <TElement extends Mutable<SerializedNode>>(
       safeRemoveComponent(entity, LockAspectRatio);
     }
   }
-  if (!isNil(zIndex)) {
-    entity.write(ZIndex).value = zIndex;
+  if ('zIndex' in updates) {
+    entity.write(ZIndex).value = zIndex ?? 0;
   }
   if (!isNil(visibility)) {
     entity.write(Visibility).value = visibility;
@@ -972,7 +960,7 @@ export const mutateElement = <TElement extends Mutable<SerializedNode>>(
     entity.write(Editable).isEditing = !!isEditing;
   }
 
-  if (!isNil(locked)) {
+  if ('locked' in updates) {
     if (locked) {
       safeAddComponent(entity, Locked);
       const node = api.getNodeByEntity(entity);
@@ -996,6 +984,13 @@ export const mutateElement = <TElement extends Mutable<SerializedNode>>(
   element.version++;
   element.versionNonce = randomInteger();
   element.updated = getUpdatedTimestamp();
+
+  // Remove undefined keys
+  Object.keys(element).forEach((key) => {
+    if (element[key] === undefined) {
+      delete element[key];
+    }
+  });
 
   return element;
 };

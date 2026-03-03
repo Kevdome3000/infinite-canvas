@@ -47,6 +47,8 @@ import {
   Editable,
   Locked,
   Line,
+  ClipMode,
+  MaterialDirty,
 } from '../components';
 import { Commands } from '../commands/Commands';
 import {
@@ -74,6 +76,7 @@ import { safeAddComponent } from '../history';
 import { updateComputedPoints } from './ComputePoints';
 import { DOMAdapter } from '../environment';
 import { hideLabel, initLabel, showLabel } from '..';
+import type { SerializedNode } from '../types/serialized-node';
 
 export enum SelectionMode {
   IDLE = 'IDLE',
@@ -95,16 +98,7 @@ export enum SelectionMode {
 export interface SelectOBB {
   mode: SelectionMode;
   resizingAnchorName: AnchorName;
-  nodes: {
-    id: string;
-    x: number;
-    y: number;
-    width: number;
-    height: number;
-    rotation: number;
-    scaleX: number;
-    scaleY: number;
-  }[];
+  nodes: SerializedNode[];
 
   obb: {
     x: number;
@@ -181,6 +175,9 @@ export class Select extends System {
             DropShadow,
             ToBeDeleted,
             Editable,
+            ClipMode,
+            MaterialDirty,
+            Locked,
           ).write,
     );
     this.query((q) => q.using(ComputedCamera, FractionalIndex, RBush).read);
@@ -270,7 +267,10 @@ export class Select extends System {
     const camera = api.getCamera();
 
     api.setNodes(api.getNodes());
-    api.record();
+
+    if (api.getAppState().layersCropping.length === 0) {
+      api.record();
+    }
 
     const { selecteds } = camera.read(Transformable);
     selecteds.forEach((selected) => {
@@ -695,7 +695,6 @@ export class Select extends System {
     });
 
     this.saveSelectedOBB(api, selection);
-
     hideLabel(selection.label);
   }
 
@@ -775,6 +774,16 @@ export class Select extends System {
           return;
         }
       }
+
+      const { layersCropping } = api.getAppState();
+      layersCropping.forEach((id) => {
+        const node = api.getNodeById(id);
+        if (node && node.clipMode !== 'soft') {
+          api.updateNode(node, { clipMode: 'soft', locked: true });
+          api.deselectNodes([node]);
+          api.selectNodes([api.getNodeByEntity(api.getChildren(node)[0])]);
+        }
+      });
 
       const cursor = canvas.write(Cursor);
 
@@ -888,10 +897,18 @@ export class Select extends System {
         if (selection.mode === SelectionMode.IDLE) {
           selection.mode = SelectionMode.READY_TO_BRUSH;
           api.selectNodes([]);
+
+          if (layersCropping.length > 0) {
+            api.applyCrop();
+          }
         } else if (selection.mode === SelectionMode.READY_TO_SELECT) {
           selection.mode = SelectionMode.SELECT;
         } else if (selection.mode === SelectionMode.READY_TO_MOVE) {
-          cursor.value = 'grab';
+          if (layersCropping.length > 0) {
+            cursor.value = 'move';
+          } else {
+            cursor.value = 'grab';
+          }
           selection.mode = SelectionMode.MOVE;
         } else if (
           selection.mode === SelectionMode.READY_TO_RESIZE ||
@@ -1018,6 +1035,12 @@ export class Select extends System {
                   } else if (toHighlight) {
                     selection.mode = SelectionMode.READY_TO_SELECT;
                   }
+
+                  if (layersCropping.length > 0) {
+                    if (anchor === AnchorName.INSIDE) {
+                      cursor.value = 'move';
+                    }
+                  }
                 }
               }
             }
@@ -1068,7 +1091,11 @@ export class Select extends System {
           this.handleBrushing(api, x, y);
           selection.mode = SelectionMode.BRUSH;
         } else if (selection.mode === SelectionMode.MOVE) {
-          cursor.value = 'grabbing';
+          if (layersCropping.length > 0) {
+            cursor.value = 'move';
+          } else {
+            cursor.value = 'grabbing';
+          }
           this.handleSelectedMoving(api, sx, sy, ex, ey);
         } else if (selection.mode === SelectionMode.RESIZE) {
           this.handleSelectedResizing(
@@ -1091,6 +1118,10 @@ export class Select extends System {
         api.highlightNodes([]);
         if (selection.mode === SelectionMode.BRUSH) {
           this.hideBrush(selection);
+        }
+
+        if (api.getAppState().layersCropping.length > 0) {
+          api.cancelCrop();
         }
       }
 
