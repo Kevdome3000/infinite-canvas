@@ -14,5 +14,9 @@
     "noUncheckedIndexedAccess": false,
     "noPropertyAccessFromIndexSignature": false,
     "module": "ESNext",
+    "baseUrl": ".",
+    "paths": {
+      "yoga-layout/load": ["./node_modules/yoga-layout/dist/src/load"]
+    },
   }
 }

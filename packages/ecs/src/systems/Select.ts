@@ -60,7 +60,6 @@ import {
   getCursor,
   getGridPoint,
   isBrowser,
-  SerializedNode,
   snapDraggedElements,
   snapToGrid,
 } from '../utils';
@@ -1194,6 +1193,7 @@ export class Select extends System {
         // Only select direct children of the camera
         .filter((e) => !e.has(UI) && e.read(Children).parent.has(Camera))
         .map((e) => api.getNodeByEntity(e))
+        // TODO: locked layers should not be selected
         .filter((node): node is SerializedNode => node !== undefined);
       api.selectNodes(selecteds);
       if (needHighlight) {

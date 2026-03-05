@@ -17,7 +17,7 @@ import {
   VectorNetwork,
   Visibility,
 } from '../components';
-import { EdgeStyle } from '../utils/binding';
+import { EdgeStyle } from '../utils';
 import { DIRECTION_EAST, DIRECTION_NORTH, DIRECTION_SOUTH, DIRECTION_WEST } from '../utils/binding/constants';
 
 /**
@@ -309,8 +309,8 @@ export interface RectSerializedNode
   Partial<DropShadowAttributes>,
   Partial<AttenuationAttributes>,
   Partial<WireframeAttributes>,
-    Partial<FilterAttributes>,
-    Partial<BindedAttributes> {}
+  Partial<FilterAttributes>,
+  Partial<BindedAttributes> { }
 
 export interface RoughRectSerializedNode
   extends BaseSerializeNode<'rough-rect'>,
@@ -356,7 +356,7 @@ export interface LineSerializedNode
   extends BaseSerializeNode<'line'>,
   Partial<Pick<Line, 'x1' | 'y1' | 'x2' | 'y2'>>,
   Partial<StrokeAttributes>,
-    Partial<Pick<AttenuationAttributes, 'strokeAttenuation'>>,
+  Partial<Pick<AttenuationAttributes, 'strokeAttenuation'>>,
   Partial<MarkerAttributes>,
   Partial<BindingAttributes> { }
 
@@ -577,7 +577,7 @@ export interface ColumnLayoutAttributes {
   showDropZone: boolean;
 }
 export interface ColumnLayoutSerializedNode
-  extends BaseSerializeNode<'column-layout'>,
+  extends Omit<BaseSerializeNode<'column-layout'>, 'alignItems'>,
     Partial<ColumnLayoutAttributes> {}
 
 export type SerializedNode =
