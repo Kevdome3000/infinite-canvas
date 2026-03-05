@@ -257,118 +257,195 @@ async function openCanvas(id?: string) {
       // filter: 'noise(0.5)',
     });
 
-  const child = {
-    id: 'child-1',
+  const parent = {
+    id: 'parent',
     type: 'rect',
-    // parentId: 'frame-1',
-    x: 200,
-    y: 200,
-    width: 200,
-    height: 200,
-    zIndex: 0,
-    fill: '/canvas.png',
-    lockAspectRatio: true,
-  } as const;
-
-    const node1 = {
-      id: 'rect-1',
-      type: 'rect',
-      // locked: true,
     x: 100,
     y: 100,
+    fill: 'hsl(214.82, 100%, 50%)',
+    // display: 'flex',
       width: 200,
-      height: 200,
-      fill: '/brush.jpg',
-    zIndex: 1
-      // constraints: [
-      //   {
-      //     x: 0.5,
-      //     y: 0.5,
-      //   },
-      // ],
-      // fill: 'https://v3b.fal.media/files/b/tiger/v1lf1EcPP1X1pw_YOKM4o.jpg',
-      // filter: 'noise(0.5)',
+    height: 250,
+    // padding: 10,
+    // flexWrap: 'wrap',
+    // gap: 10,
+    zIndex: 0,
     } as const;
-    const edge1 = {
-      id: 'line-1',
-      // type: 'rough-line',
+
+    // const child = {
+    //   id: 'child',
+    //   parentId: 'parent',
+    //   type: 'rect',
+    //   fill: 'red',
+  //   width: 50,
+  //   height: 50,
+  //   zIndex: 1,
+  // } as const;
+
+  // const child2 = {
+  //   id: 'child3',
+    //   parentId: 'parent',
+  //   type: 'text',
+  //   content: 'Hello',
+  //   fill: 'blue',
+  //   fontSize: 20,
+  //   fontFamily: 'system-ui',
+  //   zIndex: 2,
+  // } as const;
+
+  const child3 = {
+    id: 'child3',
+    parentId: 'parent',
+    type: 'rough-path',
+    d: 'M 100 100 L 200 200 L 300 100 Z',
+    fill: 'red',
+    stroke: 'black',
+    strokeWidth: 10,
+    zIndex: 3,
+  } as const;
+
+  api.updateNodes([
+    {
+      id: 'baseline-1',
       type: 'line',
-      fromId: 'rect-1',
-      toId: 'rect-2',
-      stroke: 'black',
-      strokeWidth: 10,
-      markerEnd: 'line',
-      exitX: 0.5,
-      exitY: 0.5,
-      exitPerimeter: true,
-      // orthogonal: true,
-    };
-
-    const edge2 = {
-      id: 'line-2',
-      type: 'polyline',
-      fromId: 'rect-1',
-      toId: 'rect-3',
-      stroke: 'black',
-      strokeWidth: 10,
-      markerEnd: 'line',
-      edgeStyle: EdgeStyle.ORTHOGONAL, // orthogonal: true,
-    } as const;
-    const node2 = {
-      id: 'rect-2',
-      // type: 'rect',
-      type: 'ellipse',
-      x: 300,
-      y: 200,
-      width: 200,
-      height: 200,
-      fill: 'red',
-  } as const;
-
-    const node3 = {
-      id: 'rect-3',
-      type: 'rect',
-      x: -200,
-      y: -200,
-      width: 100,
-      height: 100,
-      fill: 'green',
-  } as const;
-
-  api.updateNodes([node1, child]);
-
-    // const parent = {
-    //   id: 'parent',
-    //   type: 'rect',
-    //   x: 100,
-    //   y: 100,
-    //   width: 200,
-    //   height: 200,
-    //   fill: 'grey',
-    //   // display: 'flex',
-    //   // alignItems: 'center',
-    //   // justifyContent: 'center',
-    // };
-
-    // const child = {
-    //   id: 'child',
-    //   parentId: 'parent',
-    //   type: 'rect',
-    //   fill: 'red',
-    //   x: 0,
-    //   y: 0,
-    //   width: 100,
-    //   height: 100,
-    // };
-
-    // const child = {
-    //   id: 'child',
-    //   parentId: 'parent',
-    //   type: 'rect',
-    //   fill: 'red',
-    //   width: '50%',
-    //   height: '50%',
-    // };
+      x1: 0,
+      y1: 50,
+      x2: 300,
+      y2: 50,
+      stroke: 'red',
+      strokeWidth: 1,
+      zIndex: 0,
+    },
+    {
+      id: 'text-1',
+      type: 'text',
+      fill: 'black',
+      content: 'Abcdefghijklmnop (top)',
+      anchorX: 50,
+      anchorY: 50,
+      fontSize: 16,
+      fontFamily: 'sans-serif',
+      textBaseline: 'top',
+      zIndex: 1,
+    },
+    {
+      id: 'baseline-2',
+      type: 'line',
+      x1: 0,
+      y1: 100,
+      x2: 300,
+      y2: 100,
+      stroke: 'red',
+      strokeWidth: 1,
+      zIndex: 3,
+    },
+    {
+      id: 'text-2',
+      type: 'text',
+      fill: 'black',
+      content: 'Abcdefghijklmnop (hanging)',
+      anchorX: 50,
+      anchorY: 100,
+      fontSize: 16,
+      fontFamily: 'sans-serif',
+      textBaseline: 'hanging',
+      zIndex: 4,
+    },
+    {
+      id: 'baseline-3',
+      type: 'line',
+      x1: 0,
+      y1: 150,
+      x2: 300,
+      y2: 150,
+      stroke: 'red',
+      strokeWidth: 1,
+      zIndex: 5,
+    },
+    {
+      id: 'text-3',
+      type: 'text',
+      fill: 'black',
+      content: 'Abcdefghijklmnop (middle)',
+      anchorX: 50,
+      anchorY: 150,
+      fontSize: 16,
+      fontFamily: 'sans-serif',
+      textBaseline: 'middle',
+      zIndex: 6,
+    },
+    {
+      id: 'baseline-4',
+      type: 'line',
+      x1: 0,
+      y1: 200,
+      x2: 300,
+      y2: 200,
+      stroke: 'red',
+      strokeWidth: 1,
+      zIndex: 5,
+    },
+    {
+      id: 'text-4',
+      type: 'text',
+      fill: 'black',
+      content: 'Abcdefghijklmnop (alphabetic)',
+      anchorX: 50,
+      anchorY: 200,
+      fontSize: 16,
+      fontFamily: 'sans-serif',
+      textBaseline: 'alphabetic',
+      zIndex: 6,
+    },
+    {
+      id: 'baseline-5',
+      type: 'line',
+      x1: 0,
+      y1: 250,
+      x2: 300,
+      y2: 250,
+      stroke: 'red',
+      strokeWidth: 1,
+      zIndex: 5,
+    },
+    {
+      id: 'text-5',
+      type: 'text',
+      fill: 'black',
+      content: 'Abcdefghijklmnop (ideographic)',
+      anchorX: 50,
+      anchorY: 250,
+      fontSize: 16,
+      fontFamily: 'sans-serif',
+      textBaseline: 'ideographic',
+      zIndex: 6,
+    },
+    {
+      id: 'baseline-6',
+      type: 'line',
+      x1: 0,
+      y1: 300,
+      x2: 300,
+      y2: 300,
+      stroke: 'red',
+      strokeWidth: 1,
+      zIndex: 5,
+    },
+    {
+      id: 'text-6',
+      type: 'text',
+      fill: 'black',
+      content: 'Abcdefghijklmnop (bottom)',
+      anchorX: 50,
+      anchorY: 300,
+      fontSize: 16,
+      fontFamily: 'sans-serif',
+      textBaseline: 'bottom',
+      zIndex: 6,
+    },
+  ]);
+  // api.selectNodes([parent]);
+  api.record();
 
     isLoading = false;
   });
@@ -419,7 +496,7 @@ try {
     EraserPlugin,
     LaserPointerPlugin,
     LassoPlugin,
-    YogaPlugin
+    // YogaPlugin
   );
   app.run();
 } catch (e) {

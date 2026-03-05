@@ -1,6 +1,6 @@
 ---
 outline: deep
-description: ''
+description: '学习在无限画布中从文本生成图表：用 Mermaid 流程图、D2 与 draw.io 语法解析并渲染为场景图，结合 mermaid-to-excalidraw、@terrastruct/d2 与 mxgraph 实现手绘风格图表。'
 publish: false
 ---
 
@@ -113,7 +113,9 @@ x -> y: hello world
 
 <D2 />
 
-## [WIP] drawio {#drawio}
+边上的文本标签需要始终放置在几何中心，在下一节 [课程 33 - 布局引擎] 中我们会介绍实现方式。
+
+## drawio {#drawio}
 
 ```ts
 import { parseDrawIO } from 'mxgraphdata';
@@ -133,3 +135,4 @@ console.log(mxfile.diagram);
 [D2]: https://github.com/terrastruct/d2
 [draw.io]: https://app.diagrams.net/
 [Discussion in HN]: https://news.ycombinator.com/item?id=44954524
+[课程 33 - 布局引擎]: /zh/guide/lesson-033

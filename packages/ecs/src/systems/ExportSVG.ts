@@ -39,12 +39,14 @@ import {
   StrokeAttenuation,
   Locked,
   ClipMode,
+  Flex,
 } from '../components';
 import { DOMAdapter } from '../environment';
 import {
   createSVGElement,
   serializeNodesToSVGElements,
   toSVGDataURL,
+  createFontFacesStyleElement,
 } from '../utils';
 import type { SerializedNode } from '../types/serialized-node';
 import { API } from '..';
@@ -116,6 +118,7 @@ export class ExportSVG extends System {
             StrokeAttenuation,
             Locked,
             ClipMode,
+            Flex,
           )
           .read.and.using(Screenshot, VectorScreenshotRequest).write,
     );

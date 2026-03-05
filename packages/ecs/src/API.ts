@@ -13,6 +13,7 @@ import { AppState, getDefaultAppState } from './context';
 import {
   BitmapFont,
   copyTextToClipboard,
+  createFontFacesStyleElement,
   createSVGElement,
   deserializeBrushPoints,
   deserializePoints,
@@ -20,7 +21,6 @@ import {
   getScale,
   isEntity,
   parsePath,
-  resolveSerializedNodes,
   serializeBrushPoints,
   serializedNodesToEntities,
   serializeNodesToSVGElements,
@@ -28,7 +28,7 @@ import {
   shiftPath,
   transformPath,
 } from './utils';
-import type { BrushSerializedNode, LineSerializedNode, PathSerializedNode, PolylineSerializedNode, SerializedNode, SerializedNodeInput } from './types/serialized-node';
+import type { BrushSerializedNode, LineSerializedNode, PathSerializedNode, PolylineSerializedNode, SerializedNode } from './types/serialized-node';
 import {
   AABB,
   Brush,
@@ -79,8 +79,7 @@ export interface StateManagement {
   getAppState: () => AppState;
   setAppState: (appState: AppState) => void;
   getNodes: () => SerializedNode[];
-  /** Accepts nodes with x/y/width/height as number or string (e.g. '50%'); they are resolved to numbers internally. */
-  setNodes: (nodes: SerializedNodeInput[]) => void;
+  setNodes: (nodes: SerializedNode[]) => void;
   onChange: (snapshot: { appState: AppState; nodes: SerializedNode[] }) => void;
 }
 
@@ -106,8 +105,8 @@ export class DefaultStateManagement implements StateManagement {
     return this.#nodes;
   }
 
-  setNodes(nodes: SerializedNodeInput[]) {
-    this.#nodes = resolveSerializedNodes(Array.isArray(nodes) ? nodes : []);
+  setNodes(nodes: SerializedNode[]) {
+    this.#nodes = nodes;
   }
 
   onChange(snapshot: { appState: AppState; nodes: SerializedNode[] }) { }
@@ -240,7 +239,7 @@ export class API {
     return this.stateManagement.getNodes();
   }
 
-  setNodes(nodes: SerializedNodeInput[]) {
+  setNodes(nodes: SerializedNode[]) {
     this.stateManagement.setNodes(JSON.parse(JSON.stringify(nodes)));
   }
 
@@ -331,19 +330,32 @@ export class API {
 
   getAbsoluteTransformAndSize(node: SerializedNode) {
     const entity = this.getEntity(node);
-    const { width, height } = entity.read(ComputedBounds).obb;
-    const { translation, rotation, scale } = entity.read(Transform);
+    if (entity.has(ComputedBounds)) {
+      const { width, height } = entity.read(ComputedBounds).obb;
+      const { translation, rotation, scale } = entity.read(Transform);
 
-    return {
-      id: node.id,
-      x: translation.x,
-      y: translation.y,
-      width,
-      height,
-      rotation,
-      scaleX: scale[0],
-      scaleY: scale[1],
-    };
+      return {
+        id: node.id,
+        x: translation.x,
+        y: translation.y,
+        width,
+        height,
+        rotation,
+        scaleX: scale[0],
+        scaleY: scale[1],
+      };
+    } else {
+      return {
+        id: node.id,
+        x: node.x ?? 0,
+        y: node.y ?? 0,
+        width: node.width ?? 0,
+        height: node.height ?? 0,
+        rotation: node.rotation ?? 0,
+        scaleX: node.scaleX ?? 1,
+        scaleY: node.scaleY ?? 1,
+      };
+    }
   }
 
   getCanvas() {

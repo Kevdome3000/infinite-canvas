@@ -42,6 +42,7 @@ import {
   Binded,
   Locked,
   ClipMode,
+  Flex,
   ColumnLayout
 } from '../../components';
 import type {
@@ -69,6 +70,7 @@ import type {
   StrokeAttributes,
   VisibilityAttributes,
   WireframeAttributes,
+  FlexboxLayoutAttributes,
 } from '../../types/serialized-node';
 import {
   isDataUrl,
@@ -88,8 +90,10 @@ import { EdgeState, updateFixedTerminalPoints, updateFloatingTerminalPoints, upd
 import simplify from 'simplify-js';
 
 export function inferXYWidthHeight(node: SerializedNode) {
-  const { x, y, width, height } = node;
-  // Already resolved: x/y/width/height are number | undefined
+  if (node.type === 'g') {
+    return node;
+  }
+
   if (
     isNil(node.width) ||
     isNil(node.height) ||
@@ -426,10 +430,13 @@ export function serializedNodesToEntities(
       if (brushStamp) {
         loadImage(brushStamp, entityCommands.id());
       }
-    } else if (type === 'path') {
+    } else if (type === 'path' || type === 'rough-path') {
       const { d, fillRule, tessellationMethod } =
         attributes as PathSerializedNode;
       entityCommands.insert(new Path({ d, fillRule, tessellationMethod }));
+      if (type === 'rough-path') {
+        serializeRough(attributes as RoughAttributes, entityCommands);
+      }
     } else if (type === 'text') {
       const {
         anchorX,
@@ -711,6 +718,11 @@ export function serializedNodesToEntities(
     const { filter } = attributes as FilterAttributes;
     if (filter) {
       entityCommands.insert(new Filter({ value: filter }));
+    }
+
+    const { display } = attributes as FlexboxLayoutAttributes;
+    if (display === 'flex') {
+      entityCommands.insert(new Flex());
     }
 
     if (parentId) {

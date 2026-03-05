@@ -30,7 +30,8 @@ export interface BaseSerializeNode<Type extends string>
   Partial<VisibilityAttributes>,
   Partial<NameAttributes>,
   ZIndexAttributes,
-  Partial<EditableAttributes> {
+  Partial<EditableAttributes>,
+  Partial<FlexboxLayoutAttributes> {
   /**
    * Unique identifier
    */
@@ -153,6 +154,15 @@ export interface FlexboxLayoutAttributes {
   flexShrink: number;
   flexBasis: number;
   flex: number;
+  padding: number;
+  margin: number;
+  gap: number;
+  rowGap: number;
+  columnGap: number;
+  minWidth: number;
+  maxWidth: number;
+  minHeight: number;
+  maxHeight: number;
 }
 
 export interface ConstraintAttributes {
@@ -375,6 +385,7 @@ export interface BrushAttributes {
 }
 export interface BrushSerializedNode
   extends BaseSerializeNode<'brush'>,
+  Partial<StrokeAttributes>,
   Partial<BrushAttributes>,
   Partial<WireframeAttributes>,
   Partial<BindedAttributes> { }
@@ -605,14 +616,3 @@ export type SerializedNodeAttributes = GSerializedNode &
   HtmlSerializedNode &
   EmbedSerializedNode &
   ColumnLayoutSerializedNode;
-
-/**
- * Input/wire format: same as SerializedNode but x/y/width/height may be string (e.g. '50%').
- * Use resolveSerializedNodes() when loading from JSON or external API, then use SerializedNode elsewhere.
- */
-export type SerializedNodeInput = Omit<SerializedNode, 'x' | 'y' | 'width' | 'height'> & {
-  x?: number | string;
-  y?: number | string;
-  width?: number | string;
-  height?: number | string;
-};
