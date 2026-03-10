@@ -204,8 +204,8 @@ export class InfiniteCanvas extends LitElement {
 
     if (width && height) {
       const $canvas = this.shadowRoot?.querySelector('canvas');
-      $canvas.width = Math.round(width * dpr);
-      $canvas.height = Math.round(
+      $canvas.width = Math.floor(width * dpr);
+      $canvas.height = Math.floor(
         (height - (topbarVisible ? TOP_NAVBAR_HEIGHT : 0)) * dpr,
       );
 
@@ -272,10 +272,8 @@ export class InfiniteCanvas extends LitElement {
           element: $canvas,
           htmlLayer: $htmlLayer,
           svgLayer: $svgLayer,
-          width: Math.round(width),
-          height: Math.round(
-            topbarVisible ? height - TOP_NAVBAR_HEIGHT : height,
-          ),
+          width,
+          height: topbarVisible ? height - TOP_NAVBAR_HEIGHT : height,
           devicePixelRatio: window.devicePixelRatio,
           renderer,
           shaderCompilerPath,

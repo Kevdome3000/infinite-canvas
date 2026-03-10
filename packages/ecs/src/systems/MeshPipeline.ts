@@ -349,11 +349,10 @@ export class MeshPipeline extends System {
         exportLogicalWidth > 0 &&
         exportLogicalHeight > 0
       ) {
-        const { devicePixelRatio } = canvas.read(Canvas);
-        const exportPixelWidth = Math.ceil(exportLogicalWidth * devicePixelRatio);
-        const exportPixelHeight = Math.ceil(
-          exportLogicalHeight * devicePixelRatio,
-        );
+        // Export at 1:1 (1 pixel per logical unit), do not scale by devicePixelRatio
+        // to avoid 2x size on HiDPI displays.
+        const exportPixelWidth = Math.ceil(exportLogicalWidth);
+        const exportPixelHeight = Math.ceil(exportLogicalHeight);
         this.setupDevice.resizeOffscreen(exportPixelWidth, exportPixelHeight);
 
         const viewMatrixGL = mat3.create();
