@@ -473,6 +473,8 @@ export interface HtmlAttributes {
 export interface CardMetadata {
   /** Card type discriminator */
   cardType?: 'NOTE' | 'LINK' | 'AI_PROMPT' | 'AI_RESPONSE' | 'CHAT' | 'TODO' | 'TABLE' | 'FILE' | 'STACK' | 'ARTIFACT' | 'note' | 'file' | 'table' | 'todo' | 'link' | 'artifact' | 'stack';
+  /** Editor runtime backing the card */
+  editorKind?: 'tiptap' | 'blocksuite';
   /** Card content (HTML/JSON for TEXT, plain text for NOTE) */
   content?: string;
   /** Rich text flag for TEXT cards */
@@ -537,6 +539,16 @@ export interface CardMetadata {
   // Artifact card settings
   /** Artifact card view mode */
   cardView?: 'preview' | 'icon';
+
+  /** Canonical BlockSuite state for embedded note/doc cards */
+  blocksuite?: {
+    version: 1;
+    snapshot?: string;
+    summaryHtml?: string;
+    summaryText?: string;
+    migratedFromTipTap?: boolean;
+    source?: 'chance-note-card' | 'chance-blocksuite-note-card';
+  };
 
   // Card Stack ECS layout configuration
   /** ColumnLayout settings for card stacks */

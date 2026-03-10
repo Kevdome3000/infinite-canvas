@@ -834,41 +834,22 @@ export class Select extends System {
         }
       }
 
-      // if (input.doubleClickTrigger) {
-      //   // FIXME: Only support Polyline for now
-      //   const { selecteds } = camera.read(Transformable);
-      //   if (selecteds.length === 1) {
-      //     const selected = selecteds[0];
-      //
-      //     const selection = this.selections.get(camera.__id);
-      //     selection.mode = SelectionMode.EDITING;
-      //
-      //     // Enter edit mode
-      //     const nodeToEdit = api.getNodeByEntity(selected);
-      //     if (nodeToEdit) {
-      //       api.updateNode(nodeToEdit, { isEditing: true });
-      //     }
-      //     selection.editing = selected;
-      //
-      //     if (selected.has(Polyline)) {
-      //       const vectorNetwork = VectorNetwork.fromEntity(selected);
-      //       safeRemoveComponent(selected, Polyline);
-      //
-      //       api.runAtNextTick(() => {
-      //         safeAddComponent(selected, VectorNetwork, vectorNetwork);
-      //       });
-      //
-      //       // Enter VectorNetwork edit mode
-      //       api.setAppState({
-      //         penbarSelected: Pen.VECTOR_NETWORK,
-      //       });
-      //     }
-      //
-      //     return;
-      //   }
-      // }
-
       const selection = this.selections.get(camera.__id);
+      if (input.doubleClickTrigger) {
+        const { selecteds } = camera.read(Transformable);
+        if (selecteds.length === 1) {
+          const selected = selecteds[0];
+          const nodeToEdit = api.getNodeByEntity(selected);
+
+          if ((selected.has(Editable) || nodeToEdit?.editable) && nodeToEdit) {
+            selection.mode = SelectionMode.EDITING;
+            selection.editing = selected;
+            api.updateNode(nodeToEdit, { isEditing: true });
+            return;
+          }
+        }
+      }
+
       if (input.pointerDownTrigger) {
         const [x, y] = input.pointerViewport;
 
