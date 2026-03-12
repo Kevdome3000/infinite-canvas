@@ -127,7 +127,7 @@ export class YogaSystem extends System {
       const { api } = camera.read(Camera).canvas.read(Canvas);
       const styleTree = this.styleTrees.get(cameraId);
       camera.read(Parent).children.filter((child) => !child.has(UI)).forEach((child) => {
-        constructStyleTree(api, child, styleTree);
+        addFlexSubtrees(api, child, styleTree);
       });
 
       process(Yoga, styleTree, (results) => {
@@ -233,6 +233,19 @@ export class YogaSystem extends System {
   }
 }
 
+/** 只将 Flex 容器及其子树加入 style tree，非 Flex 节点不参与 Yoga 布局 */
+function addFlexSubtrees(api: API, entity: Entity, tree: StyleTreeNode): void {
+  if (entity.has(Flex)) {
+    constructStyleTree(api, entity, tree);
+    return;
+  }
+  if (entity.has(Parent)) {
+    entity.read(Parent).children.forEach((child) => {
+      addFlexSubtrees(api, child, tree);
+    });
+  }
+}
+
 export function constructStyleTree(api: API, entity: Entity, tree: StyleTreeNode): void {
   const node = api.getNodeByEntity(entity);
   const treeNode: StyleTreeNode = {
@@ -243,7 +256,8 @@ export function constructStyleTree(api: API, entity: Entity, tree: StyleTreeNode
   };
   tree.children.push(treeNode);
 
-  if (entity.has(Parent)) {
+  // 只有 display: flex 的容器才参与子元素的 Yoga 布局
+  if (entity.has(Flex) && entity.has(Parent)) {
     entity.read(Parent).children.forEach((child) => {
       constructStyleTree(api, child, treeNode);
     });

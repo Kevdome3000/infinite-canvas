@@ -23,11 +23,11 @@ import {
 
 export class RenderHTML extends System {
   private readonly htmls = this.query(
-    (q) => q.added.and.changed.with(HTML, GlobalTransform).trackWrites,
+    (q) => q.added.and.changed.and.removed.with(HTML, GlobalTransform).trackWrites,
   );
 
   private readonly embeds = this.query(
-    (q) => q.added.and.changed.with(Embed, GlobalTransform).trackWrites,
+    (q) => q.added.and.changed.and.removed.with(Embed, GlobalTransform).trackWrites,
   );
 
   private readonly culled = this.query(
@@ -88,6 +88,17 @@ export class RenderHTML extends System {
       const { matrix } = entity.read(GlobalTransform);
       const { width, height } = entity.read(HTML);
       this.updateCSSTransform($child, matrix, width, height);
+    });
+
+    this.htmls.removed.forEach((entity) => {
+      this.accessRecentlyDeletedData();
+      const camera = getSceneRoot(entity);
+      const { canvas } = camera.read(Camera);
+      const { api } = canvas.read(Canvas);
+      const htmlLayer = api.getHtmlLayer();
+
+      const { element } = entity.read(HTMLContainer);
+      htmlLayer.removeChild(element);
     });
 
     this.embeds.added.forEach((entity) => {
@@ -195,6 +206,19 @@ export class RenderHTML extends System {
       const { width, height } = entity.read(Embed);
       this.updateCSSTransform($child, matrix, width, height, $iframe);
     });
+
+    this.embeds.removed.forEach((entity) => {
+      this.accessRecentlyDeletedData();
+      const camera = getSceneRoot(entity);
+      const { canvas } = camera.read(Camera);
+      const { api } = canvas.read(Canvas);
+      const htmlLayer = api.getHtmlLayer();
+
+      const { element } = entity.read(HTMLContainer);
+      htmlLayer.removeChild(element);
+    });
+
+    this.accessRecentlyDeletedData(false);
   }
 
   private updateCSSTransform(
