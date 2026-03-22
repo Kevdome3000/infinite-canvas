@@ -1,43 +1,43 @@
 # vello-renderer
 
-以 [Vello](https://github.com/linebender/vello) 作为 2D GPU 渲染层的最小可运行示例，结构参考 [Graphite](https://github.com/GraphiteEditor/Graphite) 的渲染流程。
+Using [Vello](https://github.com/linebender/vello) as the minimum workable example of a 2D GPU rendering layer, the structure references the rendering process of [Graphite](https://github.com/GraphiteEditor/Graphite).
 
-## 简介
+## Introduction
 
-Vello 是基于 GPU Compute 的 2D 渲染引擎，使用 wgpu 访问 GPU，适合作为无限画布等 2D 场景的渲染后端。本示例演示：
+Vello is a 2D rendering engine based on GPU Compute that uses wgpu to access the GPU, making it suitable as a rendering backend for 2D scenes such as infinite canvases. This example demonstrates:
 
-- 使用 **winit** 创建窗口与事件循环
-- 使用 **vello::util::RenderContext** 管理 wgpu 设备与 surface
-- 构建 **Scene**（填充/描边图形），再通过 **Renderer::render_to_texture** 渲染到纹理
-- 将渲染结果 blit 到窗口 surface 并 present
+- Create windows with event loops using winit
+- Use vello::util::RenderContext to manage wgpu devices and surfaces
+- Build a Scene (fill/stroke shape) and render it to the texture via Renderer::render_to_texture
+- Render the result blit to the window surface and present
 
-## 环境要求
+## Environmental requirements
 
-- **Rust**：1.88 或更高（vello 0.7 需要 edition 2024）
-  - 若当前版本较低：`rustup update`
-- 支持 **WebGPU/wgpu** 的 GPU 驱动（桌面：Vulkan / Metal / D3D12；浏览器：Chrome 113+ 等）
+- **Rust**: 1.88 or higher (vello 0.7 requires edition 2024)
+  - If the current version is lower: 'rustup update'
+- GPU drivers that support **WebGPU/wgpu** (desktop: Vulkan / Metal / D3D12; Browser: Chrome 113+, etc.)
 
-## 运行
+## Run
 
-### 桌面
+### Desktop
 
 ```bash
 cd packages/vello-renderer
 cargo run
 ```
 
-成功后会打开一个窗口，绘制圆角矩形、圆形和线段。
+Successful will open a window to draw rounded rectangles, circles, and line segments.
 
-### 浏览器（Wasm）
+### Browser (Wasm)
 
-1. 安装 [wasm-pack](https://rustwasm.github.io/wasm-pack/installer/)（若尚未安装）：`cargo install wasm-pack`
-2. 在项目根目录执行：`pnpm build:vello`，或在 `vello-renderer` 下执行：`wasm-pack build --target web`，会生成 `pkg/` 目录。  
-   - 使用 `pnpm build:vello` 会在构建后自动删除 `pkg/.gitignore`，便于将 pkg 纳入版本控制。
-3. 用本地服务器打开（需 HTTP，不能 file://）：`npx serve .`，然后访问提示的地址（如 <http://localhost:3000>）。
+1. Install [wasm-pack](https://rustwasm.github.io/wasm-pack/installer/) (if not already installed): 'cargo install wasm-pack'
+2. Execute pnpm build:vello in the project root directory, or under vello-renderer: wasm-pack build --target web, and the pkg/' directory will be generated.  
+   - Using 'pnpm build:vello' will automatically remove 'pkg/.gitignore' after the build, making it easier to include pkg in version control.
+3. Open with a local server (HTTP required, not file://): 'npx serve.' and access the prompted address (e.g. <http://localhost:3000>).
 
-需要支持 **WebGPU** 的浏览器（如 Chrome 113+、Edge 113+）。
+Requires a browser that supports WebGPU (e.g., Chrome 113+, Edge 113+).
 
-画布需由 JS 创建并传入：先 `await init()`，再调用 **`runWithCanvas(canvas, onReady)`**。canvas 需已插入 DOM；若宽高为 0，会按 `clientWidth`/`clientHeight` 自动设置。**支持多画布**：对多个 canvas 分别调用 `runWithCanvas`，每个会在就绪时回调 `onReady(canvasId)`，后续 `addRect`/`addCircle` 等需传入对应的 `canvasId`。
+The canvas needs to be created by JS and passed in: await init() first, then call runWithCanvas(canvas, onReady). canvas must be DOM inserted; If the width and height are 0, it will be automatically set by pressing 'clientWidth'/'clientHeight'. **Support for multiple canvases**: Call 'runWithCanvas' separately for multiple canvas, each will call back 'onReady(canvasId)' when ready, and then 'addRect'/'addCircle' needs to pass in the corresponding 'canvasId'.
 
 ```js
 import init, { runWithCanvas, addRect } from './pkg/vello_renderer.js';
@@ -60,27 +60,27 @@ runWithCanvas(canvas, (canvasId) => {
 
 ## JS API（仅 Wasm）
 
-在浏览器中，wasm 模块通过 `import` 引入后，可从 JS 向画布追加图形。坐标为**世界坐标**，会随画布平移/缩放一起变换。参数为**对象格式**，支持可选字段与 camelCase。
+In the browser, the wasm module can be introduced via 'import' to append graphics from JS to the canvas. The coordinates are world coordinates and will change with the canvas panning/zooming. The parameter is Object Format, and optional fields and camelCase are supported.
 
-| 方法                             | 说明                                                                                                        |
-| -------------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| `runWithCanvas(canvas, onReady)` | 用指定 canvas 启动渲染。`onReady(canvasId)` 在画布就绪时调用，后续 add\* 需传入该 `canvasId`。支持多画布。  |
-| `addRect(canvasId, options)`     | 在指定画布上添加矩形。`options`: `{ id, parentId?, zIndex?, x, y, width, height, radius?, fill?, stroke? }` |
-| `addCircle(canvasId, options)`   | 在指定画布上添加圆形。`options`: `{ id, parentId?, zIndex?, cx, cy, r, fill?, stroke? }`                    |
-| `addLine(canvasId, options)`     | 在指定画布上添加线段。`options`: `{ id, parentId?, zIndex?, x1, y1, x2, y2, strokeWidth?, color? }`         |
-| `addText(canvasId, options)`     | 在指定画布上添加文本。需先调用 `registerDefaultFont(字体字节)`。`options` 同上。                            |
-| `registerDefaultFont(bytes)`     | 注册默认字体。`bytes` 为 **Uint8Array** 或 **ArrayBuffer**（TTF/OTF 字节），供后续 `addText` 渲染使用。     |
-| `clearShapes(canvasId)`          | 清空指定画布上由 JS 添加的所有图形。                                                                        |
+| Method                           | description                                                                                                                                                                  |
+|----------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `runWithCanvas(canvas, onReady)` | Start the render with the specified canvas. 'onReady(canvasId)' is called when the canvas is ready, and subsequent add\* needs to pass the 'canvasId'. Multi-canvas support. |
+| `addRect(canvasId, options)`     | add a rectangle on the specified canvas options`: `{ id, parentId?, zIndex?, x, y, width, height, radius?, fill?, stroke? }`                                                 |
+| `addCircle(canvasId, options)`   | add a circle on the specified canvas。`options`: `{ id, parentId?, zIndex?, cx, cy, r, fill?, stroke? }`                                                                      |
+| `addLine(canvasId, options)`     | add line segments on the specified canvas。`options`: `{ id, parentId?, zIndex?, x1, y1, x2, y2, strokeWidth?, color? }`                                                      |
+| `addText(canvasId, options)`     | Add text on the specified canvas. Need to call first `registerDefaultFont(字体字节)`。`options` ditto。                                                                            |
+| `registerDefaultFont(bytes)`     | register the default font。`bytes` For **Uint8Array** Or **ArrayBuffer**（TTF/OTF bytes for follow up `addText` render uses。                                                   |
+| `clearShapes(canvasId)`          | Empty all graphics added by JS on the specified canvas。                                                                                                                      |
 
-- **id**：必填，唯一标识，用于被 **parentId** 引用以建立父子关系。
-- **parentId**：可选；若传入则当前图形为该 id 对应图形的子节点，其坐标（x/y、cx/cy 等）为**父节点局部空间**；无 parentId 时为世界坐标。
-- **zIndex**：可选，整数，默认 0；数值越大越靠上绘制，同 zIndex 按添加顺序。
-- **fill** / **color**：RGBA 数组 `[r, g, b, a]`，取值 0–1；默认填充白色、描边黑色。
-- **stroke**：可选，`{ width, color? }`；不传或 `width ≤ 0` 表示不描边。
-- **radius**：矩形圆角，默认 0（直角）。
-- **strokeWidth**：线段线宽，默认 1。
+- id: Required, unique identifier used by parentId to establish a parent-child relationship.
+- **parentId**: Optional; If it is passed, the current graph is a child node of the ID corresponding to the graph, and its coordinates (x/y, cx/cy, etc.) are the parent node local space. When there is no parentId, it is the world coordinates.
+- **zIndex**: Optional, integer, default 0; the larger the value, the higher it is drawn, and the same zIndex is added in the order in which it is added.
+- **fill** / **color**: RGBA array '[r, g, b, a]', with values 0–1; default fill white, stroke black.
+- **stroke**: optional, '{ width, color? } `； No pass or 'width ≤ 0' means no stroke.
+- radius: Rectangular filleted corners, default 0 (right angles).
+- strokeWidth: The line width of the segment, default 1.
 
-示例（在 `runWithCanvas` 的 `onReady` 回调中拿到 `canvasId` 后调用）：
+Example (called after getting 'canvasId' in 'onReady' callback of 'runWithCanvas'):
 
 ```js
 import init, { addRect, addCircle, addLine, clearShapes, runWithCanvas } from './pkg/vello_renderer.js';
@@ -133,7 +133,7 @@ runWithCanvas(canvas, (canvasId) => {
 });
 ```
 
-**文本**：需先注册字体（TTF/OTF 字节），再在 onReady 回调里调用 `addText(canvasId, options)`。例如：
+**Text**: You need to register the font (TTF/OTF bytes) first, and then call 'addText(canvasId, options)' in the onReady callback. For example:
 
 ```js
 runWithCanvas(canvas, (canvasId) => {
@@ -153,17 +153,17 @@ runWithCanvas(canvas, (canvasId) => {
 });
 ```
 
-## 项目结构
+## Project structure
 
 ```plaintext
 packages/vello-renderer/
-├── Cargo.toml   # 依赖：vello, winit, pollster, anyhow；wasm：wasm-bindgen 等
-├── index.html   # 浏览器入口，加载 pkg/vello_renderer.js
+├── Cargo.toml   # dependOn：vello, winit, pollster, anyhow；wasm：wasm-bindgen 等
+├── index.html   # browser entry load pkg/vello_renderer.js
 ├── README.md
 ├── src/
-│   ├── lib.rs   # 共用逻辑 + run_native / run_wasm_async + runWithCanvas
-│   └── main.rs  # 桌面入口
-└── pkg/         # wasm-pack build 生成
+│   ├── lib.rs   # shared-logic + run_native / run_wasm_async + runWithCanvas
+│   └── main.rs  # desktop-entrance
+└── pkg/         # wasm-pack build generation
 ```
 
 ## 参考
