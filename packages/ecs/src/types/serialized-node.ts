@@ -221,6 +221,13 @@ export interface BindingAttributes {
 
   sourcePortConstraint: typeof DIRECTION_NORTH | typeof DIRECTION_SOUTH | typeof DIRECTION_EAST | typeof DIRECTION_WEST;
   targetPortConstraint: typeof DIRECTION_NORTH | typeof DIRECTION_SOUTH | typeof DIRECTION_EAST | typeof DIRECTION_WEST;
+
+  /**
+   * This determines whether or not joins between edges segments are smoothed to a rounded finish
+   */
+  rounded: boolean;
+  curved: boolean;
+  bezier: boolean;
 }
 
 export interface MarkerAttributes {
@@ -419,6 +426,7 @@ export interface TextAttributes
       | 'fontWeight'
       | 'fontStyle'
       | 'fontVariant'
+      | 'fontKerning'
       | 'letterSpacing'
       | 'lineHeight'
       | 'whiteSpace'
@@ -444,6 +452,11 @@ export interface TextSerializedNode
     fontBoundingBoxDescent: number;
     hangingBaseline: number;
     ideographicBaseline: number;
+    /**
+     * When set, this text is an edge label: parent should be a bound polyline/line.
+     * Value is 0–1 along total edge length (arc-length parameter).
+     */
+    edgeLabelPosition: number;
   }>,
   Partial<FillAttributes>,
   Partial<StrokeAttributes>,

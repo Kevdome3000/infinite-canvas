@@ -37,6 +37,9 @@ export {
   isUrl,
   isBrowser,
   parseGradient,
+  computeLinearGradient,
+  computeRadialGradient,
+  computeConicGradient,
   parseEffect,
   serializePoints,
   deserializePoints,
@@ -53,8 +56,12 @@ export {
   readSystemClipboard,
   isSupportedImageFileType,
   inferXYWidthHeight,
+  inferPointsWithFromIdAndToId,
+  layoutTextAnchoredInParent,
+  pointAlongPolylineByT,
   getSvgPathFromStroke,
   distanceBetweenPoints,
+  filterUndefined,
   MIME_TYPES,
   IMAGE_MIME_TYPES,
   EdgeStyle,
@@ -62,6 +69,7 @@ export {
   type Effect
 } from './utils';
 export * from './types/serialized-node';
+export type { EdgeState } from './utils/binding/connection';
 export { TexturePool } from './resources';
 
 export {

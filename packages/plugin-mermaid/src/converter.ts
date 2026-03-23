@@ -1,4 +1,12 @@
-import { EdgeStyle, EllipseSerializedNode, PathSerializedNode, PolylineSerializedNode, RectSerializedNode, SerializedNode, TextSerializedNode } from "@infinite-canvas-tutorial/ecs";
+import {
+  EdgeStyle,
+  EllipseSerializedNode,
+  PathSerializedNode,
+  PolylineSerializedNode,
+  RectSerializedNode,
+  SerializedNode,
+  TextSerializedNode,
+} from "@infinite-canvas-tutorial/ecs";
 import { VERTEX_TYPE, type Edge, type ParsedMermaidData, type Vertex } from "./interfaces";
 import { getText } from "./utils";
 
@@ -18,8 +26,8 @@ function convertFlowchartToSerializedNodes(vertices: Map<string, Vertex>, edges:
   const { fontSize } = options;
 
   const serializedNodes: SerializedNode[] = [];
-  // Vertices
-  Object.values(vertices).forEach((vertex: Vertex) => {
+  // Vertices (ParsedMermaidData uses Map; Object.values(Map) is always [].)
+  Array.from(vertices.values()).forEach((vertex: Vertex) => {
     if (!vertex) {
       return;
     }
@@ -33,6 +41,7 @@ function convertFlowchartToSerializedNodes(vertices: Map<string, Vertex>, edges:
       height: vertex.height,
       stroke: 'black',
       strokeWidth: 2,
+      fill: 'transparent',
       zIndex: 0,
     };
 
@@ -51,8 +60,11 @@ function convertFlowchartToSerializedNodes(vertices: Map<string, Vertex>, edges:
         break;
       }
       case VERTEX_TYPE.DIAMOND: {
-        (serializedNode as unknown as PathSerializedNode).type = "path";
-        (serializedNode as unknown as PathSerializedNode).d = "M 0 0 L 100 50 L 0 100 Z";
+        const width = vertex.width;
+        const height = vertex.height;
+        const pathSerializedNode = serializedNode as unknown as PathSerializedNode;
+        pathSerializedNode.type = "path";
+        pathSerializedNode.d = `M ${width / 2} 0 L ${width} ${height / 2} L ${width / 2} ${height} L 0 ${height / 2} Z`;
         break;
       }
     }
@@ -78,7 +90,7 @@ function convertFlowchartToSerializedNodes(vertices: Map<string, Vertex>, edges:
     serializedNodes.push(textSerializedNode);
   });
 
-  // Edges
+  // Edges (bound polylines + optional Excalidraw-style text labels as children)
   edges.forEach((edge) => {
     // let groupIds: string[] = [];
     // const startParentId = getParentId(edge.start);
@@ -109,6 +121,26 @@ function convertFlowchartToSerializedNodes(vertices: Map<string, Vertex>, edges:
     };
 
     serializedNodes.push(serializedNode);
+
+    const labelText = getText(edge).trim();
+    if (!labelText) {
+      return;
+    }
+
+    const textSerializedNode: TextSerializedNode = {
+      id: `${serializedNode.id}-label`,
+      parentId: serializedNode.id,
+      type: 'text',
+      content: labelText,
+      fontSize,
+      fontFamily: 'sans-serif',
+      fill: 'black',
+      textAlign: 'center',
+      textBaseline: 'middle',
+      edgeLabelPosition: 0.5,
+      zIndex: 1,
+    };
+    serializedNodes.push(textSerializedNode);
   });
 
   return serializedNodes;

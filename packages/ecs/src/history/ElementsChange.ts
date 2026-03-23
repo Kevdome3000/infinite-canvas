@@ -606,6 +606,7 @@ export const mutateElement = <TElement extends Mutable<SerializedNode>>(
     anchorY,
     fontWeight,
     fontStyle,
+    fontKerning,
     textAlign,
     textBaseline,
     content,
@@ -876,6 +877,9 @@ export const mutateElement = <TElement extends Mutable<SerializedNode>>(
   }
   if (!isNil(fontStyle)) {
     entity.write(Text).fontStyle = fontStyle;
+  }
+  if (!isNil(fontKerning)) {
+    entity.write(Text).fontKerning = fontKerning;
   }
   if (!isNil(textAlign)) {
     entity.write(Text).textAlign = textAlign;

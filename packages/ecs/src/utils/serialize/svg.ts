@@ -216,16 +216,6 @@ export const defaultAttributes: Record<
   }
 };
 
-// @see https://github.com/plouc/nivo/issues/164
-const BASELINE_MAP: Record<string, string> = {
-  top: 'hanging', // Use hanging here.
-  middle: 'central',
-  bottom: 'text-after-edge', // FIXME: It is not a standard property.
-  alphabetic: 'alphabetic',
-  ideographic: 'ideographic',
-  hanging: 'hanging',
-};
-
 export async function serializeNodesToSVGElements(
   nodes: SerializedNode[],
 ): Promise<SVGElement[]> {
@@ -285,6 +275,7 @@ export async function serializeNodesToSVGElements(
       fontWeight,
       fontStyle,
       fontVariant,
+      fontKerning,
       content,
       letterSpacing,
       lineHeight,
@@ -415,15 +406,8 @@ export async function serializeNodesToSVGElements(
         x = width ?? 0;
       }
 
-      if (textBaseline === 'middle') {
-        y = (height ?? 0) / 2;
-      } else if (textBaseline === 'hanging' || textBaseline === 'top') {
-        y = 0;
-      } else if (textBaseline === 'alphabetic') {
-        y = (height ?? 0) * 0.75;
-      } else if (textBaseline === 'ideographic' || textBaseline === 'bottom') {
-        y = height ?? 0;
-      }
+      const lineHeightValue = lineHeight || fontSize as number;
+      y += (lineHeightValue - (fontSize as number)) / 2;
 
       element.setAttribute('x', `${toFixedAndRemoveTrailingZeros(x)}`);
       element.setAttribute('y', `${toFixedAndRemoveTrailingZeros(y)}`);
@@ -451,10 +435,6 @@ export async function serializeNodesToSVGElements(
       } else if (textAlign === 'left' || textAlign === 'start') {
         element.setAttribute('text-anchor', 'start');
       }
-    }
-
-    if (textBaseline) {
-      element.setAttribute('dominant-baseline', BASELINE_MAP[textBaseline]);
     }
 
     if (sizeAttenuation) {
@@ -843,7 +823,9 @@ function createOrUpdateGradient(
   $def: SVGDefsElement,
   gradient: Gradient,
 ) {
-  const { x, y, width, height } = node;
+  const { width, height } = node;
+  const x = 0;
+  const y = 0;
 
   const gradientId = generateGradientKey({
     ...gradient,
@@ -1276,19 +1258,26 @@ export function exportText(
     decorationStyle,
     decorationColor,
     decorationThickness,
+    letterSpacing,
   } = attributes;
 
-  const { lineHeight } = measureText(attributes);
+  $g.setAttribute('dominant-baseline', 'hanging');
 
-  const lines = content.split('\n');
+  const { lineHeight, lines } = measureText(attributes);
   if (lines.length > 1) {
     lines.forEach((line, i) => {
       const $tspan = createSVGElement('tspan');
       $tspan.textContent = line;
       $tspan.setAttribute('x', '0');
-      $tspan.setAttribute('dy', `${i * lineHeight}`);
+
+      if (i > 0) {
+        $tspan.setAttribute('dy', `${toFixedAndRemoveTrailingZeros(lineHeight)}`);
+      }
       $g.appendChild($tspan);
     });
+
+    // const y = Number($g.getAttribute('y'));
+    // $g.setAttribute('y', `${toFixedAndRemoveTrailingZeros(y - lines.length * lineHeight)}`);
   } else {
     $g.textContent = content;
   }
@@ -1306,6 +1295,12 @@ export function exportText(
     if (fontVariant) {
       $g.setAttribute('font-variant', fontVariant);
     }
+    if (letterSpacing) {
+      $g.setAttribute(
+        'letter-spacing',
+        `${toFixedAndRemoveTrailingZeros(letterSpacing)}`,
+      );
+    }
     $g.setAttribute('fill', fill as string);
   } else {
     let styleCSSText = '';
@@ -1321,6 +1316,9 @@ export function exportText(
     }
     if (fill) {
       styleCSSText += `fill: ${fill as string};`;
+    }
+    if (letterSpacing !== 0) {
+      styleCSSText += `letter-spacing: ${toFixedAndRemoveTrailingZeros(letterSpacing)}px;`;
     }
     if (styleCSSText) {
       $g.setAttribute('style', styleCSSText);
@@ -1389,7 +1387,7 @@ export function isUrl(url: string) {
   );
 }
 
-function toFixedAndRemoveTrailingZeros(value: number) {
+export function toFixedAndRemoveTrailingZeros(value: number) {
   return value.toFixed(3).replace(/\.?0+$/, '');
 }
 

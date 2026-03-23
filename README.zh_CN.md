@@ -405,10 +405,11 @@ pnpm run dev
 -   解析 Mermaid 并绘制
 -   解析 D2 并绘制
 -   解析 draw.io 图表并绘制
+-   实现附着在边上的标签，并提升可见性
 
-|                Mermaid flowchart                 |                 D2 flowchart                  |          Draw.io flowchart          |
-| :----------------------------------------------: | :-------------------------------------------: | :---------------------------------: |
-| ![mermaid flowchart](./screenshots/lesson32.png) | ![d2 flowchart](./screenshots/lesson32-2.png) | ![drawio](./screenshots/drawio.png) |
+|                Mermaid flowchart                |                 D2 flowchart                  |          Draw.io flowchart          |
+| :---------------------------------------------: | :-------------------------------------------: | :---------------------------------: |
+| ![mermaid flowchart](./screenshots/mermaid.png) | ![d2 flowchart](./screenshots/lesson32-2.png) | ![drawio](./screenshots/drawio.png) |
 
 ## 课程 33 - 布局引擎 [🔗](https://infinitecanvas.cc/zh/guide/lesson-033)
 
@@ -431,6 +432,10 @@ pnpm run dev
 |                 Crop an image                  |                     Brush with eraser                     |
 | :--------------------------------------------: | :-------------------------------------------------------: |
 | ![crop image](./screenshots/crop-an-image.gif) | ![brush with eraser](./screenshots/brush-with-eraser.png) |
+
+## 课程 35 - 基于瓦片的渲染 [🔗](https://infinitecanvas.cc/zh/guide/lesson-035)
+
+-   通过 WASM 使用 vello 作为渲染引擎，体验基于 WebGPU compute shader 的瓦片渲染
 
 [在线体验]: app.infinitecanvas.cc
 [infinitecanvas]: https://infinitecanvas.tools/

@@ -1,4 +1,4 @@
-import { isNil } from '@antv/util';
+import { isNil, path2Absolute } from '@antv/util';
 import toposort from 'toposort';
 import { Entity } from '@lastolivegames/becsy';
 import { IPointData } from '@pixi/math';
@@ -40,6 +40,7 @@ import {
   Filter,
   Binding,
   Binded,
+  EdgeLabel,
   Locked,
   ClipMode,
   Flex,
@@ -79,6 +80,7 @@ import {
   shiftPath,
   serializeBrushPoints,
 } from '../serialize';
+import { formatNumber } from '../serialize/points';
 import { deserializeBrushPoints, deserializePoints } from './points';
 import { Commands, EntityCommands } from '../../commands';
 import { isGradient } from '../gradient';
@@ -87,6 +89,7 @@ import { computeBidi, measureText } from '../../systems';
 import { DOMAdapter } from '../../environment';
 import { safeAddComponent } from '../../history';
 import { EdgeState, updateFixedTerminalPoints, updateFloatingTerminalPoints, updatePoints } from '../binding';
+import { pointAlongPolylineByT } from '../polyline-arclength';
 import simplify from 'simplify-js';
 
 export function inferXYWidthHeight(node: SerializedNode) {
@@ -175,6 +178,123 @@ export function inferXYWidthHeight(node: SerializedNode) {
   }
 }
 
+function mod(n: number, m: number): number {
+  return ((n % m) + m) % m;
+}
+
+/**
+ * 与 draw.io {@link https://github.com/jgraph/drawio/blob/dev/src/main/webapp/mxgraph/src/shape/mxShape.js#L1230-L1321 mxShape.prototype.addPoints}
+ * 一致：将折线顶点转为 SVG `d`（开放路径，无 close）。圆角段用二次贝塞尔 Q，控制点为角点。
+ */
+function addOpenPointsToPathD(pts: IPointData[], rounded: boolean, arcSize: number): string {
+  if (pts.length === 0) {
+    return '';
+  }
+  const close = false;
+  const initialMove = true;
+  const exclude: number[] | null = null;
+
+  const points = pts;
+  const pe = points[points.length - 1];
+
+  const parts: string[] = [];
+  let pt = points[0];
+  let i = 1;
+
+  const moveTo = (x: number, y: number) => {
+    parts.push(`M ${formatNumber(x)} ${formatNumber(y)}`);
+  };
+  const lineTo = (x: number, y: number) => {
+    parts.push(`L ${formatNumber(x)} ${formatNumber(y)}`);
+  };
+  const quadTo = (cx: number, cy: number, x: number, y: number) => {
+    parts.push(
+      `Q ${formatNumber(cx)} ${formatNumber(cy)} ${formatNumber(x)} ${formatNumber(y)}`,
+    );
+  };
+
+  if (initialMove) {
+    moveTo(pt.x, pt.y);
+  } else {
+    lineTo(pt.x, pt.y);
+  }
+
+  while (i < (close ? points.length : points.length - 1)) {
+    let tmp = points[mod(i, points.length)];
+    let dx = pt.x - tmp.x;
+    let dy = pt.y - tmp.y;
+
+    if (
+      rounded &&
+      (dx !== 0 || dy !== 0) &&
+      (exclude == null || exclude.indexOf(i - 1) < 0)
+    ) {
+      let dist = Math.sqrt(dx * dx + dy * dy);
+      const nx1 = (dx * Math.min(arcSize, dist / 2)) / dist;
+      const ny1 = (dy * Math.min(arcSize, dist / 2)) / dist;
+
+      const x1 = tmp.x + nx1;
+      const y1 = tmp.y + ny1;
+      lineTo(x1, y1);
+
+      let next = points[mod(i + 1, points.length)];
+
+      while (
+        i < points.length - 2 &&
+        Math.round(next.x - tmp.x) === 0 &&
+        Math.round(next.y - tmp.y) === 0
+      ) {
+        next = points[mod(i + 2, points.length)];
+        i++;
+      }
+
+      dx = next.x - tmp.x;
+      dy = next.y - tmp.y;
+
+      dist = Math.max(1, Math.sqrt(dx * dx + dy * dy));
+      const nx2 = (dx * Math.min(arcSize, dist / 2)) / dist;
+      const ny2 = (dy * Math.min(arcSize, dist / 2)) / dist;
+
+      const x2 = tmp.x + nx2;
+      const y2 = tmp.y + ny2;
+
+      quadTo(tmp.x, tmp.y, x2, y2);
+      tmp = { x: x2, y: y2 };
+    } else {
+      lineTo(tmp.x, tmp.y);
+    }
+
+    pt = tmp;
+    i++;
+  }
+
+  if (!close) {
+    lineTo(pe.x, pe.y);
+  }
+
+  return parts.join(' ');
+}
+
+/** 用路径命令端点折线近似 `d`，供边标签沿路径插值（曲线段为弦近似）。 */
+export function polylineVertexApproxFromPathD(d: string | undefined): [number, number][] | null {
+  if (!d) {
+    return null;
+  }
+  const cmds = path2Absolute(d) as [string, ...number[]][];
+  const pts: [number, number][] = [];
+  for (const row of cmds) {
+    const [command, ...data] = row;
+    if (command === 'M' || command === 'L') {
+      pts.push([data[0], data[1]]);
+    } else if (command === 'Q') {
+      pts.push([data[2], data[3]]);
+    } else if (command === 'C') {
+      pts.push([data[4], data[5]]);
+    }
+  }
+  return pts.length >= 2 ? pts : null;
+}
+
 export function inferPointsWithFromIdAndToId(
   from: SerializedNode,
   to: SerializedNode,
@@ -201,8 +321,99 @@ export function inferPointsWithFromIdAndToId(
     edge.points = serializePoints(state.absolutePoints.map((point) => {
       return [point.x, point.y];
     }));
+  } else if (edge.type === 'path' || edge.type === 'rough-path') {
+    if (edge.bezier) {
+      // this.paintBezierLine(c, pts);
+    } else if (edge.curved) {
+      // this.paintCurvedLine(c, pts);
+    } else {
+      const pts = state.absolutePoints.filter((p): p is IPointData => p != null);
+      if (pts.length >= 2) {
+        const arcSize =
+          typeof (edge as EdgeState & { arcSize?: number }).arcSize === 'number'
+            ? (edge as EdgeState & { arcSize: number }).arcSize
+            : 10;
+        if (edge.rounded) {
+          (edge as PathSerializedNode).d = addOpenPointsToPathD(pts, true, arcSize);
+        } else {
+          (edge as PathSerializedNode).d =
+            `M ${formatNumber(pts[0].x)} ${formatNumber(pts[0].y)} ` +
+            pts
+              .slice(1)
+              .map((p) => `L ${formatNumber(p.x)} ${formatNumber(p.y)}`)
+              .join(' ');
+        }
+      }
+    }
   }
   delete state.absolutePoints;
+}
+
+/**
+ * After bound edge geometry is finalized ({@link inferXYWidthHeight}), place child `text` nodes
+ * with `edgeLabelPosition` on the edge in parent-local coordinates (same rules as {@link layoutTextAnchoredInParent}).
+ */
+function layoutSerializedEdgeLabelChildren(
+  edge: SerializedNode,
+  nodes: SerializedNode[],
+) {
+  const edgeId = edge.id;
+  if (!edgeId) {
+    return;
+  }
+  const labelNodes = nodes.filter(
+    (n): n is TextSerializedNode =>
+      n.type === 'text' &&
+      n.parentId === edgeId &&
+      (n as TextSerializedNode).edgeLabelPosition != null &&
+      !Number.isNaN((n as TextSerializedNode).edgeLabelPosition!),
+  );
+  if (labelNodes.length === 0) {
+    return;
+  }
+
+  let points: [number, number][] | null = null;
+  if (edge.type === 'polyline' || edge.type === 'rough-polyline') {
+    points = deserializePoints((edge as PolylineSerializedNode).points) as [
+      number,
+      number,
+    ][];
+  } else if (edge.type === 'line' || edge.type === 'rough-line') {
+    const l = edge as LineSerializedNode;
+    points = [
+      [l.x1, l.y1],
+      [l.x2, l.y2],
+    ];
+  } else if (edge.type === 'path' || edge.type === 'rough-path') {
+    points = polylineVertexApproxFromPathD((edge as PathSerializedNode).d);
+  }
+  if (!points || points.length < 2) {
+    return;
+  }
+
+  for (const labelNode of labelNodes) {
+    const t = labelNode.edgeLabelPosition ?? 0.5;
+    const [ax, ay] = pointAlongPolylineByT(points, t);
+    const copy = {
+      ...labelNode,
+      anchorX: ax,
+      anchorY: ay,
+    };
+    delete (copy as Partial<TextSerializedNode>).x;
+    delete (copy as Partial<TextSerializedNode>).y;
+    delete (copy as Partial<TextSerializedNode>).width;
+    delete (copy as Partial<TextSerializedNode>).height;
+    computeBidi(copy.content);
+    inferXYWidthHeight(copy as SerializedNode);
+    Object.assign(labelNode, {
+      x: copy.x,
+      y: copy.y,
+      width: copy.width,
+      height: copy.height,
+      anchorX: copy.anchorX,
+      anchorY: copy.anchorY,
+    });
+  }
 }
 
 export async function loadImage(url: string, entity: Entity) {
@@ -281,7 +492,14 @@ export function serializedNodesToEntities(
 
   // bindings should also be sorted
   nodes.forEach((node) => {
-    if (node.type === 'line' || node.type === 'polyline' || node.type === 'path') {
+    if (
+      node.type === 'line' ||
+      node.type === 'polyline' ||
+      node.type === 'path' ||
+      node.type === 'rough-line' ||
+      node.type === 'rough-polyline' ||
+      node.type === 'rough-path'
+    ) {
       const { fromId, toId } = node as EdgeSerializedNode;
       if (fromId && toId) {
         edges.push([fromId, node.id]);
@@ -315,7 +533,14 @@ export function serializedNodesToEntities(
     idEntityMap.set(id, entityCommands);
 
     // Infer points with fromId and toId first
-    if (type === 'line' || type === 'rough-line' || type === 'polyline' || type === 'rough-polyline') {
+    if (
+      type === 'line' ||
+      type === 'rough-line' ||
+      type === 'polyline' ||
+      type === 'rough-polyline' ||
+      type === 'path' ||
+      type === 'rough-path'
+    ) {
       const { fromId, toId } = attributes as EdgeSerializedNode;
       if (fromId && toId) {
         const fromNode = nodes.find((node) => node.id === fromId);
@@ -346,6 +571,20 @@ export function serializedNodesToEntities(
 
     // Make sure the entity has a width and height
     inferXYWidthHeight(attributes);
+
+    const edgeAttrs = attributes as EdgeSerializedNode;
+    if (
+      (type === 'line' ||
+        type === 'rough-line' ||
+        type === 'polyline' ||
+        type === 'rough-polyline' ||
+        type === 'path' ||
+        type === 'rough-path') &&
+      edgeAttrs.fromId &&
+      edgeAttrs.toId
+    ) {
+      layoutSerializedEdgeLabelChildren(attributes, nodes);
+    }
 
     const { x, y, width, height, rotation = 0, scaleX = 1, scaleY = 1 } = attributes;
     const absoluteX = x ?? 0;
@@ -447,11 +686,13 @@ export function serializedNodesToEntities(
         fontWeight = 'normal',
         fontStyle = 'normal',
         fontVariant = 'normal',
+        fontKerning = true,
         letterSpacing = 0,
         lineHeight = 0,
         whiteSpace = 'normal',
         wordWrap = false,
         wordWrapWidth,
+        maxLines,
         textAlign = 'start',
         textBaseline = 'alphabetic',
         decorationThickness = 0,
@@ -462,6 +703,7 @@ export function serializedNodesToEntities(
         // fontBoundingBoxDescent = 0,
         // hangingBaseline = 0,
         // ideographicBaseline = 0,
+        edgeLabelPosition,
       } = attributes as TextSerializedNode;
 
       // let anchorX = 0;
@@ -493,11 +735,13 @@ export function serializedNodesToEntities(
           fontWeight,
           fontStyle,
           fontVariant,
+          fontKerning,
           letterSpacing,
           lineHeight,
           whiteSpace,
           wordWrap,
           wordWrapWidth,
+          maxLines,
           textAlign,
           textBaseline,
           bitmapFont,
@@ -512,6 +756,15 @@ export function serializedNodesToEntities(
             style: decorationStyle,
             thickness: decorationThickness,
           }),
+        );
+      }
+
+      if (
+        edgeLabelPosition != null &&
+        !Number.isNaN(edgeLabelPosition)
+      ) {
+        entityCommands.insert(
+          new EdgeLabel({ labelPosition: edgeLabelPosition }),
         );
       }
     } else if (type === 'vector-network') {

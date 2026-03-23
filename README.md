@@ -404,10 +404,11 @@ If you want to use it in your own project, you can refer to:
 -   Parse Mermaid and render in our canvas
 -   Parse D2 and render in our canvas
 -   Parse draw.io and render in our canvas
+-   Implement label on edge and improve its readability
 
-|                Mermaid flowchart                 |                 D2 flowchart                  |          Draw.io flowchart          |
-| :----------------------------------------------: | :-------------------------------------------: | :---------------------------------: |
-| ![mermaid flowchart](./screenshots/lesson32.png) | ![d2 flowchart](./screenshots/lesson32-2.png) | ![drawio](./screenshots/drawio.png) |
+|                Mermaid flowchart                |                 D2 flowchart                  |          Draw.io flowchart          |
+| :---------------------------------------------: | :-------------------------------------------: | :---------------------------------: |
+| ![mermaid flowchart](./screenshots/mermaid.png) | ![d2 flowchart](./screenshots/lesson32-2.png) | ![drawio](./screenshots/drawio.png) |
 
 ## Lesson 33 - Layout engine [🔗](https://infinitecanvas.cc/guide/lesson-033)
 
@@ -430,6 +431,10 @@ If you want to use it in your own project, you can refer to:
 |                 Crop an image                  |                     Brush with eraser                     |
 | :--------------------------------------------: | :-------------------------------------------------------: |
 | ![crop image](./screenshots/crop-an-image.gif) | ![brush with eraser](./screenshots/brush-with-eraser.png) |
+
+## Lesson 35 - Tile-based rendering [🔗](https://infinitecanvas.cc/guide/lesson-035)
+
+-   Use vello as tile-based rendering engine via WASM, fully based on WebGPU compute shader
 
 [Online App]: app.infinitecanvas.cc
 [infinitecanvas]: https://infinitecanvas.tools/

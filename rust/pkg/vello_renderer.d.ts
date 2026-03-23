@@ -1,67 +1,106 @@
 /* tslint:disable */
 /* eslint-disable */
 
-/**
- * 添加圆形。
- */
-export function addCircle(canvas_id: number, opts: any): void;
+export function addEllipse(canvas_id: number, opts: any): void;
 
-/**
- * 添加线段。
- */
+export function addGroup(canvas_id: number, opts: any): void;
+
+export function addImageRect(canvas_id: number, opts: any): void;
+
 export function addLine(canvas_id: number, opts: any): void;
 
-/**
- * 添加矩形。canvas_id 由 runWithCanvas 的 onReady 回调传入；opts 同前。
- */
+export function addPath(canvas_id: number, opts: any): void;
+
+export function addPolyline(canvas_id: number, opts: any): void;
+
 export function addRect(canvas_id: number, opts: any): void;
 
-/**
- * 添加文本。
- */
+export function addRoughEllipse(canvas_id: number, opts: any): void;
+
+export function addRoughLine(canvas_id: number, opts: any): void;
+
+export function addRoughPath(canvas_id: number, opts: any): void;
+
+export function addRoughPolyline(canvas_id: number, opts: any): void;
+
+export function addRoughRect(canvas_id: number, opts: any): void;
+
 export function addText(canvas_id: number, opts: any): void;
 
-/**
- * 清空指定画布上由 JS 添加的所有图形。
- */
+export function clearAllCaches(): void;
+
+export function clearEmojiCache(): void;
+
+export function clearGlyphCache(): void;
+
 export function clearShapes(canvas_id: number): void;
 
-/**
- * 注册默认字体（TTF/OTF 字节）。用于 addText 渲染；传入 Uint8Array 或 ArrayBuffer。
- */
-export function registerDefaultFont(js_value: any): void;
+export function computePathBounds(opts: any): any;
 
-/**
- * 使用传入的 canvas 元素启动渲染。onReady(canvasId) 在画布就绪时调用，后续 addRect/addCircle 等需传入该 canvasId。
- */
+export function computeTextBounds(opts: any): any;
+
+export function hitTestPath(opts: any): boolean;
+
+export function measureFont(opts: any): any;
+
+export function registerFont(js_value: any): void;
+
+export function restoreCanvasAfterExport(canvas_id: number): void;
+
 export function runWithCanvas(canvas: any, on_ready: any): void;
+
+export function setCameraTransform(canvas_id: number, opts: any): void;
+
+export function setCanvasRenderOptions(canvas_id: number, opts: any): void;
+
+export function setExportView(canvas_id: number, opts: any, on_rendered: any): void;
 
 export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembly.Module;
 
 export interface InitOutput {
     readonly memory: WebAssembly.Memory;
-    readonly addCircle: (a: number, b: any) => void;
+    readonly addEllipse: (a: number, b: any) => void;
+    readonly addGroup: (a: number, b: any) => void;
+    readonly addImageRect: (a: number, b: any) => void;
     readonly addLine: (a: number, b: any) => void;
+    readonly addPath: (a: number, b: any) => void;
+    readonly addPolyline: (a: number, b: any) => void;
     readonly addRect: (a: number, b: any) => void;
+    readonly addRoughEllipse: (a: number, b: any) => void;
+    readonly addRoughLine: (a: number, b: any) => void;
+    readonly addRoughPath: (a: number, b: any) => void;
+    readonly addRoughPolyline: (a: number, b: any) => void;
+    readonly addRoughRect: (a: number, b: any) => void;
     readonly addText: (a: number, b: any) => void;
-    readonly registerDefaultFont: (a: any) => void;
+    readonly computePathBounds: (a: any) => any;
+    readonly computeTextBounds: (a: any) => any;
+    readonly hitTestPath: (a: any) => number;
+    readonly measureFont: (a: any) => any;
+    readonly registerFont: (a: any) => void;
+    readonly restoreCanvasAfterExport: (a: number) => void;
     readonly runWithCanvas: (a: any, b: any) => void;
+    readonly setCameraTransform: (a: number, b: any) => void;
+    readonly setCanvasRenderOptions: (a: number, b: any) => void;
+    readonly setExportView: (a: number, b: any, c: any) => void;
+    readonly clearEmojiCache: () => void;
+    readonly clearGlyphCache: () => void;
     readonly clearShapes: (a: number) => void;
-    readonly wasm_bindgen__closure__destroy__h4c4fcff17bc9837f: (a: number, b: number) => void;
-    readonly wasm_bindgen__closure__destroy__h3d33b15ab84bb1d2: (a: number, b: number) => void;
+    readonly clearAllCaches: () => void;
+    readonly wasm_bindgen__closure__destroy__h2393627b061c6390: (a: number, b: number) => void;
+    readonly wasm_bindgen__closure__destroy__h5efe34e33761ee9b: (a: number, b: number) => void;
     readonly wasm_bindgen__closure__destroy__h50129e0239694893: (a: number, b: number) => void;
-    readonly wasm_bindgen__convert__closures_____invoke__h3cf9993aa40a3601: (a: number, b: number, c: any, d: any) => void;
+    readonly wasm_bindgen__convert__closures_____invoke__h26ef4de1d2f17d97: (a: number, b: number, c: any, d: any) => void;
     readonly wasm_bindgen__convert__closures_____invoke__hcd95a0b94c308f8e: (a: number, b: number, c: any) => [number, number];
-    readonly wasm_bindgen__convert__closures_____invoke__h02d8f1fff670202e: (a: number, b: number, c: any) => void;
-    readonly wasm_bindgen__convert__closures_____invoke__h02d8f1fff670202e_2: (a: number, b: number, c: any) => void;
-    readonly wasm_bindgen__convert__closures_____invoke__h02d8f1fff670202e_3: (a: number, b: number, c: any) => void;
-    readonly wasm_bindgen__convert__closures_____invoke__h02d8f1fff670202e_4: (a: number, b: number, c: any) => void;
-    readonly wasm_bindgen__convert__closures_____invoke__h02d8f1fff670202e_5: (a: number, b: number, c: any) => void;
-    readonly wasm_bindgen__convert__closures_____invoke__h02d8f1fff670202e_6: (a: number, b: number, c: any) => void;
-    readonly wasm_bindgen__convert__closures_____invoke__h02d8f1fff670202e_7: (a: number, b: number, c: any) => void;
-    readonly wasm_bindgen__convert__closures_____invoke__h02d8f1fff670202e_8: (a: number, b: number, c: any) => void;
-    readonly wasm_bindgen__convert__closures_____invoke__h4c82f214f856c24f: (a: number, b: number, c: any) => void;
-    readonly wasm_bindgen__convert__closures_____invoke__h32bdbf5415e5a149: (a: number, b: number) => void;
+    readonly wasm_bindgen__convert__closures_____invoke__h07b4cad2128613da: (a: number, b: number, c: any) => void;
+    readonly wasm_bindgen__convert__closures_____invoke__h07b4cad2128613da_2: (a: number, b: number, c: any) => void;
+    readonly wasm_bindgen__convert__closures_____invoke__h07b4cad2128613da_3: (a: number, b: number, c: any) => void;
+    readonly wasm_bindgen__convert__closures_____invoke__h07b4cad2128613da_4: (a: number, b: number, c: any) => void;
+    readonly wasm_bindgen__convert__closures_____invoke__h07b4cad2128613da_5: (a: number, b: number, c: any) => void;
+    readonly wasm_bindgen__convert__closures_____invoke__h07b4cad2128613da_6: (a: number, b: number, c: any) => void;
+    readonly wasm_bindgen__convert__closures_____invoke__h07b4cad2128613da_7: (a: number, b: number, c: any) => void;
+    readonly wasm_bindgen__convert__closures_____invoke__h07b4cad2128613da_8: (a: number, b: number, c: any) => void;
+    readonly wasm_bindgen__convert__closures_____invoke__h5ba874b0856b22eb: (a: number, b: number, c: any) => void;
+    readonly wasm_bindgen__convert__closures_____invoke__h0545557df07585f9: (a: number, b: number) => void;
     readonly __wbindgen_malloc: (a: number, b: number) => number;
     readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
     readonly __externref_table_alloc: () => number;

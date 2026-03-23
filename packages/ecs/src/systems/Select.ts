@@ -49,6 +49,7 @@ import {
   Line,
   ClipMode,
   MaterialDirty,
+  FillGradient, FillImage, FillPattern, 
 } from '../components';
 import { Commands } from '../commands/Commands';
 import {
@@ -122,6 +123,9 @@ export interface SelectOBB {
   label: HTMLDivElement;
 
   editing: Entity;
+
+  /** Previous snap offset during drag; used to avoid jitter when multiple snaps are equally close. */
+  lastSnapOffset?: [number, number];
 }
 
 /**
@@ -141,7 +145,7 @@ export class Select extends System {
     this.query(
       (q) =>
         q
-          .using(Canvas, Camera, ComputedCameraControl, Culled, Brush, Input, Locked)
+          .using(Canvas, Camera, ComputedCameraControl, Culled, Brush, Input, Locked, FillSolid, FillGradient, FillImage, FillPattern, Stroke)
           .read.update.and.using(
             GlobalTransform,
             InputPoint,
@@ -194,7 +198,7 @@ export class Select extends System {
       x,
       y,
     });
-    const entities = api.elementsFromBBox(wx, wy, wx, wy);
+    const entities = api.elementsFromPoint({ x: wx, y: wy });
 
     return entities.find(selector);
   }
@@ -219,7 +223,12 @@ export class Select extends System {
 
       const dragOffset: [number, number] = [gridEx - gridSx, gridEy - gridSy];
 
-      const { snapOffset, snapLines } = snapDraggedElements(api, dragOffset);
+      const { snapOffset, snapLines } = snapDraggedElements(
+        api,
+        dragOffset,
+        selection.lastSnapOffset,
+      );
+      selection.lastSnapOffset = snapOffset;
 
       const obb = getOBB(camera);
       offset = calculateOffset(
@@ -267,6 +276,8 @@ export class Select extends System {
   private handleSelectedMoved(api: API, selection: SelectOBB) {
     const camera = api.getCamera();
 
+    delete selection.lastSnapOffset;
+
     api.setNodes(api.getNodes());
 
     if (api.getAppState().layersCropping.length === 0) {
@@ -283,7 +294,6 @@ export class Select extends System {
     camera.write(Transformable).status = TransformableStatus.MOVED;
 
     this.saveSelectedOBB(api, selection);
-    hideLabel(selection.label);
   }
 
   private handleSelectedRotating(
@@ -696,7 +706,6 @@ export class Select extends System {
     });
 
     this.saveSelectedOBB(api, selection);
-    hideLabel(selection.label);
   }
 
   private handleSelectedRotated(api: API, selection: SelectOBB) {
@@ -744,7 +753,7 @@ export class Select extends System {
       );
 
       // Select elements in the brush
-      this.applyBrushSelection(api, selection, true);
+      this.applyBrushSelection(api, selection, false);
     }
   }
 
@@ -944,8 +953,6 @@ export class Select extends System {
           selection.pointerMoveViewportX = x;
           selection.pointerMoveViewportY = y;
 
-          api.highlightNodes([]);
-
           // Highlight the topmost non-ui element
           toHighlight = this.getTopmostEntity(api, x, y, (e) => !e.has(UI));
           if (toHighlight) {
@@ -1012,9 +1019,6 @@ export class Select extends System {
                         if (input.shiftKey) {
                           selection.mode = SelectionMode.READY_TO_SELECT;
                         } else {
-                          // Disable highlight, only allow move.
-                          toHighlight = undefined;
-
                           if (
                             // selection.mode !== SelectionMode.BRUSH &&
                             selection.mode !== SelectionMode.MOVE
@@ -1043,6 +1047,8 @@ export class Select extends System {
             if (node) {
               api.highlightNodes([node]);
             }
+          } else {
+            api.highlightNodes([]);
           }
         }
       }
@@ -1118,6 +1124,8 @@ export class Select extends System {
       }
 
       if (input.pointerUpTrigger) {
+        hideLabel(selection.label);
+
         if (selection.mode === SelectionMode.BRUSH) {
           this.hideBrush(selection);
           this.applyBrushSelection(api, selection, false);
