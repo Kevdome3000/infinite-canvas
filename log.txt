@@ -1,0 +1,427 @@
+commit 355aabc3f30f1311a2c978c439b3f91c7dc874f5
+Merge: 75193761 47e00feb
+Author: xiaoiver <pyqiverson@gmail.com>
+Date:   Sun Mar 22 16:55:57 2026 +0800
+
+    Merge pull request #144 from xiaoiver/dev
+    
+    fix: parse mermaid in multiple canvases
+
+commit 47e00feb87bcdf57305e5b7ff6a08aaad751678a
+Author: xiaoiver <pyqiverson@gmail.com>
+Date:   Sun Mar 22 16:50:39 2026 +0800
+
+    fix: fillWeight in rough shapes
+
+commit 411a7c8e7c89af186994e6732dab3d99646efb5e
+Author: xiaoiver <pyqiverson@gmail.com>
+Date:   Sun Mar 22 16:39:35 2026 +0800
+
+    fix: parse mermaid in multiple canvases
+
+commit 75193761c935c6d1ba193b042ea6f8063aa5eaba
+Merge: 39701f23 289e05b9
+Author: xiaoiver <pyqiverson@gmail.com>
+Date:   Sun Mar 22 09:10:22 2026 +0800
+
+    Merge pull request #143 from xiaoiver/dev
+    
+    chore: remove unused code in vue examples
+
+commit 289e05b98a2f3f322bd5eea1cc0dab54e3c3c5c2
+Author: xiaoiver <pyqiverson@gmail.com>
+Date:   Sun Mar 22 09:09:46 2026 +0800
+
+    chore: remove unused code in vue examples
+
+commit 39701f238bbd6509af35245c193a72bbb63ef720
+Merge: 49bfb2cb 570ebd42
+Author: xiaoiver <pyqiverson@gmail.com>
+Date:   Sun Mar 22 09:06:03 2026 +0800
+
+    Merge pull request #142 from xiaoiver/dev
+    
+    fix: export textbaseline correctly in svg
+
+commit 570ebd424fc1ec8d3c2f437593e113c1f76f749f
+Author: xiaoiver <pyqiverson@gmail.com>
+Date:   Sun Mar 22 08:15:34 2026 +0800
+
+    fix: export textbaseline correctly in svg
+
+commit 49bfb2cb056baef82d9e7bb3c340656ca7557282
+Merge: 38a4721b 1e1b8c55
+Author: xiaoiver <pyqiverson@gmail.com>
+Date:   Sat Mar 21 21:40:13 2026 +0800
+
+    Merge pull request #141 from xiaoiver/dev
+    
+    fix: render & compute bounds with text's lineHeight
+
+commit 1e1b8c5529930731b00d6339f17c28ae066c2dd0
+Author: xiaoiver <pyqiverson@gmail.com>
+Date:   Sat Mar 21 21:34:05 2026 +0800
+
+    fix: export letterSpacing in svg
+
+commit 19999b76189c805499f440cfd7af40a1e5b61e29
+Author: xiaoiver <pyqiverson@gmail.com>
+Date:   Sat Mar 21 17:26:22 2026 +0800
+
+    fix: render & compute bounds with text's lineHeight
+
+commit 38a4721bc28771b4e731b7735ddc4d1d4bd5b3c5
+Merge: 7d34d6a1 726ae48e
+Author: xiaoiver <pyqiverson@gmail.com>
+Date:   Sat Mar 21 09:25:31 2026 +0800
+
+    Merge pull request #138 from xiaoiver/dev
+    
+    fix: styling text-editor line-height
+
+commit 726ae48e7a1ddf4410eec985ab3d54a6df8552be
+Author: xiaoiver <pyqiverson@gmail.com>
+Date:   Fri Mar 20 23:02:20 2026 +0800
+
+    fix: render rough path with fillStyle correctly
+
+commit f6b2562b84e92f775967deeeb3460e2a7fd81ed0
+Author: xiaoiver <pyqiverson@gmail.com>
+Date:   Fri Mar 20 21:44:59 2026 +0800
+
+    fix: styling text-editor line-height
+
+commit 7d34d6a125f79868d243fa2b1e0dc595a96babf3
+Merge: 1fe25511 20eafa37
+Author: xiaoiver <pyqiverson@gmail.com>
+Date:   Fri Mar 20 21:25:02 2026 +0800
+
+    Merge pull request #137 from xiaoiver/dev
+    
+    feat: refactor vello renderer
+
+commit 20eafa378a801906cfadfa6afd9d9d16edc60317
+Author: xiaoiver <pyqiverson@gmail.com>
+Date:   Fri Mar 20 21:19:06 2026 +0800
+
+    chore: deps
+
+commit cf45d69e097f4c1974d23574c68847546fb8a77d
+Author: xiaoiver <pyqiverson@gmail.com>
+Date:   Fri Mar 20 21:08:49 2026 +0800
+
+    feat: refactor vello renderer
+
+commit cfd8efbf23cea7b681f6ef1cb1db08c76dec0bc4
+Author: xiaoiver <pyqiverson@gmail.com>
+Date:   Fri Mar 20 19:01:33 2026 +0800
+
+    feat: measure font metrics with parley
+
+commit 1fe25511470a1356e6c4b7b6cb90cd10bccd8160
+Merge: a368aea5 a845a96c
+Author: xiaoiver <pyqiverson@gmail.com>
+Date:   Thu Mar 19 23:36:20 2026 +0800
+
+    Merge pull request #135 from xiaoiver/dev
+    
+    feat: rough polyline & path with roughr
+
+commit a845a96c7ee9951fb30d699e0384ad5d6d7ae3e7
+Author: xiaoiver <pyqiverson@gmail.com>
+Date:   Thu Mar 19 23:30:09 2026 +0800
+
+    feat: rough polyline & path with roughr
+
+commit 6ab6057d730d16f52a8f9c59e4ce8a6892793c0c
+Author: xiaoiver <pyqiverson@gmail.com>
+Date:   Thu Mar 19 21:40:36 2026 +0800
+
+    feat: compute text bounds in rust
+
+commit a368aea5ba397d7881be295672881f5c1f7fdbb6
+Merge: c9bb2b70 c95e22d4
+Author: xiaoiver <pyqiverson@gmail.com>
+Date:   Thu Mar 19 16:40:09 2026 +0800
+
+    Merge pull request #134 from xiaoiver/dev
+    
+    feat: use kurbo to compute bounds & hit-testing
+
+commit c95e22d4cd08f69c6667a453fd9b9c8421cd60ac
+Author: xiaoiver <pyqiverson@gmail.com>
+Date:   Thu Mar 19 16:32:46 2026 +0800
+
+    feat: use kurbo to compute bounds & hit-testing
+
+commit c9bb2b70a48e87a934ad4d9d9f09590265f01ed0
+Merge: de9d12a1 f8cb0c34
+Author: xiaoiver <pyqiverson@gmail.com>
+Date:   Wed Mar 18 22:25:04 2026 +0800
+
+    Merge pull request #133 from xiaoiver/dev
+    
+    chore: security alerts deps
+
+commit f8cb0c3462dd8afeb271ebde8e5b0de6425cad6e
+Author: xiaoiver <pyqiverson@gmail.com>
+Date:   Wed Mar 18 22:20:08 2026 +0800
+
+    chore: security alerts deps
+
+commit de9d12a12a8e831f514c2150fe75d877a9e28765
+Merge: 27e13bdf dfc3a066
+Author: xiaoiver <pyqiverson@gmail.com>
+Date:   Wed Mar 18 22:11:53 2026 +0800
+
+    Merge pull request #131 from xiaoiver/feat-bindings
+    
+    fix: select & highlight locked node when triggering context menu
+
+commit dfc3a0664f004f63aa8d6e48ddbf92a7e5fe2af2
+Author: xiaoiver <pyqiverson@gmail.com>
+Date:   Wed Mar 18 22:11:42 2026 +0800
+
+    Potential fix for pull request finding
+    
+    Co-authored-by: Copilot Autofix powered by AI <175728472+Copilot@users.noreply.github.com>
+
+commit a86acdb92b8951d2f42b6a2ccdb4879c0467b854
+Author: xiaoiver <pyqiverson@gmail.com>
+Date:   Wed Mar 18 22:01:54 2026 +0800
+
+    fix: select & highlight locked node when triggering context menu
+
+commit 27e13bdf1c02fefc8a0b659b633105a0ebb16bda
+Merge: 6461307c 6abf8310
+Author: xiaoiver <pyqiverson@gmail.com>
+Date:   Wed Mar 18 21:51:32 2026 +0800
+
+    Merge pull request #130 from xiaoiver/feat-bindings
+    
+    fix: handle highlight correctly
+
+commit 6abf83101173062f0c62fe33ac39452510e34493
+Author: xiaoiver <pyqiverson@gmail.com>
+Date:   Wed Mar 18 21:47:26 2026 +0800
+
+    fix: handle highlight correctly
+
+commit 6461307cb9e41a81cc6e2ac70bf9f9889026be54
+Merge: 7f7742b0 d911e33d
+Author: xiaoiver <pyqiverson@gmail.com>
+Date:   Tue Mar 17 23:44:23 2026 +0800
+
+    Merge pull request #129 from xiaoiver/feat-bindings
+    
+    fix: text editor for child text
+
+commit d911e33d039b048cb7c8f11e8e8bce017c443d9b
+Author: xiaoiver <pyqiverson@gmail.com>
+Date:   Tue Mar 17 23:36:42 2026 +0800
+
+    fix: remove gl-matrix dep from text-editor
+
+commit 5dd89053561494b4f5432328e17a3df0a7becdd2
+Author: xiaoiver <pyqiverson@gmail.com>
+Date:   Tue Mar 17 23:19:57 2026 +0800
+
+    fix: text editor for child text
+
+commit 7f7742b091233f48728ede9a469ca91093045f0c
+Merge: a6e3dd9e ce307abb
+Author: xiaoiver <pyqiverson@gmail.com>
+Date:   Tue Mar 17 22:58:50 2026 +0800
+
+    Merge pull request #128 from xiaoiver/feat-bindings
+    
+    fix: apply stroke & size attenuation at the same time
+
+commit ce307abb81e41b4caf51118dc36513183a7b0f2e
+Author: xiaoiver <pyqiverson@gmail.com>
+Date:   Tue Mar 17 22:56:00 2026 +0800
+
+    fix: apply stroke & size attenuation at the same time
+
+commit 4291141b2446bd3fbea963a8b656fa123d2a8975
+Author: xiaoiver <pyqiverson@gmail.com>
+Date:   Tue Mar 17 22:17:34 2026 +0800
+
+    fix: avoid jitter when multiple snaps are equally close
+
+commit a6e3dd9e2d80a740a446872669764a746f7cd502
+Merge: 34d022c5 a8bde0ea
+Author: xiaoiver <pyqiverson@gmail.com>
+Date:   Tue Mar 17 22:01:50 2026 +0800
+
+    Merge pull request #127 from xiaoiver/feat-bindings
+    
+    fix: export text overflow in svg
+
+commit a8bde0eacb94af9bf764edf4c594bf95bd1217e1
+Author: xiaoiver <pyqiverson@gmail.com>
+Date:   Tue Mar 17 22:01:33 2026 +0800
+
+    chore: add test case for text-overflow
+
+commit 2da088fcc444dbe10410e3447ebc03a1128d0ee3
+Author: xiaoiver <pyqiverson@gmail.com>
+Date:   Tue Mar 17 21:56:22 2026 +0800
+
+    fix: export text overflow in svg
+
+commit 34d022c5087414bbee6b58201e94eac6fb5bdd96
+Merge: a31b864e 15345ef3
+Author: xiaoiver <pyqiverson@gmail.com>
+Date:   Tue Mar 17 20:54:05 2026 +0800
+
+    Merge pull request #126 from xiaoiver/feat-bindings
+    
+    fix: edit text with multiple lines
+
+commit 15345ef31282d092b1afb24717891a93932de556
+Author: xiaoiver <pyqiverson@gmail.com>
+Date:   Tue Mar 17 20:52:51 2026 +0800
+
+    fix: edit text with multiple lines #53
+
+commit 0d097c2159a967f9ba3dbfae04409ea9e6a59759
+Author: xiaoiver <pyqiverson@gmail.com>
+Date:   Tue Mar 17 17:07:56 2026 +0800
+
+    fix: multiple canvases in vello
+
+commit a31b864e50fa221e25de471d5a618f1d6655c862
+Merge: eb178348 18dcb6d2
+Author: xiaoiver <pyqiverson@gmail.com>
+Date:   Tue Mar 17 10:38:19 2026 +0800
+
+    Merge pull request #125 from xiaoiver/feat-bindings
+    
+    feat: add marker for line, polyline & path in vello
+
+commit 18dcb6d20e0b87c0f6e4832bf4a1e210d9c08fad
+Author: xiaoiver <pyqiverson@gmail.com>
+Date:   Tue Mar 17 10:34:55 2026 +0800
+
+    feat: add marker for line, polyline & path in vello
+
+commit eb178348b87ca404296d9fe20dc00d6cb598aa8f
+Merge: 1446cf29 47e3c5e6
+Author: xiaoiver <pyqiverson@gmail.com>
+Date:   Mon Mar 16 23:40:51 2026 +0800
+
+    Merge pull request #124 from xiaoiver/feat-bindings
+    
+    fix: diamond in mermaid plugin
+
+commit 47e3c5e61daabe814e635bbde2ab02609de71585
+Author: xiaoiver <pyqiverson@gmail.com>
+Date:   Mon Mar 16 23:31:31 2026 +0800
+
+    fix: diamond in mermaid plugin
+
+commit 1446cf2951ceb3a00602b802e3eeacbf8bd624ef
+Merge: 20cc5aab 71d27dd3
+Author: xiaoiver <pyqiverson@gmail.com>
+Date:   Mon Mar 16 22:58:36 2026 +0800
+
+    Merge pull request #123 from xiaoiver/feat-bindings
+    
+    feat: compute text bounds with parley
+
+commit 71d27dd32799569f46f5dfdc820ecca9b2948755
+Author: xiaoiver <pyqiverson@gmail.com>
+Date:   Mon Mar 16 22:56:28 2026 +0800
+
+    feat: compute text bounds with parley
+
+commit 20cc5aab662c1d1e44c61eacabce0b3f518bcd40
+Merge: 23d230c7 8ced0d37
+Author: xiaoiver <pyqiverson@gmail.com>
+Date:   Mon Mar 16 18:15:12 2026 +0800
+
+    Merge pull request #122 from xiaoiver/feat-bindings
+    
+    fix: enhance perf for CJK fonts
+
+commit 8ced0d37cdd4800e8d0fdd62a7947d6508b0c74f
+Author: xiaoiver <pyqiverson@gmail.com>
+Date:   Mon Mar 16 18:14:09 2026 +0800
+
+    fix: enhance perf for CJK fonts
+
+commit 23d230c74d5168d2038715c579f59e35e543a52f
+Merge: 79c66d28 ba8d2ec0
+Author: xiaoiver <pyqiverson@gmail.com>
+Date:   Sun Mar 15 18:42:35 2026 +0800
+
+    Merge pull request #121 from xiaoiver/feat-bindings
+    
+    fix: export gradients correctly to svg
+
+commit ba8d2ec00bdcd670e086140a84b6504725967b9d
+Author: xiaoiver <pyqiverson@gmail.com>
+Date:   Sun Mar 15 18:41:50 2026 +0800
+
+    fix: export gradients correctly to svg
+
+commit 79c66d287af34fa4df884fb1bba9641a1e3fe125
+Merge: a0ec9396 3adbbe1c
+Author: xiaoiver <pyqiverson@gmail.com>
+Date:   Sun Mar 15 18:34:06 2026 +0800
+
+    Merge pull request #120 from xiaoiver/feat-bindings
+    
+    chore: update vello docs in lesson35
+
+commit 3adbbe1cedd286cf950f4452c849d7b550036f17
+Author: xiaoiver <pyqiverson@gmail.com>
+Date:   Sun Mar 15 18:14:36 2026 +0800
+
+    chore: update vello docs in lesson35
+
+commit a0ec939612bc1579472525a24352ade8414621a8
+Merge: 23d1ac81 cc3d498b
+Author: xiaoiver <pyqiverson@gmail.com>
+Date:   Sat Mar 14 17:04:11 2026 +0800
+
+    Merge pull request #119 from xiaoiver/feat-bindings
+    
+    chore: add lesson 35 tile-based rendering
+
+commit cc3d498baeae1dd8952dafe8f81b3881a6168a55
+Author: xiaoiver <pyqiverson@gmail.com>
+Date:   Sat Mar 14 16:59:19 2026 +0800
+
+    chore: add lesson 35 tile-based rendering
+
+commit 23d1ac810b893a42f52c9a169ebcd47ead103e72
+Merge: 86bcc9d8 76b107e3
+Author: xiaoiver <pyqiverson@gmail.com>
+Date:   Sat Mar 14 16:51:31 2026 +0800
+
+    Merge pull request #118 from xiaoiver/feat-bindings
+    
+    feat: use vello to render text & rough shapes
+
+commit 76b107e326c38fbdcd43cc020e1a1131bf5d00f0
+Author: xiaoiver <pyqiverson@gmail.com>
+Date:   Sat Mar 14 16:41:06 2026 +0800
+
+    feat: use vello to render text & rough shapes
+
+commit 86bcc9d8518b3dde6319ed33e2de6ed588db5be0
+Merge: a250bbdd 5be57069
+Author: xiaoiver <pyqiverson@gmail.com>
+Date:   Fri Mar 13 19:18:46 2026 +0800
+
+    Merge pull request #117 from xiaoiver/feat-bindings
+    
+    feat: render rough shapes in vello
+
+commit 5be570699115f0099f713c5f6ff5550ea51f6dd2
+Author: xiaoiver <pyqiverson@gmail.com>
+Date:   Fri Mar 13 18:10:27 2026 +0800
+
+    feat: render rough shapes in vello
