@@ -24,30 +24,29 @@ import {
   system,
   API,
   Name,
-  Ellipse,
+  Rect,
+  DropShadow,
   ZIndex,
   ComputeZIndex,
-  Pen,
-  RectSerializedNode,
   Selected,
-  Rect,
-  Highlighted,
-  Locked,
+  Pen,
+  Ellipse,
+  EllipseSerializedNode,
+  GSerializedNode,
+  Group,
 } from '../../packages/ecs/src';
 import { NodeJSAdapter, sleep } from '../utils';
 
 DOMAdapter.set(NodeJSAdapter);
 
-describe('Locked', () => {
-  it('should deselect & unhighlight selected node when lock it', async () => {
+describe('Transformer', () => {
+  it('should render transformer for group correctly', async () => {
     const app = new App();
 
-    let api: API | undefined;
-    let $canvas: HTMLCanvasElement | undefined;
+    let $canvas: HTMLCanvasElement;
     let canvasEntity: Entity | undefined;
     let cameraEntity: Entity | undefined;
     let entity: Entity | undefined;
-    let node: RectSerializedNode | undefined;
 
     const MyPlugin: Plugin = () => {
       system(PreStartUp)(StartUpSystem);
@@ -73,19 +72,18 @@ describe('Locked', () => {
             Rect,
             Visibility,
             Name,
+            DropShadow,
             ZIndex,
             Selected,
             Ellipse,
-            Highlighted,
-            Selected,
-            Locked,
+            Group
           ).write,
       );
 
       initialize(): void {
         $canvas = DOMAdapter.get().createCanvas(200, 200) as HTMLCanvasElement;
 
-        api = new API(new DefaultStateManagement(), this.commands);
+        const api = new API(new DefaultStateManagement(), this.commands);
 
         canvasEntity = api.createCanvas({
           element: $canvas,
@@ -98,28 +96,48 @@ describe('Locked', () => {
           zoom: 1,
         });
 
-        node = {
-          id: '1',
-          type: 'rect',
+        const group: GSerializedNode = {
+          id: 'g-1',
+          type: 'g',
+          zIndex: 0,
+        };
+
+        const node1: EllipseSerializedNode = {
+          id: 'g-1-1',
+          parentId: 'g-1',
+          type: 'ellipse',
           stroke: 'black',
           strokeWidth: 10,
           fill: 'red',
           visibility: 'visible',
           x: 50,
           y: 50,
-          width: 100,
-          height: 100,
+          width: 50,
+          height: 50,
+          zIndex: 0,
+        };
+        const node2: EllipseSerializedNode = {
+          id: 'g-1-2',
+          parentId: 'g-1',
+          type: 'ellipse',
+          stroke: 'black',
+          strokeWidth: 10,
+          fill: 'red',
+          visibility: 'visible',
+          x: 100,
+          y: 100,
+          width: 50,
+          height: 50,
           zIndex: 0,
         };
         api.setAppState({
           penbarSelected: Pen.SELECT,
         });
-        api.updateNodes([node]);
-        api.selectNodes([node]);
-        api.highlightNodes([node]);
+        api.updateNodes([group, node1, node2]);
+        api.selectNodes([group]);
 
         entity = api
-          .getEntity(node)
+          .getEntity(group)
           ?.hold();
       }
     }
@@ -130,16 +148,22 @@ describe('Locked', () => {
 
     await sleep(300);
 
-    api?.runAtNextTick(() => {
-      api?.updateNode(node!, { locked: true });
-    });
+    if (canvasEntity && cameraEntity && entity) {
+      const canvas = canvasEntity.read(Canvas);
+      expect(canvas.devicePixelRatio).toBe(1);
+      expect(canvas.width).toBe(200);
+      expect(canvas.height).toBe(200);
+      expect(canvas.renderer).toBe('webgl');
+      expect(canvas.cameras).toHaveLength(1);
 
-    await sleep(300);
+      const camera = cameraEntity.read(Camera);
+      expect(camera.canvas.isSame(canvasEntity)).toBeTruthy();
+    }
 
     const dir = `${__dirname}/snapshots`;
     await expect($canvas!.getContext('webgl1')).toMatchWebGLSnapshot(
       dir,
-      'locked-deselect',
+      'transformer-group',
     );
 
     await app.exit();

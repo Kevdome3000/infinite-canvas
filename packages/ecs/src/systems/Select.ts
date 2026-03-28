@@ -12,6 +12,7 @@ import {
   FillSolid,
   FractionalIndex,
   GlobalTransform,
+  Group,
   Highlighted,
   Input,
   InputPoint,
@@ -108,6 +109,7 @@ export interface SelectOBB {
   activeSegmentMidpointIndex?: number;
   nodes: SerializedNode[];
 
+  /** 与 `ComputedBounds.selectionOBB` 一致，供变换器 / resize 数学使用 */
   obb: {
     x: number;
     y: number;
@@ -178,6 +180,7 @@ export class Select extends System {
             FillSolid,
             Opacity,
             Stroke,
+            Group,
             HTML,
             Embed,
             Rect,
@@ -219,6 +222,29 @@ export class Select extends System {
     const entities = api.elementsFromPoint({ x: wx, y: wy });
 
     return entities.find(selector);
+  }
+
+  /**
+   * Hover hit targets are often leaves; for hierarchy, highlight the outermost group
+   * (last ancestor with {@link Parent} before the camera) instead of the leaf.
+   */
+  private resolveHighlightEntityFromHit(hit: Entity, camera: Entity): Entity {
+    let outermostGroup: Entity | undefined;
+    let current = hit;
+    for (; ;) {
+      if (!current.has(Children)) {
+        break;
+      }
+      const parent = current.read(Children).parent;
+      if (parent === camera || parent.has(Camera)) {
+        break;
+      }
+      if (parent.has(Parent)) {
+        outermostGroup = parent;
+      }
+      current = parent;
+    }
+    return outermostGroup ?? hit;
   }
 
   private handleSelectedMoving(
@@ -510,13 +536,13 @@ export class Select extends System {
         if (lockAspectRatio) {
           const comparePoint = centeredScaling
             ? {
-                x: obb.width / 2,
-                y: obb.height / 2,
-              }
+              x: obb.width / 2,
+              y: obb.height / 2,
+            }
             : {
-                x: brAnchor.read(Circle).cx,
-                y: brAnchor.read(Circle).cy,
-              };
+              x: brAnchor.read(Circle).cx,
+              y: brAnchor.read(Circle).cy,
+            };
           newHypotenuse = Math.sqrt(
             Math.pow(comparePoint.x - x, 2) + Math.pow(comparePoint.y - y, 2),
           );
@@ -534,13 +560,13 @@ export class Select extends System {
         if (lockAspectRatio) {
           const comparePoint = centeredScaling
             ? {
-                x: obb.width / 2,
-                y: obb.height / 2,
-              }
+              x: obb.width / 2,
+              y: obb.height / 2,
+            }
             : {
-                x: blAnchor.read(Circle).cx,
-                y: blAnchor.read(Circle).cy,
-              };
+              x: blAnchor.read(Circle).cx,
+              y: blAnchor.read(Circle).cy,
+            };
 
           newHypotenuse = Math.sqrt(
             Math.pow(x - comparePoint.x, 2) + Math.pow(comparePoint.y - y, 2),
@@ -562,13 +588,13 @@ export class Select extends System {
         if (lockAspectRatio) {
           const comparePoint = centeredScaling
             ? {
-                x: obb.width / 2,
-                y: obb.height / 2,
-              }
+              x: obb.width / 2,
+              y: obb.height / 2,
+            }
             : {
-                x: trAnchor.read(Circle).cx,
-                y: trAnchor.read(Circle).cy,
-              };
+              x: trAnchor.read(Circle).cx,
+              y: trAnchor.read(Circle).cy,
+            };
 
           newHypotenuse = Math.sqrt(
             Math.pow(comparePoint.x - x, 2) + Math.pow(y - comparePoint.y, 2),
@@ -589,13 +615,13 @@ export class Select extends System {
         if (lockAspectRatio) {
           const comparePoint = centeredScaling
             ? {
-                x: obb.width / 2,
-                y: obb.height / 2,
-              }
+              x: obb.width / 2,
+              y: obb.height / 2,
+            }
             : {
-                x: tlAnchor.read(Circle).cx,
-                y: tlAnchor.read(Circle).cy,
-              };
+              x: tlAnchor.read(Circle).cx,
+              y: tlAnchor.read(Circle).cy,
+            };
 
           newHypotenuse = Math.sqrt(
             Math.pow(x - comparePoint.x, 2) + Math.pow(y - comparePoint.y, 2),
@@ -1096,12 +1122,23 @@ export class Select extends System {
         } else if (selection.mode === SelectionMode.READY_TO_SELECT) {
           selection.mode = SelectionMode.SELECT;
         } else if (selection.mode === SelectionMode.READY_TO_MOVE) {
-          if (layersCropping.length > 0) {
-            cursor.value = 'move';
+          const toSelect = this.getTopmostEntity(api, x, y, (e) => !e.has(UI));
+          const targetNode = toSelect ? api.getNodeByEntity(toSelect) : undefined;
+          const selectedIds = api.getAppState().layersSelected;
+          const hitUnselectedTarget =
+            !!targetNode && !selectedIds.includes(targetNode.id);
+
+          // Prioritize tap-to-select when clicking another shape.
+          if (hitUnselectedTarget || input.shiftKey) {
+            selection.mode = SelectionMode.SELECT;
           } else {
-            cursor.value = 'grab';
+            if (layersCropping.length > 0) {
+              cursor.value = 'move';
+            } else {
+              cursor.value = 'grab';
+            }
+            selection.mode = SelectionMode.MOVE;
           }
-          selection.mode = SelectionMode.MOVE;
         } else if (
           selection.mode === SelectionMode.READY_TO_RESIZE ||
           selection.mode === SelectionMode.READY_TO_ROTATE
@@ -1120,7 +1157,10 @@ export class Select extends System {
           selection.mode = SelectionMode.MOVE_CONTROL_POINT;
         }
 
-        if (selection.mode === SelectionMode.SELECT) {
+        if (
+          selection.mode === SelectionMode.SELECT ||
+          selection.mode === SelectionMode.READY_TO_BRUSH
+        ) {
           const toSelect = this.getTopmostEntity(api, x, y, (e) => !e.has(UI));
           if (toSelect) {
             const selected = api.getNodeByEntity(toSelect);
@@ -1134,6 +1174,11 @@ export class Select extends System {
               } else {
                 api.selectNodes([selected], input.shiftKey); // single or multi select
               }
+            }
+            // Touch devices do not have hover, so keep click-to-select working
+            // by promoting READY_TO_BRUSH to SELECT when a hit target exists.
+            if (selection.mode === SelectionMode.READY_TO_BRUSH) {
+              selection.mode = SelectionMode.SELECT;
             }
           }
 
@@ -1153,9 +1198,10 @@ export class Select extends System {
           selection.pointerMoveViewportX = x;
           selection.pointerMoveViewportY = y;
 
-          // Highlight the topmost non-ui element
+          // Highlight the topmost non-ui element (prefer its parent group if any)
           toHighlight = this.getTopmostEntity(api, x, y, (e) => !e.has(UI));
           if (toHighlight) {
+            toHighlight = this.resolveHighlightEntityFromHit(toHighlight, camera);
             if (
               selection.mode !== SelectionMode.BRUSH &&
               selection.mode !== SelectionMode.MOVE
@@ -1409,12 +1455,16 @@ export class Select extends System {
         y: y + height,
       });
       const selecteds = api
+        // locked layers should not be selected
         .elementsFromBBox(minX, minY, maxX, maxY)
         // Only select direct children of the camera
-        .filter((e) => !e.has(UI) && e.read(Children).parent.has(Camera))
-        .map((e) => api.getNodeByEntity(e))
-        // TODO: locked layers should not be selected
-        .filter((node): node is SerializedNode => node !== undefined);
+        .filter(
+          (e) =>
+            !e.has(UI) &&
+            e.has(Children) &&
+            e.read(Children).parent.has(Camera),
+        )
+        .map((e) => api.getNodeByEntity(e));
       api.selectNodes(selecteds);
       if (needHighlight) {
         api.highlightNodes(selecteds);
@@ -1496,10 +1546,35 @@ export class Select extends System {
       mat3.invert(mat3.create(), oldTr),
     );
 
-    selecteds.forEach((selected) => {
+    const entitiesToUpdate: Entity[] = [];
+    const visited = new Set<Entity>();
+    const collectSelectedAndDescendants = (entity: Entity) => {
+      if (visited.has(entity)) {
+        return;
+      }
+      visited.add(entity);
+      // Group 的 selection OBB 是世界 AABB（min 角 + 尺寸），与 Transform 原点不一致；
+      // 对 Group 根套用 Konva 式 delta 会错。只把变换下发到子节点（与多选 resize 一致）。
+      if (!entity.has(Group)) {
+        entitiesToUpdate.push(entity);
+      }
+      if (entity.has(Parent)) {
+        const { children } = entity.read(Parent);
+        children.forEach((child) => collectSelectedAndDescendants(child));
+      }
+    };
+    selecteds.forEach((selected) => collectSelectedAndDescendants(selected));
+
+    entitiesToUpdate.forEach((selected) => {
       const node = api.getNodeByEntity(selected);
+      if (!node) {
+        return;
+      }
       if (!node) return; // Skip if entity not in node map
       const oldNode = selection.nodes.find((n) => n.id === node.id);
+      if (!oldNode) {
+        return;
+      }
       // for each node we have the same [delta transform]
       // the equations is
       // [delta transform] * [parent transform] * [old local transform] = [parent transform] * [new local transform]
@@ -1643,7 +1718,7 @@ export class Select extends System {
         });
         const distance = Math.sqrt(
           Math.pow(points[0][0] - points[1][0], 2) +
-            Math.pow(points[0][1] - points[1][1], 2),
+          Math.pow(points[0][1] - points[1][1], 2),
         );
         const from = [fromX, fromY] as [number, number];
         const to = [toX, toY] as [number, number];
