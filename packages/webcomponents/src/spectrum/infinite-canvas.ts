@@ -195,7 +195,11 @@ export class InfiniteCanvas extends LitElement {
     super.disconnectedCallback();
     this.resizeObserver?.unobserve(this);
 
-    this.apiProvider.value?.destroy();
+    try {
+      this.apiProvider.value?.destroy();
+    } catch (err) {
+      console.warn('[ic-spectrum-canvas] destroy() failed during disconnect:', err);
+    }
   }
 
   private handleResize(entries: ResizeObserverEntry[]) {
