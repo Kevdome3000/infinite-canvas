@@ -876,6 +876,7 @@ export const mutateElement = <TElement extends Mutable<SerializedNode>>(
   }
   if ('roughFillStyle' in updates) {
     safeAddComponent(entity, Rough, { fillStyle: roughFillStyle });
+    safeAddComponent(entity, MaterialDirty);
   }
   if ('roughFillWeight' in updates) {
     safeAddComponent(entity, Rough, { fillWeight: roughFillWeight });
@@ -949,6 +950,12 @@ export const mutateElement = <TElement extends Mutable<SerializedNode>>(
   }
   if ('fontSize' in updates) {
     entity.write(Text).fontSize = fontSize;
+  }
+  if ('wordWrapWidth' in updates) {
+    const w = (updates as { wordWrapWidth?: number }).wordWrapWidth;
+    if (w !== undefined) {
+      entity.write(Text).wordWrapWidth = w;
+    }
   }
   if ('fontWeight' in updates) {
     entity.write(Text).fontWeight = fontWeight;

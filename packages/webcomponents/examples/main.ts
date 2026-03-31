@@ -112,19 +112,23 @@ async function renderCanvasList() {
   `,
     )
     .join('');
-
 // const res = await fetch('/maslow-hierarchy.svg');
 // const res = await fetch('/mindmap.svg');
 // const res = await fetch('/test-camera.svg');
 // const res = await fetch(
 //   '/62f5208ddbc232ac973f53d9cfd91ba463c50b8bfd846349247709fe4a7a9053.svg',
 // );
-// const svg = await res.text();
+const svg = await res.text();
 // TODO: extract semantic groups inside comments
-// const $container = document.createElement('div');
-// $container.innerHTML = svg;
-// const $svg = $container.children[0] as SVGSVGElement;
+const $container = document.createElement('div');
+$container.innerHTML = svg;
+const $svg = $container.children[0] as SVGSVGElement;
 
+// const camera = svgSvgElementToComputedCamera($svg);
+const nodes = svgElementsToSerializedNodes(
+  Array.from($svg.children) as SVGElement[],
+);
+nodes[0].x = 500;
   // Add click handlers to canvas cards
   container.querySelectorAll('.canvas-card').forEach((card) => {
     card.addEventListener('click', () => {
@@ -221,9 +225,7 @@ async function openCanvas(id?: string) {
         api.runAtNextTick(() => {
           // Restore app state first (camera position, UI settings)
           api.setAppState({
-    cameraX: -200,
-    cameraY: -200,
-    cameraZoom: 0.5,
+    cameraZoom: 1,
             ...api.getAppState(),
             ...savedData.appState,
           });
@@ -290,7 +292,7 @@ async function openCanvas(id?: string) {
       ],
     penbarVisible: true,
     taskbarVisible: true,
-      checkboardStyle: CheckboardStyle.GRID,
+    // checkboardStyle: CheckboardStyle.GRID,
       snapToPixelGridEnabled: true,
     snapToPixelGridSize: 1,
       // snapToPixelGridEnabled: false,
@@ -298,12 +300,11 @@ async function openCanvas(id?: string) {
     // snapToObjectsEnabled: true,
       // filter: 'brightness(0.8) noise(0.1)',
       // penbarDrawSizeLabelVisible: true,
-      // checkboardStyle: CheckboardStyle.NONE,
-      // topbarVisible: false,
+    // penbarSelected: Pen.SELECT,
       // contextBarVisible: false,
       // penbarVisible: false,
       // taskbarVisible: false,
-      // rotateEnabled: false,
+    rotateEnabled: true,
       flipEnabled: false,
       // filter: 'noise(0.5)',
     // layersLassoing: ['parent'],
@@ -331,62 +332,207 @@ async function openCanvas(id?: string) {
     hitStrokeWidth: 10,
   };
 
-  const node2 = {
-    id: 'rect-2',
-    parentId: 'g-1',
-    type: 'rect',
-    x: 100,
-    y: 300,
-    width: 100,
-    height: 100,
-    fill: 'blue',
-    zIndex: 2,
-  };
-
   const node3 = {
     id: 'rect-3',
-    parentId: 'g-2',
-    type: 'rect',
+    // parentId: 'g-2',
+    type: 'rough-ellipse',
     x: 300,
-    y: 300,
+    y: 500,
     width: 100,
     height: 100,
     fill: 'green',
+    fillOpacity: 0.05,
+    roughFillStyle: 'watercolor',
+    // fill: '/stamp.png',
     zIndex: 3,
   }
 
   const node4 = {
     id: 'rect-4',
-    parentId: 'g-2',
-    type: 'rect',
-    x: 400,
-    y: 400,
-    width: 100,
-    height: 100,
+    // parentId: 'g-2',
+    type: 'rough-rect',
+    x: 100,
+    y: 100,
+    width: 200,
+    height: 200,
     fill: 'green',
+    fillOpacity: 0.05,
+    roughFillStyle: 'watercolor',
+    zIndex: 3,
+  }
+
+  const node5 = {
+    id: 'rect-5',
+    type: 'rough-path',
+    d: 'M 100 100 L 200 100 L 200 200 Z',
+    fill: 'green',
+    roughFillStyle: 'watercolor',
     zIndex: 3,
   }
 
   api.updateNodes([
-    g,
-    node1,
-    node2,
-    // g2,
+    // node1,
+    // ...nodes,
     // node3,
-    // node4,
+    // g2,
+    node3,
+    node4,
+    node5,
+    {
+      id: 'baseline-1',
+      type: 'line',
+      x1: 0,
+      y1: 50,
+      x2: 300,
+      y2: 50,
+      stroke: 'red',
+      strokeWidth: 1,
+      zIndex: 0,
+    },
+    {
+      id: 'text-1',
+      type: 'text',
+      fill: 'black',
+      content: 'Abcdefghijklmnop (top)',
+      anchorX: 50,
+      anchorY: 50,
+      fontSize: 16,
+      fontFamily: 'sans-serif',
+      textBaseline: 'top',
+      zIndex: 1,
+    },
+    {
+      id: 'baseline-2',
+      type: 'line',
+      x1: 0,
+      y1: 100,
+      x2: 300,
+      y2: 100,
+      stroke: 'red',
+      strokeWidth: 1,
+      zIndex: 3,
+    },
+    {
+      id: 'text-2',
+      type: 'text',
+      fill: 'black',
+      content: 'Abcdefghijklmnop (hanging)',
+      anchorX: 50,
+      anchorY: 100,
+      fontSize: 16,
+      fontFamily: 'sans-serif',
+      textBaseline: 'hanging',
+      zIndex: 4,
+    },
+    {
+      id: 'baseline-3',
+      type: 'line',
+      x1: 0,
+      y1: 150,
+      x2: 300,
+      y2: 150,
+      stroke: 'red',
+      strokeWidth: 1,
+      zIndex: 5,
+    },
+    {
+      id: 'text-3',
+      type: 'text',
+      fill: 'black',
+      content: 'Abcdefghijklmnop (middle)',
+      anchorX: 50,
+      anchorY: 150,
+      fontSize: 16,
+      fontFamily: 'sans-serif',
+      textBaseline: 'middle',
+      zIndex: 6,
+    },
+    {
+      id: 'baseline-4',
+      type: 'line',
+      x1: 0,
+      y1: 200,
+      x2: 300,
+      y2: 200,
+      stroke: 'red',
+      strokeWidth: 1,
+      zIndex: 5,
+    },
+    {
+      id: 'text-4',
+      type: 'text',
+      fill: 'black',
+      content: 'Abcdefghijklmnop (alphabetic)',
+      anchorX: 50,
+      anchorY: 200,
+      fontSize: 16,
+      fontFamily: 'sans-serif',
+      textBaseline: 'alphabetic',
+      zIndex: 6,
+    },
+    {
+      id: 'baseline-5',
+      type: 'line',
+      x1: 0,
+      y1: 250,
+      x2: 300,
+      y2: 250,
+      stroke: 'red',
+      strokeWidth: 1,
+      zIndex: 5,
+    },
+    {
+      id: 'text-5',
+      type: 'text',
+      fill: 'black',
+      content: 'Abcdefghijklmnop (ideographic)',
+      anchorX: 50,
+      anchorY: 250,
+      fontSize: 16,
+      fontFamily: 'sans-serif',
+      textBaseline: 'ideographic',
+      zIndex: 6,
+    },
+    {
+      id: 'baseline-6',
+      type: 'line',
+      x1: 0,
+      y1: 300,
+      x2: 300,
+      y2: 300,
+      stroke: 'red',
+      strokeWidth: 1,
+      zIndex: 5,
+    },
+    {
+      id: 'text-6',
+      type: 'text',
+      fill: 'black',
+      content: 'Abcdefghijklmnop (bottom)',
+      anchorX: 50,
+      anchorY: 300,
+      fontSize: 16,
+      fontFamily: 'Gaegu',
+      textBaseline: 'bottom',
+      wordWrap: true,
+      wordWrapWidth: 30,
+      maxLines: 3,
+      textOverflow: 'ellipsis',
+      zIndex: 6,
+    },
   ]);
-  api.selectNodes([node1]);
-  api.record();
+  // api.selectNodes([node1]);
+  // api.record();
 
     isLoading = false;
   });
 
-// const VelloRendererPlugin = RendererPlugin.configure({
-//   setupDeviceSystemCtor: InitVello,
-//   rendererSystemCtor: VelloPipeline,
-// });
-// DefaultPlugins.splice(DefaultPlugins.indexOf(DefaultRendererPlugin), 1, VelloRendererPlugin);
-// registerFont('/Gaegu-Regular.ttf');
+const VelloRendererPlugin = RendererPlugin.configure({
+  setupDeviceSystemCtor: InitVello,
+  rendererSystemCtor: VelloPipeline,
+});
+DefaultPlugins.splice(DefaultPlugins.indexOf(DefaultRendererPlugin), 1, VelloRendererPlugin);
+registerFont('/Gaegu-Regular.ttf');
 // registerFont('/NotoSansCJKsc-VF.ttf');
 // registerFont('/NotoSans-Regular.ttf');
 // registerFont('/NotoSans-Bold.ttf');

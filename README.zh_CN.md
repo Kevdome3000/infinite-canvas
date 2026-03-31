@@ -184,10 +184,11 @@ pnpm run dev
     -   正确处理路径中的孔洞
     -   支持 `fillRule` 属性
 -   实现一些手绘风格图形
+-   实现水彩效果
 
-|                Path and rough shapes                 |                 Fill rule                  |
-| :--------------------------------------------------: | :----------------------------------------: |
-| ![Path and rough shapes](./screenshots/lesson13.png) | ![Fill rule](./screenshots/lesson13-2.png) |
+|                Path and rough shapes                 |                 Fill rule                  |                 Watercolor                  |
+| :--------------------------------------------------: | :----------------------------------------: | :-----------------------------------------: |
+| ![Path and rough shapes](./screenshots/lesson13.png) | ![Fill rule](./screenshots/lesson13-2.png) | ![watercolor](./screenshots/watercolor.png) |
 
 ## 课程 14 - 画布模式 [🔗](https://infinitecanvas.cc/zh/guide/lesson-014)
 
@@ -438,6 +439,8 @@ pnpm run dev
 ## 课程 35 - 基于瓦片的渲染 [🔗](https://infinitecanvas.cc/zh/guide/lesson-035)
 
 -   通过 WASM 使用 vello 作为渲染引擎，体验基于 WebGPU compute shader 的瓦片渲染
+-   基于 parley 对文本进行 Shaping、BiDi 等处理
+-   基于 kurbo 对 Polyline、Path 进行更精确的包围盒与拾取计算
 
 [在线体验]: app.infinitecanvas.cc
 [infinitecanvas]: https://infinitecanvas.tools/

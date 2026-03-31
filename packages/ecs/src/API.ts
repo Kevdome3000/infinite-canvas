@@ -34,6 +34,8 @@ import {
   strokeOffset,
   strokeWidthForHitTest,
   cloneStrokeWithHitTestWidth,
+  cloneSerializedNodes,
+  decompose,
   transformPath,
 } from './utils';
 import type {
@@ -43,6 +45,7 @@ import type {
   PathSerializedNode,
   PolylineSerializedNode,
   SerializedNode,
+  TextSerializedNode,
 } from './types/serialized-node';
 import { v4 as uuidv4 } from 'uuid';
 import {
@@ -81,6 +84,7 @@ import {
   Rect,
   Selected,
   Stroke,
+  Text,
   Theme,
   ToBeDeleted,
   Transform,
@@ -96,6 +100,7 @@ import {
   maybeShiftPoints,
   sortByFractionalIndex,
   toSVGElement,
+  measureText,
   updateMatrix,
 } from './systems';
 import { DOMAdapter } from './environment';
@@ -215,12 +220,14 @@ export class API {
 
   setAppState(appState: Partial<AppState>) {
     const oldAppState = this.getAppState();
-    const { checkboardStyle, cameraZoom, cameraX, cameraY, cameraRotation } =
-      appState;
+    const { cameraZoom, cameraX, cameraY, cameraRotation } = appState;
 
-    if (checkboardStyle && checkboardStyle !== oldAppState.checkboardStyle) {
+    if (
+      Object.prototype.hasOwnProperty.call(appState, 'checkboardStyle') &&
+      appState.checkboardStyle !== oldAppState.checkboardStyle
+    ) {
       safeAddComponent(this.#canvas, Grid, {
-        checkboardStyle,
+        checkboardStyle: appState.checkboardStyle as CheckboardStyle,
       });
     }
 
@@ -266,7 +273,7 @@ export class API {
   }
 
   setNodes(nodes: SerializedNode[]) {
-    this.stateManagement.setNodes(JSON.parse(JSON.stringify(nodes)));
+    this.stateManagement.setNodes(nodes.slice());
   }
 
   getEntityCommands() {
@@ -621,13 +628,13 @@ export class API {
         }
       } else if (entity.has(Line)) {
         if (Line.hitTestProvider && hasStroke) {
-          const line = entity.read(Line);
+          const { x1, y1, x2, y2 } = entity.read(Line);
           const strokeForHit = cloneStrokeWithHitTestWidth(entity, stroke);
           isIntersected = Line.hitTestProvider({
-            x1: line.x1,
-            y1: line.y1,
-            x2: line.x2,
-            y2: line.y2,
+            x1,
+            y1,
+            x2,
+            y2,
             x,
             y,
             stroke: strokeForHit,
@@ -1369,6 +1376,55 @@ export class API {
             radius: point.radius,
           })),
         );
+      } else if (node.type === 'text') {
+        const textOld = (oldNode ?? node) as TextSerializedNode;
+        const metrics = measureText(textOld);
+        const { minX, minY, maxX, maxY } = Text.getGeometryBounds(
+          textOld,
+          metrics,
+        );
+
+        const corners: [number, number][] = [
+          [minX, minY],
+          [maxX, minY],
+          [maxX, maxY],
+          [minX, maxY],
+        ];
+        let nxMin = Infinity;
+        let nyMin = Infinity;
+        let nxMax = -Infinity;
+        let nyMax = -Infinity;
+        for (const [px, py] of corners) {
+          const [nx, ny] = vec2.transformMat3(vec2.create(), [px, py], delta);
+          nxMin = Math.min(nxMin, nx);
+          nyMin = Math.min(nyMin, ny);
+          nxMax = Math.max(nxMax, nx);
+          nyMax = Math.max(nyMax, ny);
+        }
+        const [naX, naY] = vec2.transformMat3(
+          vec2.create(),
+          [textOld.anchorX ?? 0, textOld.anchorY ?? 0],
+          delta,
+        );
+        (diff as TextSerializedNode).anchorX = naX - nxMin;
+        (diff as TextSerializedNode).anchorY = naY - nyMin;
+
+        const { scale } = decompose(delta);
+        const sX = Math.abs(scale[0]);
+        const sY = Math.abs(scale[1]);
+        const fs = textOld.fontSize;
+        const oldFontSize =
+          typeof fs === 'number'
+            ? fs
+            : typeof fs === 'string'
+              ? parseFloat(fs) || 12
+              : 12;
+        (diff as TextSerializedNode).fontSize = oldFontSize * sY;
+
+        const ww = textOld.wordWrapWidth ?? 0;
+        if (ww > 0) {
+          (diff as TextSerializedNode).wordWrapWidth = ww * sX;
+        }
       }
     }
 
@@ -1888,6 +1944,14 @@ export class API {
       }),
     );
     this.commands.execute();
+  }
+
+  /**
+   * 克隆一组序列化节点：为每个节点生成新 id，并在本批次内重写 parentId，保持原有父子关系。
+   * 不修改入参。若某节点的父 id 不在 `nodes` 中，则其 `parentId` 置为 undefined。
+   */
+  cloneNodes(nodes: readonly SerializedNode[]): SerializedNode[] {
+    return cloneSerializedNodes(nodes);
   }
 
   async copyToClipboard(

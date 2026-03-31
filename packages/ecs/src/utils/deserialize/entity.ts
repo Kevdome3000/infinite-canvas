@@ -86,7 +86,7 @@ import { deserializeBrushPoints, deserializePoints } from './points';
 import { Commands, EntityCommands } from '../../commands';
 import { isGradient } from '../gradient';
 import { isPattern } from '../pattern';
-import { computeBidi, measureText } from '../../systems';
+import { measureText } from '../../systems';
 import { DOMAdapter } from '../../environment';
 import { safeAddComponent } from '../../history';
 import { EdgeState, updateFixedTerminalPoints, updateFloatingTerminalPoints, updatePoints } from '../binding';
@@ -117,7 +117,6 @@ export function inferXYWidthHeight(node: SerializedNode) {
     } else if (type === 'path' || type === 'rough-path') {
       bounds = Path.getGeometryBounds(node);
     } else if (type === 'text') {
-      computeBidi(node.content);
       const metrics = measureText(node);
       bounds = Text.getGeometryBounds(node, metrics);
     } else if (type === 'brush') {
@@ -479,7 +478,6 @@ function layoutSerializedEdgeLabelChildren(
     delete (copy as Partial<TextSerializedNode>).y;
     delete (copy as Partial<TextSerializedNode>).width;
     delete (copy as Partial<TextSerializedNode>).height;
-    computeBidi(copy.content);
     inferXYWidthHeight(copy as SerializedNode);
     Object.assign(labelNode, {
       x: copy.x,
@@ -503,6 +501,7 @@ export async function loadImage(url: string, entity: Entity) {
 
 function serializeRough(attributes: RoughAttributes, entity: EntityCommands) {
   const {
+    roughSeed,
     roughRoughness,
     roughBowing,
     roughFillStyle,
@@ -523,6 +522,7 @@ function serializeRough(attributes: RoughAttributes, entity: EntityCommands) {
   } = attributes;
   entity.insert(
     new Rough({
+      seed: roughSeed,
       roughness: roughRoughness,
       bowing: roughBowing,
       fillStyle: roughFillStyle,

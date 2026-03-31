@@ -361,6 +361,10 @@ export const en = defineConfig({
                     text: 'Text editor',
                     link: 'text-editor',
                   },
+                  {
+                    text: 'Use Pretext to measure text',
+                    link: 'pretext',
+                  },
                 ],
               },
               {
@@ -511,6 +515,8 @@ export const en = defineConfig({
             link: 'lama-in-worker',
           },
           { text: 'Audio visualizer', link: 'audio-visualizer' },
+          { text: 'Use vello', link: 'vello' },
+          { text: 'Mermaid watercolor', link: 'mermaid-watercolor' },
         ],
       },
     },
