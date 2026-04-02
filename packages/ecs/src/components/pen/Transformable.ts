@@ -1,4 +1,5 @@
 import { Entity, field, Type } from '@lastolivegames/becsy';
+import { OBB, obbType } from '../math/OBB';
 import { Selected } from './Selected';
 
 export enum TransformableStatus {
@@ -42,6 +43,7 @@ export class Transformable {
   @field.ref declare trAnchor: Entity;
   @field.ref declare blAnchor: Entity;
   @field.ref declare brAnchor: Entity;
+  @field.ref declare centerAnchor: Entity;
 
   /**
    * Anchors in line or arrow
@@ -54,6 +56,10 @@ export class Transformable {
    */
   @field.object declare controlPoints: Entity[];
   @field.object declare segmentMidpoints: Entity[];
+  @field.object declare controlPointMeta: unknown[];
+  @field.object declare pathControlCommands: (string | number)[][];
+  /** Path 编辑时锚点与 handle 之间的虚线（本地 Line 实体） */
+  @field.object declare pathHandleLines: Entity[];
 
   /**
    * Selected list
@@ -80,6 +86,15 @@ export class Transformable {
    */
   @field({ type: Type.float32, default: -1 }) declare resizeWidth: number;
   @field({ type: Type.float32, default: -1 }) declare resizeHeight: number;
+  @field({ type: Type.float32, default: NaN }) declare rotatePivotX: number;
+  @field({ type: Type.float32, default: NaN }) declare rotatePivotY: number;
+  @field({ type: Type.boolean, default: false }) declare rotatePivotPinned: boolean;
+
+  /**
+   * 多选旋转时：{@link getOBB} 返回此快照而非实时 union AABB，避免拖拽中包围盒跳动导致枢轴与 transformer 框漂移。
+   */
+  @field({ type: Type.boolean, default: false }) declare transformerObbFrozenDuringRotate: boolean;
+  @field(obbType) declare gestureFrozenSelectionOBB: OBB;
 
   constructor(transformable?: Partial<Transformable>) {
     Object.assign(this, transformable);

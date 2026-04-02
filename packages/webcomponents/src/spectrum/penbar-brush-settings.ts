@@ -76,11 +76,14 @@ export class PenbarBrushSettings extends LitElement {
   }
 
   private handleStampChanged(e: Event & { target: HTMLInputElement }) {
-    const stamp = (e.target as any).value;
+    const activeStampSrc = (e.target as any).value as string;
     this.api.setAppState({
       penbarBrush: {
         ...this.api.getAppState().penbarBrush,
-        stamp,
+        stamps: this.api.getAppState().penbarBrush.stamps.map((stamp) => ({
+          ...stamp,
+          active: stamp.src === activeStampSrc,
+        })),
       },
     });
     this.api.record();
@@ -100,25 +103,28 @@ export class PenbarBrushSettings extends LitElement {
         @change=${this.handleStrokeColorChanged}
       >
         ${theme.colors[theme.mode].swatches.map(
-      (color) => html` <sp-swatch color=${color} size="s"></sp-swatch> `,
-    )}
+          (color) => html` <sp-swatch color=${color} size="s"></sp-swatch> `,
+        )}
       </sp-swatch-group>
 
       <div class="line">
         <sp-picker
           style="width: 100%; margin-bottom: 4px; margin-top: 4px;"
           label=${msg(str`Stamp`)}
-          value=${penbarBrush.stamp}
+          value=${penbarBrush.stamps.find((stamp) => stamp.active)?.src}
           @change=${this.handleStampChanged}
           id="font-family"
         >
           ${penbarBrush.stamps.map(
-      (stamp) =>
-        html`<sp-menu-item value=${stamp.src} style="display: flex; align-items: center; gap: 4px;">
+            (stamp) =>
+              html`<sp-menu-item
+                value=${stamp.src}
+                style="display: flex; align-items: center; gap: 4px;"
+              >
                 <img src=${stamp.src} style="width: 20px; height: 20px;" />
                 <span>${stamp.name}</span>
               </sp-menu-item>`,
-    )}
+          )}
         </sp-picker>
       </div>
       <div class="line" style="display: flex; align-items: center;">

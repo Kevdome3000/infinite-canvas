@@ -290,9 +290,9 @@ pnpm run dev
 -   使用方向键移动图形
 -   为直线、折线和 Path 提供交互式编辑能力
 
-|                Rotate anchor                 |                 Resize anchor                  |                 Line transformer                  |
-| :------------------------------------------: | :--------------------------------------------: | :-----------------------------------------------: |
-| ![Rotate anchor](./screenshots/lesson21.png) | ![Resize anchor](./screenshots/lesson21-2.png) | ![Line transformer](./screenshots/lesson21-3.gif) |
+|                Rotate anchor                 |                 Resize anchor                  |                 Line transformer                  |                    Path transformer                     |
+| :------------------------------------------: | :--------------------------------------------: | :-----------------------------------------------: | :-----------------------------------------------------: |
+| ![Rotate anchor](./screenshots/lesson21.png) | ![Resize anchor](./screenshots/lesson21-2.png) | ![Line transformer](./screenshots/lesson21-3.gif) | ![Path transformer](./screenshots/transformer-path.png) |
 
 ## 课程 22 - VectorNetwork [🔗](https://infinitecanvas.cc/zh/guide/lesson-022)
 
@@ -397,11 +397,13 @@ pnpm run dev
 -   连线边界算法，包括矩形和椭圆边界
 -   连线的路由规则
     -   Orth Connector
+    -   Segment Connector
+    -   Loop Connector
 -   支持更多连线样式：圆角、二次和三次贝塞尔曲线
 
-|                Bindings                 |                 Orth Connector                  |
-| :-------------------------------------: | :---------------------------------------------: |
-| ![bindings](./screenshots/lesson31.gif) | ![orth connector](./screenshots/lesson31-2.png) |
+|                Bindings                 |                   Orth Connector                    |                   Loop Connector                    |
+| :-------------------------------------: | :-------------------------------------------------: | :-------------------------------------------------: |
+| ![bindings](./screenshots/bindings.gif) | ![orth connector](./screenshots/orth-connector.png) | ![loop connector](./screenshots/loop-connector.png) |
 
 ## 课程 32 - 文本生成图表 [🔗](https://infinitecanvas.cc/zh/guide/lesson-032)
 
@@ -441,6 +443,10 @@ pnpm run dev
 -   通过 WASM 使用 vello 作为渲染引擎，体验基于 WebGPU compute shader 的瓦片渲染
 -   基于 parley 对文本进行 Shaping、BiDi 等处理
 -   基于 kurbo 对 Polyline、Path 进行更精确的包围盒与拾取计算
+
+|               Vello               |     |
+| :-------------------------------: | :-: |
+| ![vello](./screenshots/vello.png) |     |
 
 [在线体验]: app.infinitecanvas.cc
 [infinitecanvas]: https://infinitecanvas.tools/

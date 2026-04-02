@@ -54,6 +54,7 @@ import {
   ClipMode,
 } from '../components';
 import { getDescendants } from '../systems';
+import { syncEdgeBindingForEntity } from '../utils/binding/sync-edge-entity';
 
 export type SceneElementsMap = Map<SerializedNode['id'], SerializedNode>;
 
@@ -1101,6 +1102,26 @@ export const mutateElement = <TElement extends Mutable<SerializedNode>>(
 
   if ('version' in updates) {
     element.version = 0;
+  }
+
+  if (
+    ('fromId' in updates ||
+      'toId' in updates ||
+      'sourcePoint' in updates ||
+      'targetPoint' in updates ||
+      'exitX' in updates ||
+      'exitY' in updates ||
+      'exitPerimeter' in updates ||
+      'exitDx' in updates ||
+      'exitDy' in updates ||
+      'entryX' in updates ||
+      'entryY' in updates ||
+      'entryPerimeter' in updates ||
+      'entryDx' in updates ||
+      'entryDy' in updates) &&
+    (entity.has(Polyline) || entity.has(Line) || entity.has(Path))
+  ) {
+    syncEdgeBindingForEntity(api, entity, element);
   }
 
   // Object.assign(element, updates);

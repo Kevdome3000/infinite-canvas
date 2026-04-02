@@ -53,6 +53,10 @@ import {
   FillGradient,
   FillImage,
   FillPattern,
+  Binding,
+  Binded,
+  PartialBinding,
+  hasFullOrPartialEdgeBinding,
 } from '../components';
 import { Commands } from '../commands/Commands';
 import {
@@ -63,6 +67,7 @@ import {
   GapSnapLine,
   getCursor,
   getGridPoint,
+  hasTerminalPoint,
   isBrowser,
   snapDraggedElements,
   snapToGrid,
@@ -79,7 +84,15 @@ import { safeAddComponent } from '../history';
 import { updateComputedPoints } from './ComputePoints';
 import { DOMAdapter } from '../environment';
 import { hideLabel, initLabel, showLabel } from '..';
-import type { SerializedNode } from '../types/serialized-node';
+import type { EdgeSerializedNode, SerializedNode } from '../types/serialized-node';
+import { constraintAttrsFromCanvasPoint } from '../utils/binding/constraint-from-point';
+import {
+  collectPathControlHandles,
+  PathControlHandleMeta,
+  PathCommand,
+  setPathHandlePoint,
+  toPathData,
+} from '../utils/path-edit';
 
 const LASSO_CURSOR =
   'url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAACXBIWXMAAAsTAAALEwEAmpwYAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAOdEVYdFNvZnR3YXJlAEZpZ21hnrGWYwAABUFJREFUeAHtVltIXFcUPU6c0VGTWqdqRqtVTFrU+GFimgYpTUibQmm/JDZEKMF3rFjFigjFBi2I9ccPq6CIitEIvlFREYrioxYVK7UqPgk+2mh9j46jM/d07evVTjVpjTMN/eiGzT2ve/Y6+7HOYew/JLIjfQv2EuSMkXGhqqrq84iICG87O7vN/v7+VQnESwHCysrK4paXl3l1dTUnmZqaqiovL38PU3Jpyb8KRlZZWfmwra2No82dnZ0NsbGxfHR0lLAszszM1N69e9fjyD9mBWMbEBDgr9frdTY2NiIISQWA4S0tLYJWqyUwv9TV1cXcv3/fwwiEWYDYQM+vr6/PJCYmHgKQyWTcwsLioG/w9/cXAEYM0fT0dF1FRYW39L+MmSiUjA5JSUkPJicnRYNGho+BoRAhJHxjY4MjcT9iZhJ7KyurCzjcjpeX1zHjxn1ra2vBz8+Pz8/P89LS0ofMTGFQQB3b29sfZ2dnHzUuXL16lefk5FB1iCHY3NycbW5ufow5J6gtM4NQHM/FxMREUcLBsOHg5NeuXSObWwDXER0dnebu7h6M8UDoBagz+9MDJufCWejriO1UYGDgYczp5F1dXa1oU9L5IVRvKZVKV7Tl8fHx9ijf9Nra2gfmAGEJtS8sLMzr6+s7DAPxQUpKSjzaLtBXyHBoaOjZsbGxQvJMXl4en52d5SCzsOfse+IcoYWvent7v2PECQL5HzzxNtp2tCYyMlKNodXBwUGxEi5evMhHRkYoPwaRG492dnZ+wvzPILCSO3fueEp7n9gzSqiaOCEsLIxTtu/u7j7B2Hmau337ti0Zv3fvHlepVAYuiU6nM+Tn5/OgoCBuMBg4VVJubq4Ifnx8/NsXASFyQlxcXKRGoxFLDTHOI8/QJDZ7BHDkEcPe3h6Hp/Stra20TvDx8eGNjY0ioN7eXg7G5Lhf9LQPyjWIvUAoKM5eGRkZ35SUlJShTW5U4fRutDliTSfXwzNbICKdq6urnsbX1taeZGVllQYHB3+N5MwENk1RUZHg4eEhwCvr+Fqf1AuWuJKpvt3YfuKpoXKcIqqpqYm7ubnxpaWlaScnpxB4QQND2vDw8AysCZTL5f74kgZ4enp+QsTm4uIiIDc4wL1/zNBzAJDbVtg+OZHsQekUlxcWFlhmZiYDkL7FxcURlOMHMGqBuQ2Upxa5sEb/Q5VIwo25ublJqC9Kmq2srKglDwj/BIBJm+iN+jIQkOrmzZtiJyEhYRSfX3F6GZSGtNAtCSxVzw5Uh9M7Qxl4gqnVajkzQSyHh4frk5OTeUFBAe/u7i6XDnBGOpVxgonXdHp6+sfIE65QKMRquX79OoVGyU4pVnB9UmdnJ0cycdD1iGT8aGaLfXCFO2xqGhoaDIIg8IGBgR8wrIJas1PK2StXrlzGZrvFxcXiiUA+3z1rIZL1Bt1XUVFR3NHRkdbqfH19P8TUa8wEqibkKroBybi9vb0eScbBek9Rql9Aw9PS0j7b3t4eWF1d5UhQISQkxEAhwCPnK7ZfSSbdmjKpNL2GhoZ+hGvFVxLKkdfU1PCenh6RgFJTU8Xx+vp6YkE9CO1L9N9k++43+bZU4DHyBr4+uKy+P6Bheh0h08ULqaOjg94KHF6YvXTp0qeScQL+zIo7zUtGCRDOcL0tciLg1q1b7+KUNxwcHJQTExO/gZKf4oXdAwZsBi9oUAG/A9A6+2tJmwSAhPKB6Pqc1LaxtLSU6/cJgepfK32XodvMiHjMBYCESlAhAVBIfTK0C9VJXwLE/24TczwmLYy+B8Y4+19OKH8AGG0Nxm0lh+0AAAAASUVORK5CYII=") 0 4, pointer';
@@ -96,6 +109,8 @@ export enum SelectionMode {
   RESIZE = 'RESIZE',
   READY_TO_ROTATE = 'READY_TO_ROTATE',
   ROTATE = 'ROTATE',
+  READY_TO_MOVE_PIVOT = 'READY_TO_MOVE_PIVOT',
+  MOVE_PIVOT = 'MOVE_PIVOT',
   READY_TO_MOVE_CONTROL_POINT = 'READY_TO_MOVE_CONTROL_POINT',
   MOVE_CONTROL_POINT = 'MOVE_CONTROL_POINT',
   EDITING = 'EDITING',
@@ -138,6 +153,77 @@ export interface SelectOBB {
   rotateLastPointerAngle?: number;
   /** Total rotation applied during current rotate gesture (rad), relative to saved {@link SelectOBB.obb}. */
   rotateAccumulated?: number;
+  /** 旋转手势开始时锁定的枢轴（画布坐标）；避免拖拽中 mask 每帧更新导致 `transformer2Canvas(pivot, mask)` 漂移。 */
+  rotatePivotWorldFixed?: [number, number];
+  /** 与 {@link SelectOBB.obb} 手势快照一致的局部枢轴；避免 `updateRectMask` 每帧按新 union 宽高重写 rotatePivot。 */
+  rotatePivotLocalFixed?: [number, number];
+  selectedNodeIds?: string[];
+
+  /** 绑定边重接时最后一次指针位置（画布坐标） */
+  bindingRebindLastCanvas?: { x: number; y: number };
+}
+
+function isEdgeBindingRebindCandidate(
+  edgeEntity: Entity | undefined,
+  edgeNode: EdgeSerializedNode | undefined,
+): boolean {
+  if (!edgeEntity || !edgeNode) {
+    return false;
+  }
+  if (hasFullOrPartialEdgeBinding(edgeEntity)) {
+    return true;
+  }
+  return (
+    !!edgeNode.fromId ||
+    !!edgeNode.toId ||
+    hasTerminalPoint(edgeNode.sourcePoint) ||
+    hasTerminalPoint(edgeNode.targetPoint)
+  );
+}
+
+/**
+ * 控制点拖拽结束时：仅当拖的是边的起点/终点（非贝塞尔中间柄）才应对应 X1Y1/X2Y2 做绑定重接。
+ * 否则误用旧的 {@link SelectOBB.resizingAnchorName} 会把端点写到控制柄位置上。
+ */
+function getEdgeRebindAnchorForControlPointDrag(
+  edgeNode: SerializedNode,
+  activeControlPointIndex: number | undefined,
+  pathCommands: PathCommand[] | undefined,
+  polylinePointCount: number | undefined,
+): AnchorName.X1Y1 | AnchorName.X2Y2 | null {
+  if (activeControlPointIndex === undefined || activeControlPointIndex < 0) {
+    return null;
+  }
+  const t = edgeNode.type;
+  if (t === 'polyline' || t === 'rough-polyline') {
+    if (polylinePointCount == null || polylinePointCount < 2) {
+      return null;
+    }
+    if (activeControlPointIndex === 0) {
+      return AnchorName.X1Y1;
+    }
+    if (activeControlPointIndex === polylinePointCount - 1) {
+      return AnchorName.X2Y2;
+    }
+    return null;
+  }
+  if (t === 'path' || t === 'rough-path') {
+    if (!pathCommands?.length) {
+      return null;
+    }
+    const handles = collectPathControlHandles(pathCommands);
+    if (handles.length < 2) {
+      return null;
+    }
+    if (activeControlPointIndex === 0) {
+      return AnchorName.X1Y1;
+    }
+    if (activeControlPointIndex === handles.length - 1) {
+      return AnchorName.X2Y2;
+    }
+    return null;
+  }
+  return null;
 }
 
 /**
@@ -195,6 +281,9 @@ export class Select extends System {
             Path,
             Polyline,
             Line,
+            Binding,
+            Binded,
+            PartialBinding,
             Brush,
             Visibility,
             ZIndex,
@@ -358,27 +447,62 @@ export class Select extends System {
     ];
   }
 
-  /** 保持中心不动，仅改变旋转角时，反推新的 OBB 原点 (x, y)。 */
-  private alignObbOriginToFixedCenter(
+  /** 保持任意本地 pivot 的世界坐标不动，仅改变旋转角时，反推新的 OBB 原点 (x, y)。 */
+  private alignObbOriginToFixedPivot(
     obb: SelectOBB['obb'],
+    pivotLocalX: number,
+    pivotLocalY: number,
     centerX: number,
     centerY: number,
     newRotation: number,
   ) {
-    const lx = obb.width / 2;
-    const ly = obb.height / 2;
     const c = Math.cos(newRotation);
     const s = Math.sin(newRotation);
     const { scaleX, scaleY, width, height } = obb;
     return {
-      x: centerX - lx * scaleX * c + ly * scaleY * s,
-      y: centerY - lx * scaleX * s - ly * scaleY * c,
+      x: centerX - pivotLocalX * scaleX * c + pivotLocalY * scaleY * s,
+      y: centerY - pivotLocalX * scaleX * s - pivotLocalY * scaleY * c,
       width,
       height,
       rotation: newRotation,
       scaleX,
       scaleY,
     };
+  }
+
+  private getRotatePivotWorld(api: API, selection: SelectOBB): [number, number] {
+    const camera = api.getCamera();
+    const { mask, rotatePivotX, rotatePivotY } = camera.read(Transformable);
+    if (!Number.isNaN(rotatePivotX) && !Number.isNaN(rotatePivotY) && mask) {
+      const { x, y } = api.transformer2Canvas({ x: rotatePivotX, y: rotatePivotY }, mask);
+      return [x, y];
+    }
+    return this.obbWorldCenter(selection.obb);
+  }
+
+  /** 旋转拖拽全程使用指针按下时锁定的世界枢轴（见 {@link SelectOBB.rotatePivotWorldFixed}）。 */
+  private getRotatePivotWorldStable(api: API, selection: SelectOBB): [number, number] {
+    if (selection.rotatePivotWorldFixed) {
+      return selection.rotatePivotWorldFixed;
+    }
+    return this.getRotatePivotWorld(api, selection);
+  }
+
+  private handleRotatePivotMoving(api: API, canvasX: number, canvasY: number) {
+    const camera = api.getCamera();
+    const { mask, centerAnchor } = camera.read(Transformable);
+    if (!mask) {
+      return;
+    }
+    const { x, y } = api.canvas2Transformer({ x: canvasX, y: canvasY }, mask);
+    const tf = camera.write(Transformable);
+    tf.rotatePivotX = x;
+    tf.rotatePivotY = y;
+    tf.rotatePivotPinned = true;
+    if (centerAnchor?.has(Circle)) {
+      Object.assign(centerAnchor.write(Circle), { cx: x, cy: y });
+      updateGlobalTransform(centerAnchor);
+    }
   }
 
   private handleSelectedRotating(
@@ -404,7 +528,18 @@ export class Select extends System {
       }
     });
 
-    const [px, py] = this.obbWorldCenter(selection.obb);
+    const [px, py] = this.getRotatePivotWorldStable(api, selection);
+    const cameraTf = camera.read(Transformable);
+    const pivotLocalX = selection.rotatePivotLocalFixed
+      ? selection.rotatePivotLocalFixed[0]
+      : Number.isNaN(cameraTf.rotatePivotX)
+        ? selection.obb.width / 2
+        : cameraTf.rotatePivotX;
+    const pivotLocalY = selection.rotatePivotLocalFixed
+      ? selection.rotatePivotLocalFixed[1]
+      : Number.isNaN(cameraTf.rotatePivotY)
+        ? selection.obb.height / 2
+        : cameraTf.rotatePivotY;
     const cur = Math.atan2(canvasY - py, canvasX - px);
     let delta = cur - selection.rotateLastPointerAngle;
     delta = Math.atan2(Math.sin(delta), Math.cos(delta));
@@ -412,8 +547,10 @@ export class Select extends System {
     selection.rotateAccumulated += delta;
 
     const newRotation = selection.obb.rotation + selection.rotateAccumulated;
-    const newAttrs = this.alignObbOriginToFixedCenter(
+    const newAttrs = this.alignObbOriginToFixedPivot(
       selection.obb,
+      pivotLocalX,
+      pivotLocalY,
       px,
       py,
       newRotation,
@@ -447,6 +584,13 @@ export class Select extends System {
       resizingAnchorName === AnchorName.X2Y2
     ) {
       const { x1y1Anchor, x2y2Anchor, lineMask } = camera.read(Transformable);
+      const edgeNode = api.getNodeById(layersSelected[0]);
+      const edgeEntity = edgeNode ? api.getEntity(edgeNode) : undefined;
+      if (isEdgeBindingRebindCandidate(edgeEntity, edgeNode as EdgeSerializedNode)) {
+        selection.bindingRebindLastCanvas = { x: canvasX, y: canvasY };
+        this.applyBindingRebindHover(api, canvasX, canvasY);
+      }
+
       const { x, y } = api.canvas2Transformer(
         {
           x: canvasX,
@@ -530,7 +674,7 @@ export class Select extends System {
       );
 
       let anchor: Entity;
-      const anchorName = resizingAnchorName;
+      let anchorName = resizingAnchorName;
       if (anchorName === AnchorName.TOP_LEFT) {
         anchor = tlAnchor;
       } else if (anchorName === AnchorName.TOP_RIGHT) {
@@ -575,6 +719,19 @@ export class Select extends System {
       let newHypotenuse: number;
 
       if (anchorName === AnchorName.TOP_LEFT) {
+        if (flipEnabled && !lockAspectRatio) {
+          const { cx: oppositeX, cy: oppositeY } = brAnchor.read(Circle);
+          if (x > oppositeX && y <= oppositeY) {
+            anchorName = AnchorName.TOP_RIGHT;
+            selection.resizingAnchorName = AnchorName.TOP_RIGHT;
+          } else if (x <= oppositeX && y > oppositeY) {
+            anchorName = AnchorName.BOTTOM_LEFT;
+            selection.resizingAnchorName = AnchorName.BOTTOM_LEFT;
+          } else if (x > oppositeX && y > oppositeY) {
+            anchorName = AnchorName.BOTTOM_RIGHT;
+            selection.resizingAnchorName = AnchorName.BOTTOM_RIGHT;
+          }
+        }
         if (lockAspectRatio) {
           const comparePoint = centeredScaling
             ? {
@@ -599,6 +756,19 @@ export class Select extends System {
           });
         }
       } else if (anchorName === AnchorName.TOP_RIGHT) {
+        if (flipEnabled && !lockAspectRatio) {
+          const { cx: oppositeX, cy: oppositeY } = blAnchor.read(Circle);
+          if (x < oppositeX && y <= oppositeY) {
+            anchorName = AnchorName.TOP_LEFT;
+            selection.resizingAnchorName = AnchorName.TOP_LEFT;
+          } else if (x >= oppositeX && y > oppositeY) {
+            anchorName = AnchorName.BOTTOM_RIGHT;
+            selection.resizingAnchorName = AnchorName.BOTTOM_RIGHT;
+          } else if (x < oppositeX && y > oppositeY) {
+            anchorName = AnchorName.BOTTOM_LEFT;
+            selection.resizingAnchorName = AnchorName.BOTTOM_LEFT;
+          }
+        }
         if (lockAspectRatio) {
           const comparePoint = centeredScaling
             ? {
@@ -627,6 +797,19 @@ export class Select extends System {
         tlAnchor.write(Circle).cy = trAnchor.read(Circle).cy;
         brAnchor.write(Circle).cx = trAnchor.read(Circle).cx;
       } else if (anchorName === AnchorName.BOTTOM_LEFT) {
+        if (flipEnabled && !lockAspectRatio) {
+          const { cx: oppositeX, cy: oppositeY } = trAnchor.read(Circle);
+          if (x <= oppositeX && y < oppositeY) {
+            anchorName = AnchorName.TOP_LEFT;
+            selection.resizingAnchorName = AnchorName.TOP_LEFT;
+          } else if (x > oppositeX && y >= oppositeY) {
+            anchorName = AnchorName.BOTTOM_RIGHT;
+            selection.resizingAnchorName = AnchorName.BOTTOM_RIGHT;
+          } else if (x > oppositeX && y < oppositeY) {
+            anchorName = AnchorName.TOP_RIGHT;
+            selection.resizingAnchorName = AnchorName.TOP_RIGHT;
+          }
+        }
         if (lockAspectRatio) {
           const comparePoint = centeredScaling
             ? {
@@ -654,6 +837,19 @@ export class Select extends System {
         tlAnchor.write(Circle).cx = blAnchor.read(Circle).cx;
         brAnchor.write(Circle).cy = blAnchor.read(Circle).cy;
       } else if (anchorName === AnchorName.BOTTOM_RIGHT) {
+        if (flipEnabled && !lockAspectRatio) {
+          const { cx: oppositeX, cy: oppositeY } = tlAnchor.read(Circle);
+          if (x < oppositeX && y >= oppositeY) {
+            anchorName = AnchorName.BOTTOM_LEFT;
+            selection.resizingAnchorName = AnchorName.BOTTOM_LEFT;
+          } else if (x >= oppositeX && y < oppositeY) {
+            anchorName = AnchorName.TOP_RIGHT;
+            selection.resizingAnchorName = AnchorName.TOP_RIGHT;
+          } else if (x < oppositeX && y < oppositeY) {
+            anchorName = AnchorName.TOP_LEFT;
+            selection.resizingAnchorName = AnchorName.TOP_LEFT;
+          }
+        }
         if (lockAspectRatio) {
           const comparePoint = centeredScaling
             ? {
@@ -680,26 +876,57 @@ export class Select extends System {
         if (!flipEnabled) {
           tlAnchor.write(Circle).cy = Math.min(y, brAnchor.read(Circle).cy);
         } else {
+          const prevBrY = brAnchor.read(Circle).cy;
           tlAnchor.write(Circle).cy = y;
+          if (y > prevBrY) {
+            // Crossing over: dragged edge becomes bottom edge.
+            tlAnchor.write(Circle).cy = prevBrY;
+            brAnchor.write(Circle).cy = y;
+            anchorName = AnchorName.BOTTOM_CENTER;
+            selection.resizingAnchorName = AnchorName.BOTTOM_CENTER;
+          }
         }
-        tlAnchor.write(Circle).cy = y;
       } else if (anchorName === AnchorName.BOTTOM_CENTER) {
         if (!flipEnabled) {
           brAnchor.write(Circle).cy = Math.max(y, tlAnchor.read(Circle).cy);
         } else {
+          const prevTlY = tlAnchor.read(Circle).cy;
           brAnchor.write(Circle).cy = y;
+          if (y < prevTlY) {
+            // Crossing over: dragged edge becomes top edge.
+            brAnchor.write(Circle).cy = prevTlY;
+            tlAnchor.write(Circle).cy = y;
+            anchorName = AnchorName.TOP_CENTER;
+            selection.resizingAnchorName = AnchorName.TOP_CENTER;
+          }
         }
       } else if (anchorName === AnchorName.MIDDLE_LEFT) {
         if (!flipEnabled) {
           tlAnchor.write(Circle).cx = Math.min(x, brAnchor.read(Circle).cx);
         } else {
+          const prevBrX = brAnchor.read(Circle).cx;
           tlAnchor.write(Circle).cx = x;
+          if (x > prevBrX) {
+            // Crossing over: dragged edge becomes right edge.
+            tlAnchor.write(Circle).cx = prevBrX;
+            brAnchor.write(Circle).cx = x;
+            anchorName = AnchorName.MIDDLE_RIGHT;
+            selection.resizingAnchorName = AnchorName.MIDDLE_RIGHT;
+          }
         }
       } else if (anchorName === AnchorName.MIDDLE_RIGHT) {
         if (!flipEnabled) {
           brAnchor.write(Circle).cx = Math.max(x, tlAnchor.read(Circle).cx);
         } else {
+          const prevTlX = tlAnchor.read(Circle).cx;
           brAnchor.write(Circle).cx = x;
+          if (x < prevTlX) {
+            // Crossing over: dragged edge becomes left edge.
+            brAnchor.write(Circle).cx = prevTlX;
+            tlAnchor.write(Circle).cx = x;
+            anchorName = AnchorName.MIDDLE_LEFT;
+            selection.resizingAnchorName = AnchorName.MIDDLE_LEFT;
+          }
         }
       }
 
@@ -797,17 +1024,18 @@ export class Select extends System {
     }
 
     const node = api.getNodeById(layersSelected[0]);
-    if (!node || (node.type !== 'polyline' && node.type !== 'rough-polyline')) {
+    if (
+      !node ||
+      (node.type !== 'polyline' &&
+        node.type !== 'rough-polyline' &&
+        node.type !== 'path' &&
+        node.type !== 'rough-path')
+    ) {
       return;
     }
 
     const selected = api.getEntity(node);
-    if (!selected?.has(Polyline)) {
-      return;
-    }
-
-    const { points } = selected.read(Polyline);
-    if (activeControlPointIndex >= points.length) {
+    if (!selected?.hasSomeOf(Polyline, Path)) {
       return;
     }
 
@@ -824,20 +1052,89 @@ export class Select extends System {
       [canvasX, canvasY],
       inverse,
     );
-    const [prevX, prevY] = points[activeControlPointIndex];
     const nextX = local[0];
     const nextY = local[1];
-    if (prevX === nextX && prevY === nextY) {
+
+    if (selected.has(Polyline)) {
+      const { points } = selected.read(Polyline);
+      if (activeControlPointIndex >= points.length) {
+        return;
+      }
+      const [prevX, prevY] = points[activeControlPointIndex];
+      if (prevX === nextX && prevY === nextY) {
+        return;
+      }
+      points[activeControlPointIndex] = [nextX, nextY];
+      api.updateNode(node, {
+        points: points.map((point) => point.join(',')).join(' '),
+      });
+      if (isEdgeBindingRebindCandidate(selected, node as EdgeSerializedNode)) {
+        selection.bindingRebindLastCanvas = { x: canvasX, y: canvasY };
+        this.applyBindingRebindHover(api, canvasX, canvasY);
+      }
       return;
     }
-    points[activeControlPointIndex] = [nextX, nextY];
 
+    const { controlPointMeta, pathControlCommands } = camera.read(Transformable);
+    const meta = (controlPointMeta?.[activeControlPointIndex] ??
+      null) as PathControlHandleMeta | null;
+    if (!meta || !pathControlCommands?.length) {
+      return;
+    }
+    const nextCommands = pathControlCommands.map(
+      (command) => [...command] as PathCommand,
+    );
+    setPathHandlePoint(nextCommands, meta, nextX, nextY);
     api.updateNode(node, {
-      points: points.map((point) => point.join(',')).join(' '),
+      d: toPathData(nextCommands),
     });
+    camera.write(Transformable).pathControlCommands =
+      nextCommands as unknown as (string | number)[][];
+
+    if (isEdgeBindingRebindCandidate(selected, node as EdgeSerializedNode)) {
+      selection.bindingRebindLastCanvas = { x: canvasX, y: canvasY };
+      this.applyBindingRebindHover(api, canvasX, canvasY);
+    }
   }
 
   private handleControlPointMoved(api: API, selection: SelectOBB) {
+    const { layersSelected } = api.getAppState();
+    if (
+      layersSelected.length === 1 &&
+      selection.bindingRebindLastCanvas
+    ) {
+      const edgeNode = api.getNodeById(layersSelected[0]);
+      const entity = edgeNode ? api.getEntity(edgeNode) : undefined;
+      const pt = selection.bindingRebindLastCanvas;
+      delete selection.bindingRebindLastCanvas;
+
+      if (
+        edgeNode &&
+        isEdgeBindingRebindCandidate(entity, edgeNode as EdgeSerializedNode)
+      ) {
+        const camera = api.getCamera();
+        const { pathControlCommands } = camera.read(Transformable);
+        let polylinePointCount: number | undefined;
+        if (entity?.has(Polyline)) {
+          polylinePointCount = entity.read(Polyline).points.length;
+        }
+        const rebindAnchor = getEdgeRebindAnchorForControlPointDrag(
+          edgeNode,
+          selection.activeControlPointIndex,
+          pathControlCommands as PathCommand[] | undefined,
+          polylinePointCount,
+        );
+        if (rebindAnchor != null) {
+          this.applyBindingRebindAt(
+            api,
+            edgeNode as EdgeSerializedNode,
+            rebindAnchor,
+            pt,
+          );
+        }
+      }
+    }
+
     const camera = api.getCamera();
 
     api.setNodes(api.getNodes());
@@ -954,7 +1251,59 @@ export class Select extends System {
     }
   }
 
+  private applyBindingRebindHover(api: API, canvasX: number, canvasY: number) {
+    const hits = api.elementsFromPoint({ x: canvasX, y: canvasY });
+    for (const entity of hits) {
+      if (entity.has(UI)) {
+        continue;
+      }
+      if (!entity.has(Rect) && !entity.has(Ellipse)) {
+        continue;
+      }
+      const node = api.getNodeByEntity(entity);
+      if (!node) {
+        continue;
+      }
+      const t = node.type;
+      if (
+        t === 'rect' ||
+        t === 'ellipse' ||
+        t === 'rough-rect' ||
+        t === 'rough-ellipse'
+      ) {
+        api.highlightNodes([node]);
+        return;
+      }
+    }
+
+    api.highlightNodes([]);
+  }
+
   private handleSelectedResized(api: API, selection: SelectOBB) {
+    const { layersSelected } = api.getAppState();
+    if (
+      layersSelected.length === 1 &&
+      selection.bindingRebindLastCanvas &&
+      (selection.resizingAnchorName === AnchorName.X1Y1 ||
+        selection.resizingAnchorName === AnchorName.X2Y2)
+    ) {
+      const edgeNode = api.getNodeById(layersSelected[0]);
+      const entity = edgeNode ? api.getEntity(edgeNode) : undefined;
+      if (
+        edgeNode &&
+        isEdgeBindingRebindCandidate(entity, edgeNode as EdgeSerializedNode)
+      ) {
+        const pt = selection.bindingRebindLastCanvas;
+        delete selection.bindingRebindLastCanvas;
+        this.applyBindingRebindAt(
+          api,
+          edgeNode as EdgeSerializedNode,
+          selection.resizingAnchorName,
+          pt,
+        );
+      }
+    }
+
     const camera = api.getCamera();
     const tfDone = camera.write(Transformable);
     tfDone.status = TransformableStatus.RESIZED;
@@ -974,12 +1323,96 @@ export class Select extends System {
     this.saveSelectedOBB(api, selection);
   }
 
+  private applyBindingRebindAt(
+    api: API,
+    edgeNode: EdgeSerializedNode,
+    anchor: AnchorName,
+    canvas: { x: number; y: number },
+  ) {
+    const hits = api.elementsFromPoint({ x: canvas.x, y: canvas.y });
+    let targetNode: SerializedNode | undefined;
+    for (const entity of hits) {
+      if (entity.has(UI)) {
+        continue;
+      }
+      if (!entity.has(Rect) && !entity.has(Ellipse)) {
+        continue;
+      }
+      const n = api.getNodeByEntity(entity);
+      if (!n) {
+        continue;
+      }
+      const t = n.type;
+      if (
+        t === 'rect' ||
+        t === 'ellipse' ||
+        t === 'rough-rect' ||
+        t === 'rough-ellipse'
+      ) {
+        targetNode = n;
+        break;
+      }
+    }
+    if (!targetNode) {
+      // 未命中图元：端点改为画布上的浮动点（与 sourcePoint / targetPoint 一致）
+      if (anchor === AnchorName.X1Y1) {
+        api.updateNode(edgeNode as SerializedNode, {
+          fromId: undefined,
+          sourcePoint: { x: canvas.x, y: canvas.y },
+          exitX: undefined,
+          exitY: undefined,
+          exitPerimeter: undefined,
+          exitDx: undefined,
+          exitDy: undefined,
+        });
+      } else {
+        api.updateNode(edgeNode as SerializedNode, {
+          toId: undefined,
+          targetPoint: { x: canvas.x, y: canvas.y },
+          entryX: undefined,
+          entryY: undefined,
+          entryPerimeter: undefined,
+          entryDx: undefined,
+          entryDy: undefined,
+        });
+      }
+      return;
+    }
+
+    const c = constraintAttrsFromCanvasPoint(targetNode, canvas.x, canvas.y);
+    if (anchor === AnchorName.X1Y1) {
+      api.updateNode(edgeNode as SerializedNode, {
+        fromId: targetNode.id,
+        sourcePoint: undefined,
+        exitX: c.x,
+        exitY: c.y,
+        exitPerimeter: c.perimeter,
+        exitDx: c.dx,
+        exitDy: c.dy,
+      });
+    } else {
+      api.updateNode(edgeNode as SerializedNode, {
+        toId: targetNode.id,
+        targetPoint: undefined,
+        entryX: c.x,
+        entryY: c.y,
+        entryPerimeter: c.perimeter,
+        entryDx: c.dx,
+        entryDy: c.dy,
+      });
+    }
+  }
+
   private handleSelectedRotated(api: API, selection: SelectOBB) {
     const camera = api.getCamera();
-    camera.write(Transformable).status = TransformableStatus.ROTATED;
+    const tfDone = camera.write(Transformable);
+    tfDone.status = TransformableStatus.ROTATED;
+    tfDone.transformerObbFrozenDuringRotate = false;
 
     delete selection.rotateLastPointerAngle;
     delete selection.rotateAccumulated;
+    delete selection.rotatePivotWorldFixed;
+    delete selection.rotatePivotLocalFixed;
 
     api.setNodes(api.getNodes());
     api.record();
@@ -1047,9 +1480,11 @@ export class Select extends System {
         if (pen !== Pen.VECTOR_NETWORK && pen !== Pen.ERASER) {
           api.selectNodes([]);
         }
-        api.highlightNodes([]);
 
         if (pen !== Pen.VECTOR_NETWORK) {
+          if (this.selections.has(camera.__id)) {
+            this.saveSelectedOBB(api, this.selections.get(camera.__id)!);
+          }
           return;
         }
       }
@@ -1195,9 +1630,36 @@ export class Select extends System {
           if (selection.mode === SelectionMode.READY_TO_RESIZE) {
             delete selection.rotateLastPointerAngle;
             delete selection.rotateAccumulated;
+            delete selection.rotatePivotWorldFixed;
+            delete selection.rotatePivotLocalFixed;
+            camera.write(Transformable).transformerObbFrozenDuringRotate = false;
             selection.mode = SelectionMode.RESIZE;
           } else if (selection.mode === SelectionMode.READY_TO_ROTATE) {
-            const [px, py] = this.obbWorldCenter(selection.obb);
+            const [px, py] = this.getRotatePivotWorld(api, selection);
+            selection.rotatePivotWorldFixed = [px, py];
+            const cameraTfAtDown = camera.read(Transformable);
+            const plx = Number.isNaN(cameraTfAtDown.rotatePivotX)
+              ? selection.obb.width / 2
+              : cameraTfAtDown.rotatePivotX;
+            const ply = Number.isNaN(cameraTfAtDown.rotatePivotY)
+              ? selection.obb.height / 2
+              : cameraTfAtDown.rotatePivotY;
+            selection.rotatePivotLocalFixed = [plx, ply];
+
+            if (api.getAppState().layersSelected.length > 1) {
+              const tf = camera.write(Transformable);
+              tf.transformerObbFrozenDuringRotate = true;
+              const g = tf.gestureFrozenSelectionOBB;
+              const obb = selection.obb;
+              g.x = obb.x;
+              g.y = obb.y;
+              g.width = obb.width;
+              g.height = obb.height;
+              g.rotation = obb.rotation;
+              g.scaleX = obb.scaleX;
+              g.scaleY = obb.scaleY;
+            }
+
             let { x: cx, y: cy } = api.viewport2Canvas({ x, y });
             const { snapToPixelGridEnabled, snapToPixelGridSize } =
               api.getAppState();
@@ -1209,6 +1671,8 @@ export class Select extends System {
             selection.rotateAccumulated = 0;
             selection.mode = SelectionMode.ROTATE;
           }
+        } else if (selection.mode === SelectionMode.READY_TO_MOVE_PIVOT) {
+          selection.mode = SelectionMode.MOVE_PIVOT;
         } else if (
           selection.mode === SelectionMode.READY_TO_MOVE_CONTROL_POINT
         ) {
@@ -1246,6 +1710,9 @@ export class Select extends System {
             selection.mode = SelectionMode.MOVE;
           }
         }
+
+        // 点击/框选等改变 layersSelected 时同步 OBB，并重置旋转枢轴（与上一选中项的 origin 脱钩）
+        this.saveSelectedOBB(api, selection);
       }
 
       let toHighlight: Entity | undefined;
@@ -1264,11 +1731,21 @@ export class Select extends System {
             toHighlight = this.resolveHighlightEntityFromHit(toHighlight, camera);
             if (
               selection.mode !== SelectionMode.BRUSH &&
-              selection.mode !== SelectionMode.MOVE
+              selection.mode !== SelectionMode.MOVE &&
+              selection.mode !== SelectionMode.ROTATE &&
+              selection.mode !== SelectionMode.RESIZE &&
+              selection.mode !== SelectionMode.MOVE_PIVOT &&
+              selection.mode !== SelectionMode.MOVE_CONTROL_POINT
             ) {
               selection.mode = SelectionMode.READY_TO_SELECT;
             }
-          } else if (selection.mode !== SelectionMode.BRUSH) {
+          } else if (
+            selection.mode !== SelectionMode.BRUSH &&
+            selection.mode !== SelectionMode.ROTATE &&
+            selection.mode !== SelectionMode.RESIZE &&
+            selection.mode !== SelectionMode.MOVE_PIVOT &&
+            selection.mode !== SelectionMode.MOVE_CONTROL_POINT
+          ) {
             selection.mode = SelectionMode.IDLE;
           }
           const { mask, selecteds } = camera.read(Transformable);
@@ -1293,6 +1770,12 @@ export class Select extends System {
                   selection.activeControlPointIndex = index;
                   selection.activeSegmentMidpointIndex = undefined;
                   selection.mode = SelectionMode.READY_TO_MOVE_CONTROL_POINT;
+                  toHighlight = undefined;
+                } else if (anchor === AnchorName.CENTER) {
+                  cursor.value = 'move';
+                  selection.activeControlPointIndex = undefined;
+                  selection.activeSegmentMidpointIndex = undefined;
+                  selection.mode = SelectionMode.READY_TO_MOVE_PIVOT;
                   toHighlight = undefined;
                 } else if (anchor === AnchorName.SEGMENT_MIDPOINT) {
                   cursor.value = 'crosshair';
@@ -1320,14 +1803,18 @@ export class Select extends System {
                     selection.resizingAnchorName = anchor;
 
                     if (cursorName.includes('rotate')) {
-                      selection.mode = SelectionMode.READY_TO_ROTATE;
+                      if (selection.mode !== SelectionMode.ROTATE) {
+                        selection.mode = SelectionMode.READY_TO_ROTATE;
+                      }
                       toHighlight = undefined;
                     } else if (
                       cursorName.includes('resize') ||
                       anchor === AnchorName.X1Y1 ||
                       anchor === AnchorName.X2Y2
                     ) {
-                      selection.mode = SelectionMode.READY_TO_RESIZE;
+                      if (selection.mode !== SelectionMode.RESIZE) {
+                        selection.mode = SelectionMode.READY_TO_RESIZE;
+                      }
                       toHighlight = undefined;
                     } else if (anchor === AnchorName.INSIDE) {
                       // Only in single transformer, we can select other objects.
@@ -1344,13 +1831,19 @@ export class Select extends System {
                         } else {
                           if (
                             // selection.mode !== SelectionMode.BRUSH &&
-                            selection.mode !== SelectionMode.MOVE
+                            selection.mode !== SelectionMode.MOVE &&
+                            selection.mode !== SelectionMode.ROTATE &&
+                            selection.mode !== SelectionMode.RESIZE
                           ) {
                             selection.mode = SelectionMode.READY_TO_MOVE;
                           }
                         }
                       }
-                    } else if (toHighlight) {
+                    } else if (
+                      toHighlight &&
+                      selection.mode !== SelectionMode.ROTATE &&
+                      selection.mode !== SelectionMode.RESIZE
+                    ) {
                       selection.mode = SelectionMode.READY_TO_SELECT;
                     }
 
@@ -1429,6 +1922,8 @@ export class Select extends System {
           );
         } else if (selection.mode === SelectionMode.ROTATE) {
           this.handleSelectedRotating(api, ex, ey);
+        } else if (selection.mode === SelectionMode.MOVE_PIVOT) {
+          this.handleRotatePivotMoving(api, ex, ey);
         } else if (selection.mode === SelectionMode.MOVE_CONTROL_POINT) {
           this.handleControlPointMoving(api, ex, ey, selection);
         }
@@ -1437,8 +1932,20 @@ export class Select extends System {
       if (input.key === 'Escape') {
         api.selectNodes([]);
         api.highlightNodes([]);
+        this.saveSelectedOBB(api, selection);
         if (selection.mode === SelectionMode.BRUSH) {
           this.hideBrush(selection);
+        }
+
+        if (
+          selection.mode === SelectionMode.ROTATE ||
+          selection.mode === SelectionMode.READY_TO_ROTATE
+        ) {
+          delete selection.rotateLastPointerAngle;
+          delete selection.rotateAccumulated;
+          delete selection.rotatePivotWorldFixed;
+          delete selection.rotatePivotLocalFixed;
+          camera.write(Transformable).transformerObbFrozenDuringRotate = false;
         }
 
         if (api.getAppState().layersCropping.length > 0) {
@@ -1466,6 +1973,11 @@ export class Select extends System {
         } else if (selection.mode === SelectionMode.ROTATE) {
           this.handleSelectedRotated(api, selection);
           selection.mode = SelectionMode.READY_TO_ROTATE;
+        } else if (
+          selection.mode === SelectionMode.MOVE_PIVOT ||
+          selection.mode === SelectionMode.READY_TO_MOVE_PIVOT
+        ) {
+          selection.mode = SelectionMode.READY_TO_MOVE_PIVOT;
         } else if (
           selection.mode === SelectionMode.MOVE_CONTROL_POINT ||
           selection.mode === SelectionMode.READY_TO_MOVE_CONTROL_POINT
@@ -1529,11 +2041,23 @@ export class Select extends System {
       if (needHighlight) {
         api.highlightNodes(selecteds);
       }
+      this.saveSelectedOBB(api, selection);
     }
   }
 
   private saveSelectedOBB(api: API, selection: SelectOBB) {
     const camera = api.getCamera();
+    const selectedNodeIds = [...api.getAppState().layersSelected].sort();
+    const prevSelectedNodeIds = [...(selection.selectedNodeIds ?? [])].sort();
+    const selectedChanged =
+      selectedNodeIds.length !== prevSelectedNodeIds.length ||
+      selectedNodeIds.some((id, i) => id !== prevSelectedNodeIds[i]);
+    if (selectedChanged) {
+      const tf = camera.write(Transformable);
+      tf.rotatePivotPinned = false;
+      tf.rotatePivotX = NaN;
+      tf.rotatePivotY = NaN;
+    }
     const obb = getOBB(camera);
     selection.obb = {
       x: obb.x,
@@ -1554,6 +2078,7 @@ export class Select extends System {
         ...api.getAbsoluteTransformAndSize(node),
       })),
     ];
+    selection.selectedNodeIds = selectedNodeIds;
   }
 
   private fitSelected(api: API, newAttrs: OBB, selection: SelectOBB) {
@@ -1570,41 +2095,53 @@ export class Select extends System {
       scaleX: selection.obb.scaleX,
       scaleY: selection.obb.scaleY,
     };
-    const baseSize = 10000000;
-    const oldTr = mat3.create();
-    mat3.translate(oldTr, oldTr, [oldAttrs.x, oldAttrs.y]);
-    mat3.rotate(oldTr, oldTr, oldAttrs.rotation);
-    mat3.scale(oldTr, oldTr, [
-      oldAttrs.width / baseSize,
-      oldAttrs.height / baseSize,
-    ]);
-    const newTr = mat3.create();
-    const newScaleX = newAttrs.width / baseSize;
-    const newScaleY = newAttrs.height / baseSize;
 
-    const { flipEnabled } = api.getAppState();
-    if (flipEnabled) {
-      mat3.translate(newTr, newTr, [newAttrs.x, newAttrs.y]);
-      mat3.rotate(newTr, newTr, newAttrs.rotation);
-      mat3.scale(newTr, newTr, [newScaleX, newScaleY]);
+    const tfStatus = camera.read(Transformable).status;
+    /** 多选时选区 OBB 是子项世界包络的轴对齐框，与各节点局部变换不在同一「虚拟框」坐标系；Konva 式 delta 对框成立，但不能左乘到多个独立 local 上得到绕枢轴旋转。 */
+    const useWorldPivotRotate =
+      selecteds.length > 1 && tfStatus === TransformableStatus.ROTATING;
+
+    const delta = mat3.create();
+    if (useWorldPivotRotate) {
+      const theta = newAttrs.rotation - oldAttrs.rotation;
+      const [px, py] = this.getRotatePivotWorldStable(api, selection);
+      mat3.identity(delta);
+      mat3.translate(delta, delta, [px, py]);
+      mat3.rotate(delta, delta, theta);
+      mat3.translate(delta, delta, [-px, -py]);
     } else {
-      mat3.translate(newTr, newTr, [newAttrs.x, newAttrs.y]);
-      mat3.rotate(newTr, newTr, newAttrs.rotation);
-      mat3.translate(newTr, newTr, [
-        newAttrs.width < 0 ? newAttrs.width : 0,
-        newAttrs.height < 0 ? newAttrs.height : 0,
+      const baseSize = 10000000;
+      const oldTr = mat3.create();
+      mat3.translate(oldTr, oldTr, [oldAttrs.x, oldAttrs.y]);
+      mat3.rotate(oldTr, oldTr, oldAttrs.rotation);
+      mat3.scale(oldTr, oldTr, [
+        oldAttrs.width / baseSize,
+        oldAttrs.height / baseSize,
       ]);
-      mat3.scale(newTr, newTr, [Math.abs(newScaleX), Math.abs(newScaleY)]);
-    }
+      const newTr = mat3.create();
+      const newScaleX = newAttrs.width / baseSize;
+      const newScaleY = newAttrs.height / baseSize;
 
-    // Borrow from Konva.js
-    // @see https://github.com/konvajs/konva/blob/9a9bd00cd377a6d12cce3ee7c9fbf906afa55de5/src/shapes/Transformer.ts#L1103
-    // [delta transform] = [new transform] * [old transform inverted]
-    const delta = mat3.multiply(
-      newTr,
-      newTr,
-      mat3.invert(mat3.create(), oldTr),
-    );
+      const { flipEnabled } = api.getAppState();
+      if (flipEnabled) {
+        mat3.translate(newTr, newTr, [newAttrs.x, newAttrs.y]);
+        mat3.rotate(newTr, newTr, newAttrs.rotation);
+        mat3.scale(newTr, newTr, [newScaleX, newScaleY]);
+      } else {
+        mat3.translate(newTr, newTr, [newAttrs.x, newAttrs.y]);
+        mat3.rotate(newTr, newTr, newAttrs.rotation);
+        mat3.translate(newTr, newTr, [
+          newAttrs.width < 0 ? newAttrs.width : 0,
+          newAttrs.height < 0 ? newAttrs.height : 0,
+        ]);
+        mat3.scale(newTr, newTr, [Math.abs(newScaleX), Math.abs(newScaleY)]);
+      }
+
+      // Borrow from Konva.js
+      // @see https://github.com/konvajs/konva/blob/9a9bd00cd377a6d12cce3ee7c9fbf906afa55de5/src/shapes/Transformer.ts#L1103
+      // [delta transform] = [new transform] * [old transform inverted]
+      mat3.multiply(delta, newTr, mat3.invert(mat3.create(), oldTr));
+    }
 
     const entitiesToUpdate: Entity[] = [];
     const visited = new Set<Entity>();
@@ -1613,15 +2150,17 @@ export class Select extends System {
         return;
       }
       visited.add(entity);
-      // Group 的 selection OBB 是世界 AABB（min 角 + 尺寸），与 Transform 原点不一致；
-      // 对 Group 根套用 Konva 式 delta 会错。只把变换下发到子节点（与多选 resize 一致）。
-      if (!entity.has(Group)) {
-        entitiesToUpdate.push(entity);
+      // Group：selection OBB 是世界子并集 AABB，与 Group 根 Transform 不一致，不能对根套用 Konva delta；
+      // 只把 delta 下发到子树（与多选 resize 一致）。
+      if (entity.has(Group)) {
+        if (entity.has(Parent)) {
+          const { children } = entity.read(Parent);
+          children.forEach((child) => collectSelectedAndDescendants(child));
+        }
+        return;
       }
-      if (entity.has(Parent)) {
-        const { children } = entity.read(Parent);
-        children.forEach((child) => collectSelectedAndDescendants(child));
-      }
+      // 非 Group：只更新该节点。子节点随父级 Transform 级联，若再对子节点套用同一 delta 会在世界空间叠加两次变换。
+      entitiesToUpdate.push(entity);
     };
     selecteds.forEach((selected) => collectSelectedAndDescendants(selected));
 
@@ -1658,8 +2197,9 @@ export class Select extends System {
       const obb = {
         x: translation[0],
         y: translation[1],
-        width: Math.max(oldNode.width * scale[0], epsilon),
-        height: Math.max(oldNode.height * scale[1], epsilon),
+        // Keep geometry size positive; flip sign is carried by scaleX/scaleY.
+        width: Math.max(Math.abs(oldNode.width * scale[0]), epsilon),
+        height: Math.max(Math.abs(oldNode.height * scale[1]), epsilon),
         rotation,
         scaleX: oldAttrs.scaleX * (Math.sign(width) || 1),
         scaleY: oldAttrs.scaleY * (Math.sign(height) || 1),
@@ -1672,8 +2212,6 @@ export class Select extends System {
         newLocalTransform,
         oldNode,
       );
-      selection.obb.scaleX = obb.scaleX;
-      selection.obb.scaleY = obb.scaleY;
 
       if (selecteds.length === 1 && selected.has(Text)) {
         const t = selected.read(Text);

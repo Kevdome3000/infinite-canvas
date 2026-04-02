@@ -31,6 +31,7 @@ import {
   Camera,
   Anchor,
   Polyline,
+  Path,
   VectorNetwork,
   FractionalIndex,
   Canvas,
@@ -38,6 +39,10 @@ import {
   Mat3,
   Line,
   ComputedCamera,
+  ComputedPoints,
+  Binding,
+  PartialBinding,
+  hasFullOrPartialEdgeBinding,
 } from '../components';
 import { Commands } from '../commands';
 import { updateGlobalTransform } from './Transform';
@@ -47,6 +52,11 @@ import { distanceBetweenPoints } from '../utils/matrix';
 import { TRANSFORMER_Z_INDEX } from '../context';
 import { safeAddComponent } from '../history';
 import { vec2 } from 'gl-matrix';
+import {
+  collectPathControlHandles,
+  collectPathHandleLineSegments,
+  normalizePathCommands,
+} from '../utils/path-edit';
 
 const TRANSFORMER_ANCHOR_RADIUS = 5;
 export const TRANSFORMER_ANCHOR_ROTATE_RADIUS = 20;
@@ -86,7 +96,9 @@ export class RenderTransformer extends System {
             Camera,
             FractionalIndex,
             Polyline,
+            Path,
             Line,
+            ComputedPoints,
           )
           .read.and.using(
             Canvas,
@@ -103,6 +115,7 @@ export class RenderTransformer extends System {
             Stroke,
             Rect,
             Polyline,
+            Path,
             Circle,
             ZIndex,
             SizeAttenuation,
@@ -113,6 +126,9 @@ export class RenderTransformer extends System {
             Anchor,
             VectorNetwork,
             Text,
+            Line,
+            Binding,
+            PartialBinding,
           ).write,
     );
   }
@@ -199,54 +215,121 @@ export class RenderTransformer extends System {
     const { selecteds, polylineMask } = camera.read(Transformable);
 
     const selected = selecteds.length === 1 ? selecteds[0] : undefined;
-    const isPolylineSelected = selected?.has(Polyline);
-    if (!isPolylineSelected) {
+    const isEditablePathSelected = selected?.hasSomeOf(Polyline, Path);
+    if (!isEditablePathSelected) {
       transformable.controlPoints?.forEach((controlPoint) => {
         controlPoint.write(Visibility).value = 'hidden';
       });
       transformable.segmentMidpoints?.forEach((midpoint) => {
         midpoint.write(Visibility).value = 'hidden';
       });
+      transformable.pathHandleLines?.forEach((lineEntity) => {
+        lineEntity.write(Visibility).value = 'hidden';
+      });
+      this.syncPathHandleLines(polylineMask, 0, transformable);
+      transformable.controlPointMeta = [];
+      transformable.pathControlCommands = [];
       return;
     }
 
-    const { points } = selected.read(Polyline);
-    this.syncControlPoints(polylineMask, points.length, transformable);
-    this.syncSegmentMidpoints(polylineMask, Math.max(points.length - 1, 0), transformable);
-
     const matrix = Mat3.toGLMat3(selected.read(GlobalTransform).matrix);
+    if (selected.has(Polyline)) {
+      this.syncPathHandleLines(polylineMask, 0, transformable);
+      const { points } = selected.read(Polyline);
+      this.syncControlPoints(polylineMask, points.length, transformable);
+      this.syncSegmentMidpoints(
+        polylineMask,
+        Math.max(points.length - 1, 0),
+        transformable,
+      );
+      transformable.controlPointMeta = [];
+      transformable.pathControlCommands = [];
+
+      transformable.controlPoints.forEach((controlPoint, i) => {
+        const point = points[i];
+        if (!point) {
+          controlPoint.write(Visibility).value = 'hidden';
+          return;
+        }
+
+        const transformed = vec2.transformMat3(vec2.create(), point, matrix);
+        Object.assign(controlPoint.write(Circle), {
+          cx: transformed[0],
+          cy: transformed[1],
+        });
+        controlPoint.write(Visibility).value = 'visible';
+        updateGlobalTransform(controlPoint);
+      });
+
+      transformable.segmentMidpoints?.forEach((midpoint, i) => {
+        const point1 = points[i];
+        const point2 = points[i + 1];
+        if (!point1 || !point2) {
+          midpoint.write(Visibility).value = 'hidden';
+          return;
+        }
+        const midX = (point1[0] + point2[0]) / 2;
+        const midY = (point1[1] + point2[1]) / 2;
+        const transformed = vec2.transformMat3(
+          vec2.create(),
+          [midX, midY],
+          matrix,
+        );
+        Object.assign(midpoint.write(Circle), {
+          cx: transformed[0],
+          cy: transformed[1],
+        });
+        midpoint.write(Visibility).value = 'visible';
+        updateGlobalTransform(midpoint);
+      });
+      return;
+    }
+
+    const commands = normalizePathCommands(selected.read(Path).d);
+    const handles = collectPathControlHandles(commands);
+    const handleLineSegments = collectPathHandleLineSegments(commands);
+    this.syncPathHandleLines(polylineMask, handleLineSegments.length, transformable);
+    this.syncControlPoints(polylineMask, handles.length, transformable);
+    this.syncSegmentMidpoints(polylineMask, 0, transformable);
+    transformable.pathControlCommands = commands as unknown as (string | number)[][];
+    transformable.controlPointMeta = handles.map((handle) => handle.meta);
+
+    const pathLines = transformable.pathHandleLines ?? [];
+    handleLineSegments.forEach((seg, i) => {
+      const lineEntity = pathLines[i];
+      if (!lineEntity?.has(Line)) {
+        return;
+      }
+      const p1 = vec2.transformMat3(vec2.create(), [seg.x1, seg.y1], matrix);
+      const p2 = vec2.transformMat3(vec2.create(), [seg.x2, seg.y2], matrix);
+      Object.assign(lineEntity.write(Line), {
+        x1: p1[0],
+        y1: p1[1],
+        x2: p2[0],
+        y2: p2[1],
+      });
+      lineEntity.write(Visibility).value = 'visible';
+      updateGlobalTransform(lineEntity);
+    });
+
     transformable.controlPoints.forEach((controlPoint, i) => {
-      const point = points[i];
-      if (!point) {
+      const handle = handles[i];
+      if (!handle) {
         controlPoint.write(Visibility).value = 'hidden';
         return;
       }
 
-      const transformed = vec2.transformMat3(vec2.create(), point, matrix);
+      const transformed = vec2.transformMat3(
+        vec2.create(),
+        [handle.x, handle.y],
+        matrix,
+      );
       Object.assign(controlPoint.write(Circle), {
         cx: transformed[0],
         cy: transformed[1],
       });
       controlPoint.write(Visibility).value = 'visible';
       updateGlobalTransform(controlPoint);
-    });
-
-    transformable.segmentMidpoints?.forEach((midpoint, i) => {
-      const point1 = points[i];
-      const point2 = points[i + 1];
-      if (!point1 || !point2) {
-        midpoint.write(Visibility).value = 'hidden';
-        return;
-      }
-      const midX = (point1[0] + point2[0]) / 2;
-      const midY = (point1[1] + point2[1]) / 2;
-      const transformed = vec2.transformMat3(vec2.create(), [midX, midY], matrix);
-      Object.assign(midpoint.write(Circle), {
-        cx: transformed[0],
-        cy: transformed[1],
-      });
-      midpoint.write(Visibility).value = 'visible';
-      updateGlobalTransform(midpoint);
     });
   }
 
@@ -281,6 +364,66 @@ export class RenderTransformer extends System {
         const anchor = transformable.controlPoints.pop();
         if (anchor) {
           anchor.add(ToBeDeleted);
+        }
+      }
+    }
+  }
+
+  private createPathHandleLine() {
+    const lineEntity = this.commands
+      .spawn(
+        new UI(UIType.TRANSFORMER_MASK),
+        new Name('path-handle-line'),
+        new Transform(),
+        new Renderable(),
+        new Line({ x1: 0, y1: 0, x2: 0, y2: 0 }),
+        new Stroke({
+          width: 1,
+          color: TRANSFORMER_ANCHOR_STROKE_COLOR,
+          dasharray: [6, 6],
+        }),
+        new Opacity({ opacity: 0.45 }),
+        new StrokeAttenuation(),
+        new SizeAttenuation(),
+        new ZIndex(TRANSFORMER_Z_INDEX - 2),
+        new Visibility(),
+      )
+      .id()
+      .hold();
+
+    return lineEntity;
+  }
+
+  private syncPathHandleLines(
+    parent: Entity,
+    targetCount: number,
+    transformable: Transformable,
+  ) {
+    const toCreate =
+      targetCount - (transformable.pathHandleLines?.length ?? 0);
+    if (toCreate > 0) {
+      const pathHandleLines: Entity[] = [];
+      for (let i = 0; i < toCreate; i++) {
+        const lineEntity = this.createPathHandleLine();
+        this.commands.entity(parent).appendChild(this.commands.entity(lineEntity));
+        pathHandleLines.push(lineEntity);
+      }
+
+      Object.assign(transformable, {
+        pathHandleLines: [
+          ...(transformable.pathHandleLines ?? []),
+          ...pathHandleLines,
+        ],
+      });
+      this.commands.execute();
+      return;
+    }
+
+    if (toCreate < 0) {
+      for (let i = 0; i < Math.abs(toCreate); i++) {
+        const lineEntity = transformable.pathHandleLines?.pop();
+        if (lineEntity) {
+          lineEntity.add(ToBeDeleted);
         }
       }
     }
@@ -350,12 +493,17 @@ export class RenderTransformer extends System {
           }
         }
         if (pen !== Pen.VECTOR_NETWORK) {
-          const { controlPoints, segmentMidpoints } = camera.read(Transformable);
+          const { controlPoints, segmentMidpoints, pathHandleLines } =
+            camera.read(Transformable);
           const { selecteds } = camera.read(Transformable);
           const isPolylineSelected =
             pen === Pen.SELECT &&
             selecteds.length === 1 &&
-            selecteds[0].has(Polyline);
+            selecteds[0].hasSomeOf(Polyline, Path) &&
+            !(
+              hasFullOrPartialEdgeBinding(selecteds[0]) &&
+              selecteds[0].has(Polyline)
+            );
           if (!isPolylineSelected) {
             controlPoints &&
               controlPoints.forEach((controlPoint) => {
@@ -364,6 +512,10 @@ export class RenderTransformer extends System {
             segmentMidpoints &&
               segmentMidpoints.forEach((midpoint) => {
                 midpoint.write(Visibility).value = 'hidden';
+              });
+            pathHandleLines &&
+              pathHandleLines.forEach((lineEntity) => {
+                lineEntity.write(Visibility).value = 'hidden';
               });
           }
         }
@@ -418,7 +570,12 @@ export class RenderTransformer extends System {
         new Circle({
           cx,
           cy,
-          r: name === AnchorName.SEGMENT_MIDPOINT ? TRANSFORMER_ANCHOR_RADIUS - 1 : TRANSFORMER_ANCHOR_RADIUS,
+          r:
+            name === AnchorName.SEGMENT_MIDPOINT
+              ? TRANSFORMER_ANCHOR_RADIUS - 1
+              : name === AnchorName.CENTER
+                ? TRANSFORMER_ANCHOR_RADIUS - 1
+                : TRANSFORMER_ANCHOR_RADIUS,
         }),
         new StrokeAttenuation(),
         new SizeAttenuation(),
@@ -451,13 +608,15 @@ export class RenderTransformer extends System {
     const trAnchor = this.createAnchor(0, 0, AnchorName.TOP_RIGHT);
     const blAnchor = this.createAnchor(0, 0, AnchorName.BOTTOM_LEFT);
     const brAnchor = this.createAnchor(0, 0, AnchorName.BOTTOM_RIGHT);
+    const centerAnchor = this.createAnchor(0, 0, AnchorName.CENTER);
 
     this.commands
       .entity(mask)
       .appendChild(this.commands.entity(tlAnchor))
       .appendChild(this.commands.entity(trAnchor))
       .appendChild(this.commands.entity(blAnchor))
-      .appendChild(this.commands.entity(brAnchor));
+      .appendChild(this.commands.entity(brAnchor))
+      .appendChild(this.commands.entity(centerAnchor));
 
     this.commands.entity(camera).appendChild(this.commands.entity(mask));
     this.commands.execute();
@@ -468,13 +627,14 @@ export class RenderTransformer extends System {
       trAnchor,
       blAnchor,
       brAnchor,
+      centerAnchor,
     });
   }
 
   private updateRectMask(camera: Entity) {
     const { x, y, width, height, rotation, scaleX, scaleY } = getOBB(camera);
 
-    const { tlAnchor, trAnchor, blAnchor, brAnchor, mask } =
+    const { tlAnchor, trAnchor, blAnchor, brAnchor, centerAnchor, mask } =
       camera.read(Transformable);
 
     // if (width === 0 && height === 0) {
@@ -520,6 +680,19 @@ export class RenderTransformer extends System {
     Object.assign(brAnchor.write(Circle), {
       cx: width,
       cy: height,
+    });
+    const tf = camera.write(Transformable);
+    if (
+      !tf.rotatePivotPinned ||
+      Number.isNaN(tf.rotatePivotX) ||
+      Number.isNaN(tf.rotatePivotY)
+    ) {
+      tf.rotatePivotX = width / 2;
+      tf.rotatePivotY = height / 2;
+    }
+    Object.assign(centerAnchor.write(Circle), {
+      cx: tf.rotatePivotX,
+      cy: tf.rotatePivotY,
     });
 
     updateGlobalTransform(mask);
@@ -568,8 +741,13 @@ export class RenderTransformer extends System {
       const { points } = selected.read(Polyline);
       point1 = points[0];
       point2 = points[points.length - 1];
-      x1y1Anchor.write(Visibility).value = 'hidden';
-      x2y2Anchor.write(Visibility).value = 'hidden';
+      if (hasFullOrPartialEdgeBinding(selected)) {
+        x1y1Anchor.write(Visibility).value = 'visible';
+        x2y2Anchor.write(Visibility).value = 'visible';
+      } else {
+        x1y1Anchor.write(Visibility).value = 'hidden';
+        x2y2Anchor.write(Visibility).value = 'hidden';
+      }
     } else if (selected.has(Line)) {
       const { x1, y1, x2, y2 } = selected.read(Line);
       point1 = [x1, y1];
@@ -640,7 +818,7 @@ export class RenderTransformer extends System {
   private updatePolylineMask(camera: Entity) {
     const { polylineMask, selecteds } = camera.read(Transformable);
     const selected = selecteds[0];
-    if (!selected || !selected.has(Polyline)) {
+    if (!selected || !selected.hasSomeOf(Polyline, Path)) {
       polylineMask.write(Visibility).value = 'hidden';
       return;
     }
@@ -657,7 +835,14 @@ export class RenderTransformer extends System {
         y: 1,
       },
     });
-    polylineMask.write(Polyline).points = selected.read(Polyline).points;
+    if (selected.has(Polyline)) {
+      polylineMask.write(Polyline).points = selected.read(Polyline).points;
+    } else {
+      polylineMask.write(Polyline).points = selected
+        .read(ComputedPoints)
+        .points.flat()
+        .map((point) => [point[0], point[1]] as [number, number]);
+    }
 
     this.updatePolylineControlPoints(camera);
     updateGlobalTransform(polylineMask);
@@ -763,6 +948,21 @@ export function getOBB(camera: Entity): OBB {
   }
 
   if (selecteds.length > 1) {
+    if (
+      status === TransformableStatus.ROTATING &&
+      tf.transformerObbFrozenDuringRotate
+    ) {
+      const g = tf.gestureFrozenSelectionOBB;
+      return new OBB({
+        x: g.x,
+        y: g.y,
+        width: g.width,
+        height: g.height,
+        rotation: g.rotation,
+        scaleX: g.scaleX,
+        scaleY: g.scaleY,
+      });
+    }
     return calculateOBBRecursive(selecteds);
   }
 
@@ -780,8 +980,15 @@ export function getOBB(camera: Entity): OBB {
 function useLineMask(camera: Entity) {
   const { selecteds } = camera.read(Transformable);
 
-  // Single selected line
-  if (selecteds.length === 1 && selecteds[0].has(Line)) {
+  if (selecteds.length !== 1) {
+    return false;
+  }
+  const selected = selecteds[0];
+  if (selected.has(Line)) {
+    return true;
+  }
+  // 绑定边：用线段两端锚点改接，不编辑折线顶点
+  if (hasFullOrPartialEdgeBinding(selected) && selected.has(Polyline)) {
     return true;
   }
 
@@ -791,7 +998,13 @@ function useLineMask(camera: Entity) {
 function usePolylineMask(camera: Entity) {
   const { selecteds } = camera.read(Transformable);
 
-  if (selecteds.length === 1 && selecteds[0].has(Polyline)) {
+  if (selecteds.length === 1 && selecteds[0].hasSomeOf(Polyline, Path)) {
+    if (
+      hasFullOrPartialEdgeBinding(selecteds[0]) &&
+      selecteds[0].has(Polyline)
+    ) {
+      return false;
+    }
     return true;
   }
 
@@ -809,7 +1022,11 @@ export function hitTest(api: API, { x, y }: IPointData) {
   const isSelectPolyline =
     penbarSelected === Pen.SELECT &&
     selecteds.length === 1 &&
-    selecteds[0].has(Polyline);
+    selecteds[0].hasSomeOf(Polyline, Path) &&
+    !(
+      hasFullOrPartialEdgeBinding(selecteds[0]) &&
+      selecteds[0].has(Polyline)
+    );
   const {
     tlAnchor,
     trAnchor,
@@ -822,6 +1039,7 @@ export function hitTest(api: API, { x, y }: IPointData) {
     polylineMask,
     x1y1Anchor,
     x2y2Anchor,
+    centerAnchor,
   } = camera.read(Transformable);
 
   if (
@@ -844,8 +1062,9 @@ export function hitTest(api: API, { x, y }: IPointData) {
       }
     }
 
-    for (let i = 0; i < segmentMidpoints.length; i++) {
-      const { cx, cy } = segmentMidpoints[i].read(Circle);
+    const segmentMidpointsSafe = segmentMidpoints ?? [];
+    for (let i = 0; i < segmentMidpointsSafe.length; i++) {
+      const { cx, cy } = segmentMidpointsSafe[i].read(Circle);
       const { x: xx, y: yy } = api.canvas2Viewport({ x: cx, y: cy });
       const distance = distanceBetweenPoints(x, y, xx, yy);
       if (distance <= TRANSFORMER_ANCHOR_RESIZE_RADIUS) {
@@ -864,29 +1083,56 @@ export function hitTest(api: API, { x, y }: IPointData) {
       };
     }
 
-    // Polyline in SELECT mode: hit test against each segment.
-    const polylinePoints = polylineMask.read(Polyline).points;
-    const viewportPoints = polylinePoints.map((point) => {
-      return api.canvas2Viewport(
-        api.transformer2Canvas(
-          {
-            x: point[0],
-            y: point[1],
-          },
-          polylineMask,
-        ),
-      );
-    });
     let minDistanceToSegments = Infinity;
-    for (let i = 0; i < viewportPoints.length - 1; i++) {
-      minDistanceToSegments = Math.min(
-        minDistanceToSegments,
-        distanceBetweenPointAndLineSegment(
-          point,
-          [viewportPoints[i].x, viewportPoints[i].y],
-          [viewportPoints[i + 1].x, viewportPoints[i + 1].y],
-        ),
-      );
+    const selected = selecteds[0];
+    if (selected.has(Polyline)) {
+      const polylinePoints = polylineMask.read(Polyline).points;
+      const viewportPoints = polylinePoints.map((polylinePoint) => {
+        return api.canvas2Viewport(
+          api.transformer2Canvas(
+            {
+              x: polylinePoint[0],
+              y: polylinePoint[1],
+            },
+            polylineMask,
+          ),
+        );
+      });
+      for (let i = 0; i < viewportPoints.length - 1; i++) {
+        minDistanceToSegments = Math.min(
+          minDistanceToSegments,
+          distanceBetweenPointAndLineSegment(
+            point,
+            [viewportPoints[i].x, viewportPoints[i].y],
+            [viewportPoints[i + 1].x, viewportPoints[i + 1].y],
+          ),
+        );
+      }
+    } else if (selected.has(Path)) {
+      const matrix = Mat3.toGLMat3(selected.read(GlobalTransform).matrix);
+      selected.read(ComputedPoints).points.forEach((subpath) => {
+        if (subpath.length < 2) {
+          return;
+        }
+        const viewportPoints = subpath.map((subpathPoint) => {
+          const transformed = vec2.transformMat3(
+            vec2.create(),
+            subpathPoint,
+            matrix,
+          );
+          return api.canvas2Viewport({ x: transformed[0], y: transformed[1] });
+        });
+        for (let i = 0; i < viewportPoints.length - 1; i++) {
+          minDistanceToSegments = Math.min(
+            minDistanceToSegments,
+            distanceBetweenPointAndLineSegment(
+              point,
+              [viewportPoints[i].x, viewportPoints[i].y],
+              [viewportPoints[i + 1].x, viewportPoints[i + 1].y],
+            ),
+          );
+        }
+      });
     }
 
     if (minDistanceToSegments <= TRANSFORMER_ANCHOR_ROTATE_RADIUS) {
@@ -994,6 +1240,15 @@ export function hitTest(api: API, { x, y }: IPointData) {
           mask,
         ),
       );
+      const { x: centerX, y: centerY } = api.canvas2Viewport(
+        api.transformer2Canvas(
+          {
+            x: centerAnchor.read(Circle).cx,
+            y: centerAnchor.read(Circle).cy,
+          },
+          mask,
+        ),
+      );
 
       const isInside = inside(point, [
         [tlX, tlY],
@@ -1006,6 +1261,14 @@ export function hitTest(api: API, { x, y }: IPointData) {
       const distanceToTR = distanceBetweenPoints(x, y, trX, trY);
       const distanceToBL = distanceBetweenPoints(x, y, blX, blY);
       const distanceToBR = distanceBetweenPoints(x, y, brX, brY);
+      const distanceToCenter = distanceBetweenPoints(x, y, centerX, centerY);
+
+      if (distanceToCenter <= TRANSFORMER_ANCHOR_RESIZE_RADIUS + 1) {
+        return {
+          anchor: AnchorName.CENTER,
+          cursor: 'move',
+        };
+      }
 
       const minDistanceToAnchors = Math.min(
         distanceToTL,

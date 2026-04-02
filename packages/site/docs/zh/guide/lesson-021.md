@@ -5,8 +5,10 @@ description: '实现图形变换器，支持调整大小和旋转功能。学习
 
 <script setup>
 import TransformerRect from '../../components/TransformerRect.vue'
+import TransformerRectRotated from '../../components/TransformerRectRotated.vue'
 import TransformerLine from '../../components/TransformerLine.vue'
 import TransformerPolyline from '../../components/TransformerPolyline.vue'
+import TransformerPath from '../../components/TransformerPath.vue'
 </script>
 
 # 课程 21 - Transformer
@@ -454,7 +456,7 @@ if (centeredScaling) {
 }
 ```
 
-### [WIP] 翻转 {#flip}
+### 翻转 {#flip}
 
 当拖拽锚点或者边到反方向时，会出现翻转现象，下图为 Figma 中的效果，注意 Rotation 的变化：
 
@@ -464,9 +466,9 @@ if (centeredScaling) {
 
 ![Flip a rect with gradient fill](/rotate-when-flipped.png)
 
-## [WIP] 旋转 {#rotation}
+## 旋转 {#rotation}
 
-Figma
+Figma 中的旋转交互如下：
 
 > Hover just outside one of the layer's bounds until the icon appears.
 > Click and drag to rotate your selection:
@@ -474,11 +476,73 @@ Figma
 > Drag counterclockwise to create a positive angle (towards 180° )
 > Hold down Shift to snap rotation values to increments of 15.
 
+1. 首先需要计算 OBB 的几何中心，需要考虑旋转。
+2. 然后累积转角，用 `atan2` 相对上一采样点的差值，并用 `atan2(sin, cos)` 归一化到 `((-\pi,\pi])`，避免跨过 `(\pm\pi)` 时突变。
+3. 指针按下时在画布坐标（并与移动逻辑一致地做像素对齐栅格）下初始化 `rotateLastPointerAngle` 与 `rotateAccumulated = 0`。 保持中心不动。只改 rotation 时，用 `alignObbOriginToFixedCenter` 反推新的 `x/y`，使中心点仍在 `(px, py)`，再调用现有的 `fitSelected`，与 resize 共用同一套 Konva 式 delta 变换。
+
+```ts
+// 1.
+const [px, py] = this.obbWorldCenter(selection.obb);
+// 2.
+const cur = Math.atan2(canvasY - py, canvasX - px);
+let delta = cur - selection.rotateLastPointerAngle;
+delta = Math.atan2(Math.sin(delta), Math.cos(delta));
+selection.rotateLastPointerAngle = cur;
+selection.rotateAccumulated += delta;
+// 3.
+const newRotation = selection.obb.rotation + selection.rotateAccumulated;
+const newAttrs = this.alignObbOriginToFixedCenter(
+    selection.obb,
+    px,
+    py,
+    newRotation,
+);
+this.fitSelected(api, newAttrs, selection);
+```
+
+<TransformerRectRotated />
+
 ### 调整旋转中心 {#change-the-rotation-origin}
 
 下图是 Figma [Change the rotation origin] 的效果：
 
 ![Change the rotation origin](https://help.figma.com/hc/article_attachments/31937330391447)
+
+实现要点如下：
+
+1. 在 transformer 的 mask 上新增中心锚点（`AnchorName.CENTER`），并支持拖拽。
+2. 将自定义旋转中心保存为 transformer 局部坐标（`rotatePivotX/Y`），用 `rotatePivotPinned` 标记是否由用户显式设置。
+3. 拖拽中心锚点时，把画布坐标转换到 transformer 局部坐标：
+
+```ts
+const { x, y } = api.canvas2Transformer({ x: canvasX, y: canvasY }, mask);
+tf.rotatePivotX = x;
+tf.rotatePivotY = y;
+tf.rotatePivotPinned = true;
+```
+
+4. 旋转时优先使用该 pivot（未设置时回退几何中心），并在求解新 OBB 原点时保持该 pivot 的世界坐标不变：
+
+```ts
+const [px, py] = this.getRotatePivotWorld(api, selection);
+const pivotLocalX = Number.isNaN(tf.rotatePivotX)
+  ? selection.obb.width / 2
+  : tf.rotatePivotX;
+const pivotLocalY = Number.isNaN(tf.rotatePivotY)
+  ? selection.obb.height / 2
+  : tf.rotatePivotY;
+
+const newAttrs = this.alignObbOriginToFixedPivot(
+  selection.obb,
+  pivotLocalX,
+  pivotLocalY,
+  px,
+  py,
+  newRotation,
+);
+```
+
+5. 当选中对象集合变化时，将 pivot 重置回几何中心。
 
 ## 使用方向键移动图形 {#nudge-the-position}
 
@@ -528,6 +592,37 @@ export class Transformable {
 
 <TransformerPolyline />
 
+### Path {#transformer-for-path}
+
+tldraw 提供了一个例子：[cubic-bezier-shape]。对于交互编辑来说，需要解决两个问题：
+
+1. 稳定的可编辑点：每个锚点、每个贝塞尔控制点都能被选中、拖拽，且拖拽后写回 `d`。
+2. 写回不丢语义：尽量用统一、可预测的命令序列，避免在编辑器里手写解析器。
+
+因此我们需要先把 `d` 归一成少量命令类型（例如相对命令转换成绝对命令），再用「命令下标 + 坐标在数组里的偏移」当作 handle 的身份证，拖拽时只改数字，最后用 `path2String` 再序列化回字符串。
+
+| 命令  | 产生的 handle  | meta 含义                                                  |
+| ----- | -------------- | ---------------------------------------------------------- |
+| M / L | 1 个点（顶点） | `coordOffset: 1` → 该点 `(x,y)`                            |
+| Q     | 控制点 + 终点  | offset `1` 与 `3`                                          |
+| C     | cp1、cp2、终点 | offset `1`、`3`、`5`                                       |
+| A     | 仅终点         | offset `6`（弧本身不提供可拖拽的「贝塞尔柄」，只暴露终点） |
+
+```ts
+interface PathControlHandleMeta {
+    commandIndex: number; // 归一化后命令数组里的下标。
+    coordOffset: number; // 该 handle 对应坐标的起始下标（从 1 开始，因为 command[0] 是命令字）。
+}
+
+type HandlePoint = {
+    x: number;
+    y: number;
+    meta: PathControlHandleMeta;
+};
+```
+
+<TransformerPath />
+
 ## 扩展阅读 {#extended-reading}
 
 -   [图形编辑器开发：自定义光标]
@@ -550,3 +645,4 @@ export class Transformable {
 [SerializedNode]: /zh/guide/lesson-010#shape-to-serialized-node
 [fig-file-parser]: https://madebyevan.com/figma/fig-file-parser
 [Is there a way to keep the image aspect ratio on transform?]: https://github.com/konvajs/react-konva/issues/407
+[cubic-bezier-shape]: https://examples.tldraw.com/cubic-bezier-shape
