@@ -1,11 +1,11 @@
 import { localized, msg, str } from '@lit/localize';
-import { html, css, LitElement, PropertyValues } from 'lit';
+import { css, html, LitElement, PropertyValues } from 'lit';
 import { customElement, query, state } from 'lit/decorators.js';
 import { when } from 'lit/directives/when.js';
 import { consume } from '@lit/context';
 import {
-  CheckboardStyle,
   AppState,
+  CheckboardStyle,
   readSystemClipboard,
   ThemeMode,
 } from '@infinite-canvas-tutorial/ecs';
@@ -137,10 +137,14 @@ export class TopNavbar extends LitElement {
     const selected = (event.target as any).selected[0];
     let themeMode = selected === 'dark' ? ThemeMode.DARK : ThemeMode.LIGHT;
     if (selected === 'system') {
-      themeMode = window.matchMedia('(prefers-color-scheme: dark)').matches ? ThemeMode.DARK : ThemeMode.LIGHT;
+      themeMode = window.matchMedia('(prefers-color-scheme: dark)').matches
+        ? ThemeMode.DARK
+        : ThemeMode.LIGHT;
     }
 
-    this.api.setThemeMode(themeMode);
+    this.api.setAppState({
+      themeMode,
+    });
   }
 
   private handleUndo() {
@@ -237,9 +241,9 @@ export class TopNavbar extends LitElement {
                   slot="submenu"
                   selects="multiple"
                   .selected=${this.appState.checkboardStyle ===
-            CheckboardStyle.GRID
-            ? ['grid']
-            : []}
+                  CheckboardStyle.GRID
+                    ? ['grid']
+                    : []}
                   @change=${this.handleConfigView}
                 >
                   <sp-menu-item value="grid"> ${msg(str`Grid`)} </sp-menu-item>
@@ -251,13 +255,13 @@ export class TopNavbar extends LitElement {
                   slot="submenu"
                   selects="multiple"
                   .selected=${[
-            this.appState.snapToPixelGridEnabled
-              ? 'snapToPixelGrid'
-              : undefined,
-            this.appState.snapToObjectsEnabled
-              ? 'snapToObjects'
-              : undefined,
-          ].filter(Boolean)}
+                    this.appState.snapToPixelGridEnabled
+                      ? 'snapToPixelGrid'
+                      : undefined,
+                    this.appState.snapToObjectsEnabled
+                      ? 'snapToObjects'
+                      : undefined,
+                  ].filter(Boolean)}
                   @change=${this.handleConfigPreferences}
                 >
                   <sp-menu-item value="snapToPixelGrid">

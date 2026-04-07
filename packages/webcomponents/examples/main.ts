@@ -32,10 +32,13 @@ import {
   TextDecoration,
   Line,
   Plugin,
+  ThemeMode,
   getDefaultAppState,
   Pen,
-  Task, CheckboardStyle,
-} from '@infinite-canvas-tutorial/ecs';
+  Task,
+  CheckboardStyle,
+} from '../../ecs';
+import { Event, UIPlugin } from '../src';
 import '../src/spectrum';
 import { LaserPointerPlugin } from '../../plugin-laser-pointer/src';
 import { EraserPlugin } from '../../plugin-eraser/src';
@@ -292,7 +295,7 @@ async function openCanvas(id?: string) {
       ],
     penbarVisible: true,
     taskbarVisible: true,
-    // checkboardStyle: CheckboardStyle.GRID,
+    checkboardStyle: CheckboardStyle.NONE,
       snapToPixelGridEnabled: true,
     snapToPixelGridSize: 1,
       // snapToPixelGridEnabled: false,
@@ -306,6 +309,9 @@ async function openCanvas(id?: string) {
       // taskbarVisible: false,
     rotateEnabled: true,
     flipEnabled: true,
+    giEnabled: false,
+    // giStrength: 0.05,
+    // themeMode: ThemeMode.DARK,
       // filter: 'noise(0.5)',
     // layersLassoing: ['parent'],
     });
@@ -317,7 +323,8 @@ async function openCanvas(id?: string) {
     y: 0,
     width: 100,
     height: 100,
-    fill: 'grey',
+    fill: 'green',
+    zIndex: 1,
   };
   const node2 = {
     id: 'binding-curved-rect-2',
@@ -327,6 +334,7 @@ async function openCanvas(id?: string) {
     width: 100,
     height: 100,
     fill: 'red',
+    zIndex: 2,
   };
   const node3 = {
     id: 'binding-curved-rect-3',
@@ -370,16 +378,45 @@ async function openCanvas(id?: string) {
     curved: true,
   };
 
-  api.updateNodes([
-    node1, node2, node3, edge1, edge2
-  ]);
-  api.selectNodes([node1])
+  const line = {
+    id: 'line-1',
+    type: 'line',
+    x1: 100,
+    y1: 0,
+    x2: 200,
+    y2: 100,
+    stroke: 'red',
+    strokeWidth: 10,
+  };
 
-  setTimeout(() => {
-    api.updateNode(node1, {
-      locked: true,
-    })
-  }, 1000);
+  const polyline = {
+    id: 'polyline-1',
+    type: 'polyline',
+    points: '100,0 200,100 300,0',
+    stroke: 'white',
+    strokeWidth: 10,
+    zIndex: 3,
+  };
+
+  const path = {
+    id: 'path-1',
+    type: 'path',
+    d: 'M 100 0 L 200 100 L 300 0 Z',
+    stroke: 'black',
+    strokeWidth: 10,
+    zIndex: 3,
+  }
+
+  api.updateNodes([
+    // node1,
+    // node2,
+    line,
+    // polyline,
+    // path
+    // node3,
+    // edge1, edge2
+  ]);
+  // api.selectNodes([node1])
 
     isLoading = false;
   });

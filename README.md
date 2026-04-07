@@ -447,6 +447,18 @@ If you want to use it in your own project, you can refer to:
 | :-------------------------------: | :-: |
 | ![vello](./screenshots/vello.png) |     |
 
+## Lesson 36 - Animation [🔗](https://infinitecanvas.cc/guide/lesson-036)
+
+## Lesson 37 - Global illumination with radiance cascades [🔗](https://infinitecanvas.cc/guide/lesson-037)
+
+-   Implement radiance cascades with WebGPU Compute Shader
+    -   Generate SDF with analytic geometry methods
+    -   Raymarch
+
+|               Radiance Cascades               |
+| :-------------------------------------------: |
+| ![vello](./screenshots/radiance-cascades.png) |
+
 [Online App]: app.infinitecanvas.cc
 [infinitecanvas]: https://infinitecanvas.tools/
 [Self-Deployment Guide]: /packages/app/README.md

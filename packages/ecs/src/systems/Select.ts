@@ -1,64 +1,69 @@
 import { Entity, System } from '@lastolivegames/becsy';
 import { mat3, vec2 } from 'gl-matrix';
 import {
+  AnchorName,
+  Binded,
+  Binding,
+  Brush,
   Camera,
   Canvas,
   Children,
   Circle,
+  ClipMode,
   ComputedBounds,
   ComputedCamera,
+  ComputedCameraControl,
+  ComputedPoints,
+  ComputedTextMetrics,
+  Culled,
   Cursor,
+  DropShadow,
+  Editable,
   Ellipse,
+  Embed,
+  FillGradient,
+  FillImage,
+  FillPattern,
   FillSolid,
   FractionalIndex,
+  GeometryDirty,
   GlobalTransform,
   Group,
+  hasFullOrPartialEdgeBinding,
   Highlighted,
+  HTML,
   Input,
   InputPoint,
+  Line,
+  Locked,
+  Marker,
+  Mat3,
+  MaterialDirty,
   OBB,
   Opacity,
   Parent,
+  PartialBinding,
   Path,
   Pen,
   Polyline,
   RBush,
   Rect,
   Renderable,
+  Rough,
   Selected,
   Stroke,
   StrokeAttenuation,
   Text,
+  ToBeDeleted,
   Transform,
   Transformable,
   TransformableStatus,
   UI,
+  VectorNetwork,
   Visibility,
   ZIndex,
-  AnchorName,
-  VectorNetwork,
-  ComputedCameraControl,
-  ComputedPoints,
-  DropShadow,
-  Culled,
-  ToBeDeleted,
-  Brush,
-  HTML,
-  Embed,
-  Editable,
-  Locked,
-  Line,
-  ClipMode,
-  MaterialDirty,
-  FillGradient,
-  FillImage,
-  FillPattern,
-  Binding,
-  Binded,
-  PartialBinding,
-  hasFullOrPartialEdgeBinding,
 } from '../components';
-import { Commands } from '../commands/Commands';
+import { Commands } from '../commands';
 import {
   calculateOffset,
   createSVGElement,
@@ -69,27 +74,23 @@ import {
   getGridPoint,
   hasTerminalPoint,
   isBrowser,
+  rebasePolylinePathGeometryToLocalOrigin,
   snapDraggedElements,
   snapToGrid,
 } from '../utils';
 import { API } from '../API';
-import {
-  getOBB,
-  hitTest,
-  TRANSFORMER_ANCHOR_STROKE_COLOR,
-  TRANSFORMER_MASK_FILL_COLOR,
-} from './RenderTransformer';
+import { getOBB, hitTest, TRANSFORMER_ANCHOR_STROKE_COLOR, TRANSFORMER_MASK_FILL_COLOR, } from './RenderTransformer';
 import { updateGlobalTransform } from './Transform';
 import { safeAddComponent } from '../history';
 import { updateComputedPoints } from './ComputePoints';
 import { DOMAdapter } from '../environment';
 import { hideLabel, initLabel, showLabel } from '..';
-import type { EdgeSerializedNode, SerializedNode } from '../types/serialized-node';
+import type { EdgeSerializedNode, SerializedNode, } from '../types/serialized-node';
 import { constraintAttrsFromCanvasPoint } from '../utils/binding/constraint-from-point';
 import {
   collectPathControlHandles,
-  PathControlHandleMeta,
   PathCommand,
+  PathControlHandleMeta,
   setPathHandlePoint,
   toPathData,
 } from '../utils/path-edit';
@@ -124,7 +125,7 @@ export interface SelectOBB {
   activeSegmentMidpointIndex?: number;
   nodes: SerializedNode[];
 
-  /** 与 `ComputedBounds.selectionOBB` 一致，供变换器 / resize 数学使用 */
+  /** Consistent with 'ComputedBounds.selectionOBB' for transformer / resize math */
   obb: {
     x: number;
     y: number;
@@ -153,13 +154,13 @@ export interface SelectOBB {
   rotateLastPointerAngle?: number;
   /** Total rotation applied during current rotate gesture (rad), relative to saved {@link SelectOBB.obb}. */
   rotateAccumulated?: number;
-  /** 旋转手势开始时锁定的枢轴（画布坐标）；避免拖拽中 mask 每帧更新导致 `transformer2Canvas(pivot, mask)` 漂移。 */
+  /** The pivot (canvas coordinates) that locks at the beginning of the rotation gesture; Avoid dragging masks every frame that causes 'transformer2Canvas(pivot, mask)' to drift. */
   rotatePivotWorldFixed?: [number, number];
-  /** 与 {@link SelectOBB.obb} 手势快照一致的局部枢轴；避免 `updateRectMask` 每帧按新 union 宽高重写 rotatePivot。 */
+  /** local pivot consistent with {@link SelectOBB.obb} gesture snapshot; Avoid 'updateRectMask' rewriting rotatePivot by new union height per frame. */
   rotatePivotLocalFixed?: [number, number];
   selectedNodeIds?: string[];
 
-  /** 绑定边重接时最后一次指针位置（画布坐标） */
+  /** Last pointer position (canvas coordinates) when binding edge reconnect */
   bindingRebindLastCanvas?: { x: number; y: number };
 }
 
@@ -182,8 +183,8 @@ function isEdgeBindingRebindCandidate(
 }
 
 /**
- * 控制点拖拽结束时：仅当拖的是边的起点/终点（非贝塞尔中间柄）才应对应 X1Y1/X2Y2 做绑定重接。
- * 否则误用旧的 {@link SelectOBB.resizingAnchorName} 会把端点写到控制柄位置上。
+ * At the end of the control point drag: Only the start/end point of the dragged edge (non-Bézier intermediate handle) should be reconnected for X1Y1/X2Y2.
+ * Otherwise, misusing the old {@link SelectOBB.resizingAnchorName} will write the endpoint to the handle position.
  */
 function getEdgeRebindAnchorForControlPointDrag(
   edgeNode: SerializedNode,
@@ -256,6 +257,8 @@ export class Select extends System {
             FillImage,
             FillPattern,
             Stroke,
+            Rough,
+            ComputedTextMetrics,
           )
           .read.update.and.using(
             GlobalTransform,
@@ -297,7 +300,9 @@ export class Select extends System {
             Editable,
             ClipMode,
             MaterialDirty,
+            GeometryDirty,
             Locked,
+            Marker
           ).write,
     );
     this.query((q) => q.using(ComputedCamera, FractionalIndex, RBush).read);
@@ -434,7 +439,7 @@ export class Select extends System {
     this.saveSelectedOBB(api, selection);
   }
 
-  /** 选区 OBB 在画布坐标系下的几何中心（与 mask 的 Transform × Rect 一致）。 */
+  /** Geometric center of the OBB in the canvas coordinate system (consistent with mask's Transform × Rect)。 */
   private obbWorldCenter(obb: SelectOBB['obb']): [number, number] {
     const { x, y, width, height, rotation, scaleX, scaleY } = obb;
     const lx = width / 2;
@@ -447,7 +452,7 @@ export class Select extends System {
     ];
   }
 
-  /** 保持任意本地 pivot 的世界坐标不动，仅改变旋转角时，反推新的 OBB 原点 (x, y)。 */
+  /** Keep the world coordinates of any local pivot untouched, and push back the new OBB origin (x, y) when only changing the rotation angle。 */
   private alignObbOriginToFixedPivot(
     obb: SelectOBB['obb'],
     pivotLocalX: number,
@@ -480,7 +485,7 @@ export class Select extends System {
     return this.obbWorldCenter(selection.obb);
   }
 
-  /** 旋转拖拽全程使用指针按下时锁定的世界枢轴（见 {@link SelectOBB.rotatePivotWorldFixed}）。 */
+  /** Rotate and drag the entire process using the world pivot that locks when the pointer is pressed (see {@link SelectOBB.rotatePivotWorldFixed})。 */
   private getRotatePivotWorldStable(api: API, selection: SelectOBB): [number, number] {
     if (selection.rotatePivotWorldFixed) {
       return selection.rotatePivotWorldFixed;
@@ -583,76 +588,90 @@ export class Select extends System {
       resizingAnchorName === AnchorName.X1Y1 ||
       resizingAnchorName === AnchorName.X2Y2
     ) {
-      const { x1y1Anchor, x2y2Anchor, lineMask } = camera.read(Transformable);
-      const edgeNode = api.getNodeById(layersSelected[0]);
-      const edgeEntity = edgeNode ? api.getEntity(edgeNode) : undefined;
-      if (isEdgeBindingRebindCandidate(edgeEntity, edgeNode as EdgeSerializedNode)) {
+      const node = api.getNodeById(layersSelected[0]);
+      if (!node) {
+        return;
+      }
+      const selected = api.getEntity(node);
+      if (!selected?.has(GlobalTransform)) {
+        return;
+      }
+
+      if (isEdgeBindingRebindCandidate(selected, node as EdgeSerializedNode)) {
         selection.bindingRebindLastCanvas = { x: canvasX, y: canvasY };
         this.applyBindingRebindHover(api, canvasX, canvasY);
       }
 
-      const { x, y } = api.canvas2Transformer(
-        {
-          x: canvasX,
-          y: canvasY,
-        },
-        lineMask,
-      );
-
       const isX1Y1 = resizingAnchorName === AnchorName.X1Y1;
-      const isX2Y2 = resizingAnchorName === AnchorName.X2Y2;
-      if (isX1Y1) {
-        Object.assign(x1y1Anchor.write(Circle), {
-          cx: x,
-          cy: y,
-        });
-      } else if (isX2Y2) {
-        Object.assign(x2y2Anchor.write(Circle), {
-          cx: x,
-          cy: y,
-        });
-      }
 
-      const node = api.getNodeById(layersSelected[0]);
-      const { cx: x1y1Cx, cy: x1y1Cy } = x1y1Anchor.read(Circle);
-      const { cx: x2y2Cx, cy: x2y2Cy } = x2y2Anchor.read(Circle);
-      const points = [
-        [x1y1Cx, x1y1Cy],
-        [x2y2Cx, x2y2Cy],
-      ];
+      const inv = mat3.invert(
+        mat3.create(),
+        Mat3.toGLMat3(selected.read(GlobalTransform).matrix),
+      );
+      if (!inv) {
+        return;
+      }
+      const local = vec2.transformMat3(vec2.create(), [canvasX, canvasY], inv);
 
       if (node.type === 'line' || node.type === 'rough-line') {
+        if (!selected.has(Line)) {
+          return;
+        }
+        const line = selected.read(Line);
+        let x1 = line.x1;
+        let y1 = line.y1;
+        let x2 = line.x2;
+        let y2 = line.y2;
+        if (isX1Y1) {
+          x1 = local[0];
+          y1 = local[1];
+        } else {
+          x2 = local[0];
+          y2 = local[1];
+        }
+        api.updateNode(node, { x1, y1, x2, y2 });
+      } else if (selected.has(Polyline)) {
+        const { points } = selected.read(Polyline);
+        const next = points.map((p) => [p[0], p[1]] as [number, number]);
+        if (isX1Y1) {
+          next[0] = [local[0], local[1]];
+        } else {
+          next[next.length - 1] = [local[0], local[1]];
+        }
         api.updateNode(node, {
-          x1: x1y1Cx,
-          y1: x1y1Cy,
-          x2: x2y2Cx,
-          y2: x2y2Cy,
+          points: next.map((p) => p.join(',')).join(' '),
         });
       } else {
-        api.updateNode(node, {
-          points: points.map((point) => point.join(',')).join(' '),
-        });
+        return;
       }
 
-      const selected = api.getEntity(node);
       updateGlobalTransform(selected);
       updateComputedPoints(selected);
 
       {
-        const cx = canvasX;
-        const cy = canvasY;
-        const { x, y } = api.transformer2Canvas(
-          {
-            x: isX1Y1 ? x2y2Cx : x1y1Cx,
-            y: isX1Y1 ? x2y2Cy : x1y1Cy,
-          },
-          lineMask,
+        const m = Mat3.toGLMat3(selected.read(GlobalTransform).matrix);
+        let fixedLocalX: number;
+        let fixedLocalY: number;
+        if (node.type === 'line' || node.type === 'rough-line') {
+          const ln = selected.read(Line);
+          fixedLocalX = isX1Y1 ? ln.x2 : ln.x1;
+          fixedLocalY = isX1Y1 ? ln.y2 : ln.y1;
+        } else {
+          const { points } = selected.read(Polyline);
+          const fp = isX1Y1 ? points[points.length - 1] : points[0];
+          fixedLocalX = fp[0];
+          fixedLocalY = fp[1];
+        }
+        const otherCanvas = vec2.transformMat3(
+          vec2.create(),
+          [fixedLocalX, fixedLocalY],
+          m,
         );
-        const width = cx - x;
-        const height = cy - y;
+        const width = canvasX - otherCanvas[0];
+        const height = canvasY - otherCanvas[1];
         showLabel(label, api, {
-          x,
-          y,
+          x: otherCanvas[0],
+          y: otherCanvas[1],
           width,
           height,
           rotate: true,
@@ -1068,6 +1087,8 @@ export class Select extends System {
       api.updateNode(node, {
         points: points.map((point) => point.join(',')).join(' '),
       });
+      updateGlobalTransform(selected);
+      updateComputedPoints(selected);
       if (isEdgeBindingRebindCandidate(selected, node as EdgeSerializedNode)) {
         selection.bindingRebindLastCanvas = { x: canvasX, y: canvasY };
         this.applyBindingRebindHover(api, canvasX, canvasY);
@@ -1088,6 +1109,7 @@ export class Select extends System {
     api.updateNode(node, {
       d: toPathData(nextCommands),
     });
+
     camera.write(Transformable).pathControlCommands =
       nextCommands as unknown as (string | number)[][];
 
@@ -1139,6 +1161,17 @@ export class Select extends System {
 
     api.setNodes(api.getNodes());
     api.record();
+
+    const { layersSelected: movedLayers } = api.getAppState();
+    if (movedLayers.length === 1) {
+      const movedNode = api.getNodeById(movedLayers[0]);
+      const movedEntity = movedNode ? api.getEntity(movedNode) : undefined;
+      if (movedNode && movedEntity) {
+        updateGlobalTransform(movedEntity);
+        updateComputedPoints(movedEntity);
+        rebasePolylinePathGeometryToLocalOrigin(api, movedNode);
+      }
+    }
 
     camera.write(Transformable).status = TransformableStatus.MOVED;
     this.saveSelectedOBB(api, selection);
@@ -1239,6 +1272,9 @@ export class Select extends System {
     api.updateNode(node, {
       points: nextPoints.map((point) => point.join(',')).join(' '),
     });
+    updateGlobalTransform(selected);
+    updateComputedPoints(selected);
+    rebasePolylinePathGeometryToLocalOrigin(api, api.getNodeById(node.id)!);
     api.record();
 
     selection.activeControlPointIndex = Math.min(
@@ -1312,6 +1348,17 @@ export class Select extends System {
 
     api.setNodes(api.getNodes());
     api.record();
+
+    if (
+      layersSelected.length === 1 &&
+      (selection.resizingAnchorName === AnchorName.X1Y1 ||
+        selection.resizingAnchorName === AnchorName.X2Y2)
+    ) {
+      const lineNode = api.getNodeById(layersSelected[0]);
+      if (lineNode?.type === 'line' || lineNode?.type === 'rough-line') {
+        rebasePolylinePathGeometryToLocalOrigin(api, lineNode);
+      }
+    }
 
     const { selecteds } = camera.read(Transformable);
     selecteds.forEach((selected) => {
@@ -1553,17 +1600,35 @@ export class Select extends System {
       }
 
       const selection = this.selections.get(camera.__id);
-      if (input.doubleClickTrigger) {
+
+      if (input.doubleClickTrigger && pen === Pen.SELECT) {
         const { selecteds } = camera.read(Transformable);
         if (selecteds.length === 1) {
           const selected = selecteds[0];
-          const nodeToEdit = api.getNodeByEntity(selected);
-
-          if ((selected.has(Editable) || nodeToEdit?.editable) && nodeToEdit) {
-            selection.mode = SelectionMode.EDITING;
-            selection.editing = selected;
-            api.updateNode(nodeToEdit, { isEditing: true });
-            return;
+          if (!selected.has(Locked)) {
+            const node = api.getNodeByEntity(selected);
+            if (
+              node &&
+              selected.hasSomeOf(Polyline, Path) &&
+              !(
+                hasFullOrPartialEdgeBinding(selected) &&
+                selected.has(Polyline)
+              )
+            ) {
+              const t = node.type;
+              if (
+                t === 'polyline' ||
+                t === 'rough-polyline' ||
+                t === 'path' ||
+                t === 'rough-path'
+              ) {
+                safeAddComponent(selected, Editable);
+                selected.write(Editable).isEditing = true;
+                api.updateNode(node, { isEditing: true });
+                selection.editing = selected;
+                return;
+              }
+            }
           }
         }
       }
@@ -1573,23 +1638,24 @@ export class Select extends System {
 
         if (selection.editing) {
           if (selection.mode === SelectionMode.IDLE) {
-            const nodeToStopEditing = api.getNodeByEntity(selection.editing);
-            if (nodeToStopEditing) {
-              api.updateNode(nodeToStopEditing, { isEditing: false });
-            }
+            safeAddComponent(selection.editing, Editable);
+            selection.editing.write(Editable).isEditing = false;
+            api.updateNode(api.getNodeByEntity(selection.editing), { isEditing: false });
 
             selection.editing = undefined;
             selection.mode = SelectionMode.SELECT;
             api.setAppState({
               editingPoints: [],
             });
-          } else if (selection.mode === SelectionMode.READY_TO_MOVE) {
+            return;
+          }
+          if (selection.mode === SelectionMode.READY_TO_MOVE) {
             api.setAppState({
               editingPoints: [[x, y]],
             });
+            return;
           }
-
-          return;
+          // In the edit state, you still need to allow transformer gestures such as control points/zoom/rotate, and do not use them here一 return
         }
 
         if (selection.mode === SelectionMode.IDLE) {
@@ -1711,7 +1777,7 @@ export class Select extends System {
           }
         }
 
-        // 点击/框选等改变 layersSelected 时同步 OBB，并重置旋转枢轴（与上一选中项的 origin 脱钩）
+        // Synchronize the OBB when clicking/boxing etc. to change layersSelected, and reset the rotation pivot (decoupled from the origin of the previous selection)
         this.saveSelectedOBB(api, selection);
       }
 
@@ -1930,6 +1996,16 @@ export class Select extends System {
       });
 
       if (input.key === 'Escape') {
+        if (selection.editing) {
+          const editingNode = api.getNodeByEntity(selection.editing);
+          safeAddComponent(selection.editing, Editable);
+          selection.editing.write(Editable).isEditing = false;
+          if (editingNode) {
+            api.updateNode(editingNode, { isEditing: false });
+          }
+          selection.editing = undefined;
+          api.setAppState({ editingPoints: [] });
+        }
         api.selectNodes([]);
         api.highlightNodes([]);
         this.saveSelectedOBB(api, selection);
@@ -2057,6 +2133,22 @@ export class Select extends System {
       tf.rotatePivotPinned = false;
       tf.rotatePivotX = NaN;
       tf.rotatePivotY = NaN;
+
+      if (selection.editing) {
+        const editingNode = api.getNodeByEntity(selection.editing);
+        const editingId = editingNode?.id;
+        const stillSame =
+          selectedNodeIds.length === 1 && selectedNodeIds[0] === editingId;
+        if (!stillSame) {
+          safeAddComponent(selection.editing, Editable);
+          selection.editing.write(Editable).isEditing = false;
+          if (editingNode) {
+            api.updateNode(editingNode, { isEditing: false });
+          }
+          selection.editing = undefined;
+          api.setAppState({ editingPoints: [] });
+        }
+      }
     }
     const obb = getOBB(camera);
     selection.obb = {
@@ -2097,7 +2189,7 @@ export class Select extends System {
     };
 
     const tfStatus = camera.read(Transformable).status;
-    /** 多选时选区 OBB 是子项世界包络的轴对齐框，与各节点局部变换不在同一「虚拟框」坐标系；Konva 式 delta 对框成立，但不能左乘到多个独立 local 上得到绕枢轴旋转。 */
+    /** In multi-selection, the OBB is the axis alignment box of the child world envelope, which is not in the same "virtual box" coordinate system as the local transformation of each node. Konva-style delta pairing is true, but it cannot be multiplied to the left by multiple independent locals to get a pivot rotation。 */
     const useWorldPivotRotate =
       selecteds.length > 1 && tfStatus === TransformableStatus.ROTATING;
 
@@ -2150,8 +2242,8 @@ export class Select extends System {
         return;
       }
       visited.add(entity);
-      // Group：selection OBB 是世界子并集 AABB，与 Group 根 Transform 不一致，不能对根套用 Konva delta；
-      // 只把 delta 下发到子树（与多选 resize 一致）。
+      //Group:selection OBB is a world subset AABB, which is inconsistent with the Group root Transform and cannot be applied to the root Konva delta；
+      // Only send delta to subtree (consistent with multi-select resize)。
       if (entity.has(Group)) {
         if (entity.has(Parent)) {
           const { children } = entity.read(Parent);
@@ -2159,7 +2251,7 @@ export class Select extends System {
         }
         return;
       }
-      // 非 Group：只更新该节点。子节点随父级 Transform 级联，若再对子节点套用同一 delta 会在世界空间叠加两次变换。
+      // Non-Group: Only the node is updated. Child nodes are cascaded with the parent Transform, and if the same delta is applied to the child node, two transformations will be superimposed in world space.
       entitiesToUpdate.push(entity);
     };
     selecteds.forEach((selected) => collectSelectedAndDescendants(selected));
