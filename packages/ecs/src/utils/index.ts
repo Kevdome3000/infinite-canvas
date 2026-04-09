@@ -30,3 +30,6 @@ export * from './edge-label';
 export * from './rebase-edge-geometry';
 export * from './polyline-arclength';
 export * from './hitStrokeWidth';
+export * from './polygon';
+export * from './vector-network-stroke';
+export * from './vector-network-fill';

@@ -10,4 +10,5 @@ export * from './Screenshot';
 export * from './Pen';
 export * from './Culling';
 export * from './HTML';
+export * from './Animation';
 export * from './Layout';

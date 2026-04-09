@@ -51,12 +51,13 @@ import {
   ClipMode,
   Flex,
   Group,
-  Theme
+  Theme,
+  AnimationPlayer,
 } from '@infinite-canvas-tutorial/ecs';
 import { Event } from '../event';
 import { ExtendedAPI, pendingCanvases } from '../API';
 import { LitStateManagement } from '../context';
-import { InfiniteCanvas } from '../spectrum/infinite-canvas';
+import { InfiniteCanvas } from '../spectrum';
 import { localizedTemplates } from '../i18n';
 
 export class InitCanvas extends System {
@@ -115,6 +116,7 @@ export class InitCanvas extends System {
             ClipMode,
             Flex,
             Theme,
+            AnimationPlayer,
           ).write,
     );
   }

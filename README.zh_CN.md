@@ -450,11 +450,22 @@ pnpm run dev
 
 ## 课程 36 - 动画 [🔗](https://infinitecanvas.cc/zh/guide/lesson-036)
 
+-   如何设计动画 API
+-   参考 Web Animation API 实现声明式 Keyframe 与控制器
+-   实现路径、笔迹、形变等动画效果
+-   支持 Lottie 等格式
+
+|               Morph               |                      Dashoffset animation                       |
+| :-------------------------------: | :-------------------------------------------------------------: |
+| ![morph](./screenshots/morph.gif) | ![animation-dashoffset](./screenshots/animation-dashoffset.gif) |
+
 ## 课程 37 - 基于 Radiance Cascades 的 GI [🔗](https://infinitecanvas.cc/zh/guide/lesson-037)
 
 -   使用 WebGPU Compute Shader 实现 Radiance Cascades
     -   使用解析几何生成距离场
-    -   raymarch
+    -   计算 cascade：CPU 调度与 ping-pong、派发射线、raymarch 与合并
+    -   生成 mipmap
+    -   与 vello 渲染管线结合，合成最终结果
 
 |               Radiance Cascades               |
 | :-------------------------------------------: |

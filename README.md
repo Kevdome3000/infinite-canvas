@@ -449,11 +449,22 @@ If you want to use it in your own project, you can refer to:
 
 ## Lesson 36 - Animation [🔗](https://infinitecanvas.cc/guide/lesson-036)
 
+-   How to design an animation API
+-   How to implement declarative keyframes and controllers aligned with the Web Animations API
+-   How to implement path, stroke, and morphing effects
+-   How formats like Lottie fit in
+
+|               Morph               |                      Dashoffset animation                       |
+| :-------------------------------: | :-------------------------------------------------------------: |
+| ![morph](./screenshots/morph.gif) | ![animation-dashoffset](./screenshots/animation-dashoffset.gif) |
+
 ## Lesson 37 - Global illumination with radiance cascades [🔗](https://infinitecanvas.cc/guide/lesson-037)
 
 -   Implement radiance cascades with WebGPU Compute Shader
     -   Generate SDF with analytic geometry methods
-    -   Raymarch
+    -   Compute cascade: ping-pong, dispatch rays, raymarch and merge
+    -   Generate mipmap
+    -   Composite with vello pipeline
 
 |               Radiance Cascades               |
 | :-------------------------------------------: |

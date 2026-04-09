@@ -200,7 +200,7 @@ export interface BindedAttributes {
 	 * "portConstraint".
    *
    * e.g. "north,south"
-	 */
+   */
   portConstraint: string;
 }
 
@@ -501,6 +501,8 @@ export interface VectorNetworkAttributes {
 }
 export interface VectorNetworkSerializedNode
   extends BaseSerializeNode<'vector-network'>,
+  Partial<FillAttributes>,
+  Partial<StrokeAttributes>,
   Partial<VectorNetworkAttributes> { }
 
 export interface HtmlAttributes {

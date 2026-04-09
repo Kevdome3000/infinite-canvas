@@ -183,6 +183,12 @@ export function inferXYWidthHeight(node: SerializedNode) {
       } else if (type === 'text') {
         node.anchorX = (node.anchorX ?? 0) - bounds.minX;
         node.anchorY = (node.anchorY ?? 0) - bounds.minY;
+      } else if (type === 'vector-network') {
+        node.vertices = node.vertices.map((vertex) => ({
+          ...vertex,
+          x: vertex.x - bounds.minX,
+          y: vertex.y - bounds.minY,
+        }));
       }
     } else {
       throw new Error('Cannot infer x, y, width or height for node');

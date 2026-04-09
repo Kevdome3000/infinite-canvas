@@ -4,15 +4,15 @@ import { when } from 'lit/directives/when.js';
 import { consume } from '@lit/context';
 import {
   AppState,
-  Pen,
   FillAttributes,
-  RoughAttributes,
   Marker,
   MarkerAttributes,
+  Pen,
+  RoughAttributes,
 } from '@infinite-canvas-tutorial/ecs';
 import { apiContext, appStateContext } from '../context';
 import { ExtendedAPI } from '../API';
-import { msg, str, localized } from '@lit/localize';
+import { localized, msg, str } from '@lit/localize';
 
 @customElement('ic-spectrum-penbar-draw-settings')
 @localized()
@@ -57,6 +57,9 @@ export class PenbarDrawSettings extends LitElement {
   @property({ type: String })
   pen:
     | Pen.DRAW_RECT
+    | Pen.DRAW_TRIANGLE
+    | Pen.DRAW_PENTAGON
+    | Pen.DRAW_HEXAGON
     | Pen.DRAW_ELLIPSE
     | Pen.DRAW_LINE
     | Pen.DRAW_ARROW
@@ -181,18 +184,27 @@ export class PenbarDrawSettings extends LitElement {
   get penbarDrawKey() {
     return this.pen === Pen.DRAW_RECT
       ? 'penbarDrawRect'
+      : this.pen === Pen.DRAW_TRIANGLE
+      ? 'penbarDrawTriangle'
+      : this.pen === Pen.DRAW_PENTAGON
+      ? 'penbarDrawPentagon'
+      : this.pen === Pen.DRAW_HEXAGON
+      ? 'penbarDrawHexagon'
       : this.pen === Pen.DRAW_ELLIPSE
-        ? 'penbarDrawEllipse'
-        : this.pen === Pen.DRAW_LINE
-          ? 'penbarDrawLine'
-          : this.pen === Pen.DRAW_ARROW
-            ? 'penbarDrawArrow'
-            : 'penbarDrawRoughRect';
+      ? 'penbarDrawEllipse'
+      : this.pen === Pen.DRAW_LINE
+      ? 'penbarDrawLine'
+      : this.pen === Pen.DRAW_ARROW
+      ? 'penbarDrawArrow'
+      : 'penbarDrawRoughRect';
   }
 
   get penbarDraw() {
     const {
       penbarDrawRect,
+      penbarDrawTriangle,
+      penbarDrawPentagon,
+      penbarDrawHexagon,
       penbarDrawEllipse,
       penbarDrawLine,
       penbarDrawArrow,
@@ -200,13 +212,19 @@ export class PenbarDrawSettings extends LitElement {
     } = this.appState;
     return this.pen === Pen.DRAW_RECT
       ? penbarDrawRect
+      : this.pen === Pen.DRAW_TRIANGLE
+      ? penbarDrawTriangle
+      : this.pen === Pen.DRAW_PENTAGON
+      ? penbarDrawPentagon
+      : this.pen === Pen.DRAW_HEXAGON
+      ? penbarDrawHexagon
       : this.pen === Pen.DRAW_ELLIPSE
-        ? penbarDrawEllipse
-        : this.pen === Pen.DRAW_LINE
-          ? penbarDrawLine
-          : this.pen === Pen.DRAW_ARROW
-            ? penbarDrawArrow
-            : penbarDrawRoughRect;
+      ? penbarDrawEllipse
+      : this.pen === Pen.DRAW_LINE
+      ? penbarDrawLine
+      : this.pen === Pen.DRAW_ARROW
+      ? penbarDrawArrow
+      : penbarDrawRoughRect;
   }
 
   render() {
@@ -217,10 +235,13 @@ export class PenbarDrawSettings extends LitElement {
 
       <div style="display: flex; flex-direction: column; gap: 4px;">
         ${when(
-      this.pen === Pen.DRAW_RECT ||
-      this.pen === Pen.DRAW_ELLIPSE ||
-      this.pen === Pen.DRAW_ROUGH_RECT,
-      () => html`
+          this.pen === Pen.DRAW_RECT ||
+            this.pen === Pen.DRAW_TRIANGLE ||
+            this.pen === Pen.DRAW_PENTAGON ||
+            this.pen === Pen.DRAW_HEXAGON ||
+            this.pen === Pen.DRAW_ELLIPSE ||
+            this.pen === Pen.DRAW_ROUGH_RECT,
+          () => html`
             <div>
               <sp-field-label for="fill">${msg(str`Fill`)}</sp-field-label>
               <sp-swatch-group
@@ -230,9 +251,9 @@ export class PenbarDrawSettings extends LitElement {
                 @change=${this.handleFillColorChanged}
               >
                 ${theme.colors[theme.mode].swatches.map(
-        (color) =>
-          html` <sp-swatch color=${color} size="s"></sp-swatch> `,
-      )}
+                  (color) =>
+                    html` <sp-swatch color=${color} size="s"></sp-swatch> `,
+                )}
               </sp-swatch-group>
             </div>
 
@@ -249,7 +270,7 @@ export class PenbarDrawSettings extends LitElement {
               ></sp-slider>
             </div>
           `,
-    )}
+        )}
 
         <div>
           <sp-field-label for="stroke">${msg(str`Stroke`)}</sp-field-label>
@@ -260,9 +281,9 @@ export class PenbarDrawSettings extends LitElement {
             @change=${this.handleStrokeColorChanged}
           >
             ${theme.colors[theme.mode].swatches.map(
-      (color) =>
-        html` <sp-swatch color=${color} size="s"></sp-swatch> `,
-    )}
+              (color) =>
+                html` <sp-swatch color=${color} size="s"></sp-swatch> `,
+            )}
           </sp-swatch-group>
         </div>
         <div class="line">
@@ -296,8 +317,8 @@ export class PenbarDrawSettings extends LitElement {
         </div>
 
         ${when(
-      this.pen === Pen.DRAW_ARROW,
-      () => html`
+          this.pen === Pen.DRAW_ARROW,
+          () => html`
             <div class="line">
               <sp-field-label for="marker-start" side-aligned="start"
                 >${msg(str`Marker start`)}</sp-field-label
@@ -310,11 +331,11 @@ export class PenbarDrawSettings extends LitElement {
                 id="marker-start"
               >
                 ${['none', 'line', 'triangle', 'diamond'].map(
-        (markerType) =>
-          html`<sp-menu-item value=${markerType}
+                  (markerType) =>
+                    html`<sp-menu-item value=${markerType}
                       >${markerType}</sp-menu-item
                     >`,
-      )}
+                )}
               </sp-picker>
             </div>
 
@@ -330,18 +351,18 @@ export class PenbarDrawSettings extends LitElement {
                 id="marker-end"
               >
                 ${['none', 'line', 'triangle', 'diamond'].map(
-        (markerType) =>
-          html`<sp-menu-item value=${markerType}
+                  (markerType) =>
+                    html`<sp-menu-item value=${markerType}
                       >${markerType}</sp-menu-item
                     >`,
-      )}
+                )}
               </sp-picker>
             </div>
           `,
-    )}
+        )}
         ${when(
-      this.pen === Pen.DRAW_ROUGH_RECT,
-      () => html`
+          this.pen === Pen.DRAW_ROUGH_RECT,
+          () => html`
             <div>
               <sp-field-label for="rough-fill-style"
                 >${msg(str`Rough fill style`)}</sp-field-label
@@ -388,7 +409,7 @@ export class PenbarDrawSettings extends LitElement {
               ></sp-slider>
             </div>
           `,
-    )}
+        )}
       </div> `;
   }
 }
