@@ -28,18 +28,28 @@ onMounted(async () => {
       ...api.getAppState(),
       penbarSelected: Pen.SELECT,
       penbarAll: [Pen.HAND, Pen.SELECT],
-      filter: 'fxaa() brightness(0.8) noise(0.1)',
+      filter: 'fxaa() brightness(0.1) noise(0.1)',
     });
 
     api.updateNodes([
       {
-        id: '1',
+        id: 'global-effect-1',
         type: 'rect',
         fill: 'https://v3b.fal.media/files/b/tiger/v1lf1EcPP1X1pw_YOKM4o.jpg',
         x: 50,
         y: 50,
         width: 200,
         height: 200,
+        lockAspectRatio: true,
+      },
+      {
+        id: 'global-effect-2',
+        type: 'rect',
+        fill: 'red',
+        x: 300,
+        y: 50,
+        width: 200,
+        height: 100,
         lockAspectRatio: true,
       },
     ]);

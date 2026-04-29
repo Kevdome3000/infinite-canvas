@@ -11,6 +11,7 @@ import {
 
 import { apiContext, appStateContext, nodesContext } from '../context';
 import { pendingCanvases } from '../API';
+import { readStoredThemePreference } from '../theme-preference-storage';
 
 import '@spectrum-web-components/theme/sp-theme.js';
 import '@spectrum-web-components/theme/src/themes.js';
@@ -43,6 +44,22 @@ import '@spectrum-web-components/divider/sp-divider.js';
 
 import '@spectrum-web-components/icons-workflow/icons/sp-icon-add.js';
 import '@spectrum-web-components/icons-workflow/icons/sp-icon-add-to.js';
+import '@spectrum-web-components/icons-workflow/icons/sp-icon-align-bottom.js';
+import '@spectrum-web-components/icons-workflow/icons/sp-icon-align-center.js';
+import '@spectrum-web-components/icons-workflow/icons/sp-icon-align-left.js';
+import '@spectrum-web-components/icons-workflow/icons/sp-icon-align-middle.js';
+import '@spectrum-web-components/icons-workflow/icons/sp-icon-align-right.js';
+import '@spectrum-web-components/icons-workflow/icons/sp-icon-align-top.js';
+import '@spectrum-web-components/icons-workflow/icons/sp-icon-distribute-space-horiz.js';
+import '@spectrum-web-components/icons-workflow/icons/sp-icon-distribute-space-vert.js';
+import '@spectrum-web-components/icons-workflow/icons/sp-icon-margin-bottom.js';
+import '@spectrum-web-components/icons-workflow/icons/sp-icon-margin-left.js';
+import '@spectrum-web-components/icons-workflow/icons/sp-icon-margin-right.js';
+import '@spectrum-web-components/icons-workflow/icons/sp-icon-margin-top.js';
+import '@spectrum-web-components/icons-workflow/icons/sp-icon-padding-bottom.js';
+import '@spectrum-web-components/icons-workflow/icons/sp-icon-padding-left.js';
+import '@spectrum-web-components/icons-workflow/icons/sp-icon-padding-right.js';
+import '@spectrum-web-components/icons-workflow/icons/sp-icon-padding-top.js';
 import '@spectrum-web-components/icons-workflow/icons/sp-icon-delete.js';
 import '@spectrum-web-components/icons-workflow/icons/sp-icon-remove.js';
 import '@spectrum-web-components/icons-workflow/icons/sp-icon-text.js';
@@ -87,6 +104,8 @@ import '@spectrum-web-components/icons-workflow/icons/sp-icon-brush.js';
 import '@spectrum-web-components/icons-workflow/icons/sp-icon-rect-select.js';
 import '@spectrum-web-components/icons-workflow/icons/sp-icon-image.js';
 import '@spectrum-web-components/icons-workflow/icons/sp-icon-arrow-up-right.js';
+import '@spectrum-web-components/icons-workflow/icons/sp-icon-arrow-up.js';
+import '@spectrum-web-components/icons-workflow/icons/sp-icon-arrow-down.js';
 import '@spectrum-web-components/icons-workflow/icons/sp-icon-send.js';
 import '@spectrum-web-components/icons-workflow/icons/sp-icon-find-and-replace.js';
 import '@spectrum-web-components/icons-workflow/icons/sp-icon-polygon.js';
@@ -101,6 +120,10 @@ import '@spectrum-web-components/icons-workflow/icons/sp-icon-checkmark.js';
 import '@spectrum-web-components/icons-workflow/icons/sp-icon-cancel.js';
 import '@spectrum-web-components/icons-workflow/icons/sp-icon-group.js';
 import '@spectrum-web-components/icons-workflow/icons/sp-icon-ungroup.js';
+import '@spectrum-web-components/icons-workflow/icons/sp-icon-link.js';
+import '@spectrum-web-components/icons-workflow/icons/sp-icon-unlink.js';
+import '@spectrum-web-components/icons-workflow/icons/sp-icon-color-palette.js';
+import '@spectrum-web-components/icons-workflow/icons/sp-icon-asterisk.js';
 import './icons/sp-icon-pentagon';
 import './icons/sp-icon-triangle';
 
@@ -233,6 +256,7 @@ export class InfiniteCanvas extends LitElement {
 
       this.appStateProvider.value = {
         ...getDefaultAppState(),
+        ...readStoredThemePreference(),
         ...this.appState,
       };
       this.nodesProvider.value = this.nodes;

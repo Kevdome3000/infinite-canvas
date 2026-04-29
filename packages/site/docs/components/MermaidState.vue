@@ -31,9 +31,13 @@ onMounted(async () => {
     });
 
     const nodes = await parseMermaidToSerializedNodes(`stateDiagram-v2
-    [*] --> Idle
-    Idle --> Active: Start
-    Active --> [*]`);
+    classDef yourState fill:#ffec99,stroke:#c92a2a,color:#1864ab,stroke-width:2px
+    yswsii: Your state with spaces in it
+    [*] --> yswsii:::yourState
+    [*] --> SomeOtherState
+    SomeOtherState --> YetAnotherState
+    yswsii --> YetAnotherState
+    YetAnotherState --> [*]`);
     nodes.forEach(node => {
       if (node.type === 'rect') {
         // @ts-expect-error change type

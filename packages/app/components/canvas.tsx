@@ -10,12 +10,19 @@ import {
   CheckboardStyle,
   SerializedNode,
   ThemeMode,
+  AppState,
+  registerIconifyIconSet,
 } from '@infinite-canvas-tutorial/ecs';
-import { Event, UIPlugin, ExtendedAPI } from '@infinite-canvas-tutorial/webcomponents';
+import {
+  Event,
+  UIPlugin,
+  ExtendedAPI,
+} from '@infinite-canvas-tutorial/webcomponents';
 // import { SAMPlugin } from '@infinite-canvas-tutorial/sam';
 import { LaserPointerPlugin } from '@infinite-canvas-tutorial/laser-pointer';
 import { LassoPlugin } from '@infinite-canvas-tutorial/lasso';
 import { EraserPlugin } from '@infinite-canvas-tutorial/eraser';
+import { YogaPlugin } from '@infinite-canvas-tutorial/yoga';
 import { useEffect, useRef, useCallback } from 'react';
 import { useTheme } from 'next-themes';
 import { useParams } from 'next/navigation';
@@ -23,15 +30,17 @@ import { useAtom } from 'jotai';
 import { selectedNodesAtom, canvasApiAtom } from '@/atoms/canvas-selection';
 import { CanvasYjsManager } from '@/lib/yjs/canvas-yjs-manager';
 import ZoomToolbar from './zoom-toolbar';
+import lucide from '@iconify/json/json/lucide.json';
 
 let appRunning = false;
 
 interface CanvasProps {
   id?: string;
   initialData?: SerializedNode[];
+  initialAppState?: Partial<AppState>;
 }
 
-const Canvas = ({ id = 'default', initialData }: CanvasProps) => {
+const Canvas = ({ id = 'default', initialData, initialAppState }: CanvasProps) => {
   const canvasRef = useRef<HTMLDivElement>(null);
   const projectIdRef = useRef<string>(id);
   const yjsManagerRef = useRef<CanvasYjsManager | null>(null);
@@ -76,7 +85,7 @@ const Canvas = ({ id = 'default', initialData }: CanvasProps) => {
 
   // 创建 throttle 版本的保存函数，每 1 秒最多执行一次
   const throttledSaveCanvasData = useRef(
-    throttle(saveCanvasData, 1000)
+    throttle(saveCanvasData, 1000),
   ).current;
 
   const onReady = async (e: CustomEvent<any>) => {
@@ -103,7 +112,9 @@ const Canvas = ({ id = 'default', initialData }: CanvasProps) => {
         if (yjsManagerRef.current) {
           yjsManagerRef.current.recordLocalOps(nodes);
         }
-        const serializedNodes = nodes.filter((node) => !node.isDeleted) as SerializedNode[];
+        const serializedNodes = nodes.filter(
+          (node) => !node.isDeleted,
+        ) as SerializedNode[];
         throttledSaveCanvasData(serializedNodes);
       };
     }
@@ -115,19 +126,41 @@ const Canvas = ({ id = 'default', initialData }: CanvasProps) => {
     api.setAppState({
       language: locale,
       themeMode: resolvedTheme === 'dark' ? ThemeMode.DARK : ThemeMode.LIGHT,
+      // variables: {
+      //   // 避免用 #FFFFFF：默认画布背景为浅色（如 #fbfbfb），白填充/白描边会几乎看不见
+      //   '--primary': { type: 'color', value: '#FF8400' },
+      //   '--primary-foreground': { type: 'color', value: '#111111' },
+      //   '--radius-pill': { type: 'number', value: 999 },
+      // },
       cameraZoom: 0.35,
       topbarVisible: false,
       penbarSelected: Pen.SELECT,
-      penbarAll: [Pen.HAND, Pen.SELECT, Pen.DRAW_RECT, Pen.DRAW_ELLIPSE, Pen.DRAW_LINE, Pen.DRAW_ARROW, Pen.DRAW_ROUGH_RECT, Pen.DRAW_ROUGH_ELLIPSE, Pen.IMAGE, Pen.TEXT, Pen.PENCIL, Pen.BRUSH, Pen.ERASER, Pen.LASER_POINTER],
+      penbarAll: [
+        Pen.HAND,
+        Pen.SELECT,
+        Pen.DRAW_RECT,
+        Pen.DRAW_ELLIPSE,
+        Pen.DRAW_LINE,
+        Pen.DRAW_ARROW,
+        Pen.DRAW_TRIANGLE,
+        Pen.DRAW_PENTAGON,
+        Pen.DRAW_HEXAGON,
+        Pen.DRAW_ROUGH_RECT,
+        Pen.DRAW_ROUGH_ELLIPSE,
+        Pen.DRAW_ICONFONT,
+        Pen.IMAGE,
+        Pen.TEXT,
+        Pen.PENCIL,
+        Pen.BRUSH,
+        Pen.ERASER,
+        Pen.LASER_POINTER,
+      ],
       penbarText: {
         ...api.getAppState().penbarText,
         fontFamily: 'system-ui',
         fontFamilies: ['system-ui', 'serif', 'monospace', 'Gaegu'],
       },
-      taskbarAll: [
-        Task.SHOW_LAYERS_PANEL,
-        Task.SHOW_PROPERTIES_PANEL,
-      ],
+      taskbarAll: [Task.SHOW_LAYERS_PANEL, Task.SHOW_PROPERTIES_PANEL],
       taskbarSelected: [],
       checkboardStyle: CheckboardStyle.GRID,
       snapToPixelGridEnabled: true,
@@ -138,7 +171,21 @@ const Canvas = ({ id = 'default', initialData }: CanvasProps) => {
       contextBarVisible: false,
       rotateEnabled: true,
       flipEnabled: false,
+      propertiesPanelSectionsOpen: {
+        shape: false,
+        transform: false,
+        layout: false,
+        flexItem: true,
+        effects: true,
+        multiSelectAlignment: true,
+        multiSelectEffects: true,
+        exportSection: true,
+        iconFont: true,
+      },
+      ...initialAppState,
     });
+
+    registerIconifyIconSet('lucide', lucide);
 
     api.runAtNextTick(() => {
       api.updateNodes(nodes);
@@ -165,17 +212,27 @@ const Canvas = ({ id = 'default', initialData }: CanvasProps) => {
 
   useEffect(() => {
     if (!appRunning) {
-      new App().addPlugins(...DefaultPlugins, UIPlugin
-        , LaserPointerPlugin, LassoPlugin, EraserPlugin,
-        // SAMPlugin
-      ).run();
+      new App()
+        .addPlugins(
+          ...DefaultPlugins,
+          UIPlugin,
+          LaserPointerPlugin,
+          LassoPlugin,
+          EraserPlugin,
+          YogaPlugin,
+          // SAMPlugin
+        )
+        .run();
       appRunning = true;
     }
   }, []);
 
   useEffect(() => {
     canvasRef.current?.addEventListener(Event.READY, onReady);
-    canvasRef.current?.addEventListener(Event.SELECTED_NODES_CHANGED, onSelectedNodesChanged);
+    canvasRef.current?.addEventListener(
+      Event.SELECTED_NODES_CHANGED,
+      onSelectedNodesChanged,
+    );
 
     return () => {
       if (canvasApi) {
@@ -191,8 +248,11 @@ const Canvas = ({ id = 'default', initialData }: CanvasProps) => {
         yjsManagerRef.current = null;
       }
       canvasRef.current?.removeEventListener(Event.READY, onReady);
-      canvasRef.current?.removeEventListener(Event.SELECTED_NODES_CHANGED, onSelectedNodesChanged);
-    }
+      canvasRef.current?.removeEventListener(
+        Event.SELECTED_NODES_CHANGED,
+        onSelectedNodesChanged,
+      );
+    };
   }, []);
 
   useEffect(() => {
@@ -212,14 +272,15 @@ const Canvas = ({ id = 'default', initialData }: CanvasProps) => {
 
   return (
     <div className="relative w-full h-full">
-      <ic-spectrum-canvas ref={canvasRef} className="w-full h-full" app-state='{"topbarVisible":false}'>
+      <ic-spectrum-canvas
+        ref={canvasRef}
+        className="w-full h-full"
+        app-state='{"topbarVisible":false}'
+      >
         <ic-spectrum-penbar-laser-pointer slot="penbar-item" />
         <ic-spectrum-penbar-eraser slot="penbar-item" />
       </ic-spectrum-canvas>
-      <ZoomToolbar
-        canvasApi={canvasApi}
-        canvasRef={canvasRef}
-      />
+      <ZoomToolbar canvasApi={canvasApi} canvasRef={canvasRef} />
     </div>
   );
 };

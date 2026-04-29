@@ -38,6 +38,12 @@ export interface BaseSerializeNode<Type extends string>
   id: string;
 
   /**
+   * 可复用组件根（与 Pencil `reusable` 一致）；实例由 `type: 'ref'` 节点引用该 id（见 `RefSerializedNode`）。
+   * @see https://docs.pencil.dev/for-developers/the-pen-format#components-and-instances
+   */
+  reusable?: boolean;
+
+  /**
    * Parent unique identifier
    */
   parentId?: string;
@@ -159,6 +165,14 @@ export interface HitStrokeInteractionAttributes {
 export interface FlexboxLayoutAttributes {
   display: 'flex';
   alignItems: 'center' | 'flex-start' | 'flex-end' | 'stretch' | 'baseline';
+  /** 覆盖父容器 align-items，作为 flex 子项时生效 */
+  alignSelf?:
+  | 'auto'
+  | 'center'
+  | 'flex-start'
+  | 'flex-end'
+  | 'stretch'
+  | 'baseline';
   justifyContent: 'center' | 'flex-start' | 'flex-end' | 'space-between' | 'space-around' | 'space-evenly';
   flexDirection: 'row' | 'row-reverse' | 'column' | 'column-reverse';
   flexWrap: 'nowrap' | 'wrap' | 'wrap-reverse';
@@ -166,8 +180,9 @@ export interface FlexboxLayoutAttributes {
   flexShrink: number;
   flexBasis: number;
   flex: number;
-  padding: number;
-  margin: number;
+  /** 数字为四边同值；`[vertical, horizontal]` 或 `[top, right, bottom, left]` 与 Yoga 一致 */
+  padding: number | number[];
+  margin: number | number[];
   gap: number;
   rowGap: number;
   columnGap: number;
@@ -175,6 +190,16 @@ export interface FlexboxLayoutAttributes {
   maxWidth: number;
   minHeight: number;
   maxHeight: number;
+  /**
+   * `true`：主尺寸由子项在 Yoga 中决定（布局后回写 width）；
+   * `false`：该轴为固定，使用 `width`；
+   * 未设置：无正数 `width` 时随内容，有则固定。由布局在 hug 时写回为 `true`；用户变换框改宽时置为 `false`。
+   */
+  flexHugWidth?: boolean;
+  /**
+   * 与 `flexHugWidth` 相同语义，对应 `height`。
+   */
+  flexHugHeight?: boolean;
 }
 
 export interface ConstraintAttributes {
@@ -312,7 +337,10 @@ export interface FilterAttributes {
   filter: string;
 }
 
-export interface GSerializedNode extends BaseSerializeNode<'g'> { }
+export interface GSerializedNode
+  extends BaseSerializeNode<'g'>,
+  Partial<FillAttributes>,
+  Partial<StrokeAttributes> { }
 
 export interface EllipseSerializedNode
   extends BaseSerializeNode<'ellipse'>,
@@ -388,7 +416,7 @@ export interface LineSerializedNode
   Partial<MarkerAttributes>,
   Partial<BindingAttributes> { }
 
-interface PolylineAttributes {
+export interface PolylineAttributes {
   points: string;
 }
 export interface PolylineSerializedNode
@@ -419,7 +447,7 @@ export interface BrushSerializedNode
   Partial<WireframeAttributes>,
   Partial<BindedAttributes> { }
 
-interface PathAttributes {
+export interface PathAttributes {
   d: string;
   fillRule: Path['fillRule'];
   tessellationMethod: Path['tessellationMethod'];
@@ -619,12 +647,100 @@ export interface EmbedSerializedNode
   Partial<EmbedAttributes>,
   Partial<BindedAttributes> { }
 
-export type NodeSerializedNode = EllipseSerializedNode | RectSerializedNode | PathSerializedNode | TextSerializedNode | BrushSerializedNode | RoughRectSerializedNode | RoughEllipseSerializedNode | RoughPathSerializedNode | HtmlSerializedNode | EmbedSerializedNode;
+/**
+ * 与 Pencil 对齐：wire 上为 string/number，可写设计变量引用（如 `$token`）。
+ * @see https://docs.pencil.dev/for-developers/the-pen-format
+ */
+export type StringOrVariable = string;
+export type NumberOrVariable = number;
+
+export interface IconFontAttributes {
+  /** 图标在字体族中的名称 */
+  iconFontName?: StringOrVariable;
+  /**
+   * 字体族。例如：'lucide'、'feather'、'Material Symbols Outlined'、'phosphor' 等。
+   */
+  iconFontFamily?: StringOrVariable;
+}
+
+/**
+ * 图标字体节点（与 Pencil `IconFont` 一致，type 为 snake_case `iconfont`）
+ */
+export interface IconFontSerializedNode
+  extends BaseSerializeNode<'iconfont'>,
+  Partial<IconFontAttributes>,
+  Partial<FillAttributes>,
+  Partial<StrokeAttributes>,
+  Partial<InnerShadowAttributes>,
+  Partial<DropShadowAttributes>,
+  Partial<FilterAttributes>,
+  Partial<AttenuationAttributes>,
+  Partial<WireframeAttributes>,
+  Partial<BindedAttributes> { }
+
+export interface RefAttributes {
+  /** The `ref` property must be another object's ID. */
+  ref: string;
+}
+
+/**
+ * 引用（`type: 'ref'`）实例上可写任意形状的可选覆盖项，与 {@link SerializedNode} 中各具体 type 的字段并集一致（`ref` 与 `reusable` 根语义除外）。
+ */
+export interface RefSerializedNode
+  extends BaseSerializeNode<'ref'>,
+  RefAttributes,
+  Partial<FillAttributes>,
+  Partial<StrokeAttributes>,
+  Partial<InnerShadowAttributes>,
+  Partial<DropShadowAttributes>,
+  Partial<FilterAttributes>,
+  Partial<AttenuationAttributes>,
+  Partial<WireframeAttributes>,
+  Partial<BindedAttributes>,
+  Partial<Pick<Ellipse, 'rx' | 'ry' | 'cx' | 'cy'>>,
+  Partial<Pick<Rect, 'cornerRadius'>>,
+  Partial<Pick<Line, 'x1' | 'y1' | 'x2' | 'y2'>>,
+  Partial<PolylineAttributes>,
+  Partial<PathAttributes>,
+  Partial<BrushAttributes>,
+  Partial<RoughAttributes>,
+  Partial<TextAttributes>,
+  Partial<Pick<
+    TextSerializedNode,
+    | 'fontBoundingBoxAscent'
+    | 'fontBoundingBoxDescent'
+    | 'hangingBaseline'
+    | 'ideographicBaseline'
+    | 'edgeLabelPosition'
+    | 'edgeLabelOffset'
+  >>,
+  Partial<VectorNetworkAttributes>,
+  Partial<HtmlAttributes>,
+  Partial<EmbedAttributes>,
+  Partial<IconFontAttributes>,
+  Partial<MarkerAttributes>,
+  Partial<BindingAttributes>,
+  Partial<TextDecorationAttributes>,
+  Partial<HitStrokeInteractionAttributes> { }
+
+export type NodeSerializedNode =
+  | EllipseSerializedNode
+  | RectSerializedNode
+  | PathSerializedNode
+  | TextSerializedNode
+  | BrushSerializedNode
+  | RoughRectSerializedNode
+  | RoughEllipseSerializedNode
+  | RoughPathSerializedNode
+  | HtmlSerializedNode
+  | EmbedSerializedNode
+  | IconFontSerializedNode
+  | RefSerializedNode;
 export type EdgeSerializedNode = LineSerializedNode | PolylineSerializedNode | RoughLineSerializedNode | RoughPolylineSerializedNode | PathSerializedNode | RoughPathSerializedNode;
 
 export interface ColumnLayoutAttributes {
   gap: number;
-  padding: number;
+  padding: number | number[];
   alignItems: 'start' | 'center' | 'end' | 'stretch';
   isAutoLayout: boolean;
   direction: 'vertical' | 'horizontal';
@@ -652,6 +768,8 @@ export type SerializedNode =
   | VectorNetworkSerializedNode
   | HtmlSerializedNode
   | EmbedSerializedNode
+  | IconFontSerializedNode
+  | RefSerializedNode
   | ColumnLayoutSerializedNode;
 
 export type SerializedNodeAttributes = GSerializedNode &
@@ -670,4 +788,6 @@ export type SerializedNodeAttributes = GSerializedNode &
   VectorNetworkSerializedNode &
   HtmlSerializedNode &
   EmbedSerializedNode &
+  IconFontSerializedNode &
+  RefSerializedNode &
   ColumnLayoutSerializedNode;

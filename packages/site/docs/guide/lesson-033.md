@@ -2,10 +2,12 @@
 outline: deep
 description: 'Integrated Flex layout system with support for the Yoga typesetting engine. Exploring layout engine development within the WebGL environment to achieve responsive interface design.'
 ---
+
 <script setup>
 import YogaGap from '../components/YogaGap.vue'
 import YogaFlexBasisGrowShrink from '../components/YogaFlexBasisGrowShrink.vue'
 import YogaAlignItemsJustifyContent from '../components/YogaAlignItemsJustifyContent.vue'
+import YogaButton from '../components/YogaButton.vue'
 import YogaMinMaxWidthHeight from '../components/YogaMinMaxWidthHeight.vue'
 </script>
 
@@ -235,6 +237,10 @@ The most common use is centering content with these two properties:
 
 <YogaAlignItemsJustifyContent />
 
+To implement buttons with centered text:
+
+<YogaButton />
+
 ### Gap {#gap}
 
 The following example demonstrates the effect of `padding` and `gap`:
@@ -272,9 +278,17 @@ const parent = {
 
 <YogaMinMaxWidthHeight />
 
-## [WIP] Export SVG {#export-svg}
+## Export SVG {#export-svg}
 
 Since CSS Flexbox only supports HTML elements as containers and not SVG elements, absolute positions after layout must still be used when exporting to SVG.
+
+```ts
+const layoutNodes = api.readLayoutFromECS(nodes);
+
+(await serializeNodesToSVGElements(layoutNodes)).forEach((element) => {
+    $namespace.appendChild(element);
+});
+```
 
 ## Extended reading {#extended-reading}
 
@@ -282,6 +296,7 @@ Since CSS Flexbox only supports HTML elements as containers and not SVG elements
 -   [clay]
 -   [react-three-flex]
 -   [Figma - Guide to auto layout]
+-   [Layout in rive]
 
 [Yoga]: https://yogalayout.com/
 [yoga-layout-prebuilt]: https://github.com/vadimdemedes/yoga-layout-prebuilt
@@ -303,3 +318,4 @@ Since CSS Flexbox only supports HTML elements as containers and not SVG elements
 [Flex Basis, Grow, and Shrink]: https://www.yogalayout.dev/docs/styling/flex-basis-grow-shrink
 [Min/Max Width and Height]: https://www.yogalayout.dev/docs/styling/min-max-width-height
 [Layout in pencil.dev]: https://docs.pencil.dev/for-developers/the-pen-format#layout
+[Layout in rive]: https://rive.app/docs/editor/layouts/layouts-overview

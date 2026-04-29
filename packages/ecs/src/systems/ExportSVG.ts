@@ -44,9 +44,12 @@ import {
 import { DOMAdapter } from '../environment';
 import {
   createSVGElement,
+  expandSerializedNodesForSvgExport,
   serializeNodesToSVGElements,
   toFixedAndRemoveTrailingZeros,
   toSVGDataURL,
+  prepareSerializedNodesForSvgExport,
+  type DesignVariablesSvgExportMode,
 } from '../utils';
 import type { SerializedNode } from '../types/serialized-node';
 import { API } from '..';
@@ -70,7 +73,7 @@ export class ExportSVG extends System {
     Object.assign(screenshot, { dataURL, canvas, svg, download });
     yield;
 
-    safeRemoveComponent(canvas, Screenshot);  
+    safeRemoveComponent(canvas, Screenshot);
     safeRemoveComponent(canvas, VectorScreenshotRequest);
   }
 
@@ -147,7 +150,9 @@ export async function toSVGElement(
   api: API,
   nodes: SerializedNode[],
   padding: number = 0,
+  options?: { designVariablesExport?: DesignVariablesSvgExportMode },
 ) {
+  const designVariablesExport = options?.designVariablesExport ?? 'resolved';
   const clipParentNodes = new Set<SerializedNode>();
   nodes.forEach((node) => {
     const parentEntity = api.getParent(node);
@@ -177,9 +182,29 @@ export async function toSVGElement(
 
   nodes = [...clipParentNodes, ...nodes];
 
-  // TODO: Handle flexbox layout, use calculated layout positions.
+  const prep = prepareSerializedNodesForSvgExport(
+    nodes,
+    api.getAppState().variables,
+    designVariablesExport,
+    api.getAppState().themeMode,
+  );
+  const layoutNodes = api.readLayoutFromECS(prep.nodes);
+  const exportNodes = expandSerializedNodesForSvgExport(
+    layoutNodes,
+    api.getNodes(),
+  );
 
-  (await serializeNodesToSVGElements(nodes)).forEach((element) => {
+  if (prep.cssRootStyle) {
+    const $defs = createSVGElement('defs');
+    const $style = DOMAdapter.get()
+      .getDocument()
+      .createElementNS('http://www.w3.org/2000/svg', 'style');
+    $style.textContent = prep.cssRootStyle;
+    $defs.appendChild($style);
+    $namespace.insertBefore($defs, $namespace.firstChild);
+  }
+
+  (await serializeNodesToSVGElements(exportNodes)).forEach((element) => {
     $namespace.appendChild(element);
   });
   return $namespace;

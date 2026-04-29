@@ -3,6 +3,9 @@ import {
   CheckboardStyle,
   Theme,
   ThemeMode,
+  ThemePreference,
+  resolveThemeModeFromPreference,
+  DEFAULT_THEME_COLORS,
   BrushType,
   StampMode,
 } from './components';
@@ -13,12 +16,14 @@ import {
 import type {
   BrushAttributes,
   FillAttributes,
+  IconFontAttributes,
   MarkerAttributes,
   RoughAttributes,
   SerializedNode,
   StrokeAttributes,
   TextSerializedNode,
 } from './types/serialized-node';
+import type { DesignVariablesMap } from './utils/design-variables';
 
 export enum Task {
   SHOW_LAYERS_PANEL = 'show-layers-panel',
@@ -27,13 +32,42 @@ export enum Task {
 }
 
 /**
+ * 属性面板各分区（accordion）的初始展开状态；`true` 为展开。
+ * 可通过 `api.setAppState({ propertiesPanelSectionsOpen: { ... } })` 配置。
+ */
+export interface PropertiesPanelSectionsOpen {
+  shape: boolean;
+  transform: boolean;
+  layout: boolean;
+  /** 父级为 flex 容器时，子项的 flex 属性（align-self、flex-grow 等） */
+  flexItem: boolean;
+  effects: boolean;
+  /** 多选时「对齐」手风琴 */
+  multiSelectAlignment: boolean;
+  /** 多选时「效果」手风琴 */
+  multiSelectEffects: boolean;
+  /** 属性面板「Export」手风琴 */
+  exportSection: boolean;
+  /** 属性面板 `iconfont` 节点的「图标」手风琴 */
+  iconFont: boolean;
+}
+
+/**
  * Prefer flat objects.
  * @see https://docs.excalidraw.com/docs/@excalidraw/excalidraw/api/props/initialdata
  */
 export interface AppState {
   language: string;
+  /**
+   * 文档级设计变量（Pencil 式 token）；节点属性可用 `$token.name` 引用。
+   */
+  variables: DesignVariablesMap;
   theme: Theme;
   themeMode: ThemeMode;
+  /**
+   * 用户选择的亮/暗/跟随系统；`themeMode` 为解析后的当前生效模式。
+   */
+  themePreference: ThemePreference;
   checkboardStyle: CheckboardStyle;
   cameraZoom: number;
   cameraX: number;
@@ -47,6 +81,10 @@ export interface AppState {
   penbarAll: Pen[];
   penbarSelected: Pen;
   penbarDrawSizeLabelVisible: boolean;
+  /**
+   * 是否显示各节点 `Name` 的浮层（锚定在包围盒左上角；样式与绘图画布上的尺寸浮层同系）
+   */
+  penbarNameLabelVisible: boolean;
   penbarDrawRect: Partial<StrokeAttributes & FillAttributes>;
   penbarDrawTriangle: Partial<StrokeAttributes & FillAttributes>;
   penbarDrawPentagon: Partial<StrokeAttributes & FillAttributes>;
@@ -69,7 +107,12 @@ export interface AppState {
   penbarBrush: Partial<
     BrushAttributes &
     StrokeAttributes & {
-      stamps: { src: string; name: string; preview: string; active?: boolean }[];
+      stamps: {
+        src: string;
+        name: string;
+        preview: string;
+        active?: boolean;
+      }[];
     }
   >;
   penbarText: Partial<
@@ -78,7 +121,8 @@ export interface AppState {
     }
   >;
   penbarLasso: Partial<
-    FillAttributes & StrokeAttributes & {
+    FillAttributes &
+    StrokeAttributes & {
       mode: 'draw' | 'select';
       trailStroke: string;
       trailFill: string;
@@ -86,6 +130,9 @@ export interface AppState {
       trailStrokeDasharray: string;
       trailStrokeDashoffset: string;
     }
+  >;
+  penbarDrawIconfont: Partial<
+    FillAttributes & StrokeAttributes & IconFontAttributes
   >;
   taskbarVisible: boolean;
   taskbarAll: Task[];
@@ -95,6 +142,10 @@ export interface AppState {
   layersHighlighted: SerializedNode['id'][];
   layersExpanded: SerializedNode['id'][];
   propertiesOpened: SerializedNode['id'][];
+  /**
+   * 属性面板 Shape / Transform / Layout / Effects / 多选对齐与效果 分区的默认展开状态
+   */
+  propertiesPanelSectionsOpen: PropertiesPanelSectionsOpen;
   /**
    * Like croppingElementId in Excalidraw
    * @see https://github.com/excalidraw/excalidraw/pull/8613
@@ -155,14 +206,18 @@ export interface AppState {
 }
 
 export const getDefaultAppState: () => AppState = () => {
+  const themePreference: ThemePreference = 'system';
+  const themeMode = resolveThemeModeFromPreference(themePreference);
   return {
     language: 'en',
-    // TODO: Flatten theme
-    themeMode: ThemeMode.LIGHT,
+    variables: {},
+    themePreference,
+    themeMode,
     theme: {
-      mode: ThemeMode.LIGHT,
+      mode: themeMode,
       colors: {
         [ThemeMode.LIGHT]: {
+          ...DEFAULT_THEME_COLORS[ThemeMode.LIGHT],
           swatches: [
             TRANSFORMER_ANCHOR_STROKE_COLOR,
             TRANSFORMER_MASK_FILL_COLOR,
@@ -174,6 +229,7 @@ export const getDefaultAppState: () => AppState = () => {
           ],
         },
         [ThemeMode.DARK]: {
+          ...DEFAULT_THEME_COLORS[ThemeMode.DARK],
           swatches: [
             TRANSFORMER_ANCHOR_STROKE_COLOR,
             TRANSFORMER_MASK_FILL_COLOR,
@@ -209,6 +265,7 @@ export const getDefaultAppState: () => AppState = () => {
       Pen.DRAW_ROUGH_RECT,
       Pen.DRAW_ROUGH_ELLIPSE,
       Pen.DRAW_ROUGH_LINE,
+      Pen.DRAW_ICONFONT,
       Pen.IMAGE,
       Pen.TEXT,
       Pen.PENCIL,
@@ -220,6 +277,7 @@ export const getDefaultAppState: () => AppState = () => {
     ],
     penbarSelected: Pen.HAND,
     penbarDrawSizeLabelVisible: true,
+    penbarNameLabelVisible: false,
     penbarDrawRect: {
       fill: TRANSFORMER_MASK_FILL_COLOR,
       fillOpacity: 0.5,
@@ -347,6 +405,13 @@ export const getDefaultAppState: () => AppState = () => {
       strokeWidth: 1,
       strokeOpacity: 1,
     },
+    penbarDrawIconfont: {
+      fill: 'black',
+      stroke: 'black',
+      strokeWidth: 1,
+      iconFontFamily: 'lucide',
+      iconFontName: 'search',
+    },
     taskbarVisible: true,
     taskbarAll: [Task.SHOW_LAYERS_PANEL, Task.SHOW_PROPERTIES_PANEL],
     taskbarSelected: [],
@@ -356,6 +421,17 @@ export const getDefaultAppState: () => AppState = () => {
     layersCropping: [],
     layersLassoing: [],
     propertiesOpened: [],
+    propertiesPanelSectionsOpen: {
+      shape: true,
+      transform: true,
+      layout: true,
+      flexItem: true,
+      effects: true,
+      multiSelectAlignment: true,
+      multiSelectEffects: true,
+      exportSection: true,
+      iconFont: true,
+    },
     layersExpanded: [],
     rotateEnabled: true,
     flipEnabled: false,

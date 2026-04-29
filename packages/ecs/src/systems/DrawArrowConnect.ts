@@ -45,6 +45,8 @@ import {
   PartialBinding,
   ToBeDeleted,
   Binded,
+  Theme,
+  Flex,
 } from '../components';
 import { API } from '../API';
 import type { PathSerializedNode, SerializedNode } from '../types/serialized-node';
@@ -133,7 +135,9 @@ export class DrawArrowConnect extends System {
             PartialBinding,
             Binded,
             ToBeDeleted,
-            ComputedPoints
+            ComputedPoints,
+            Theme,
+            Flex,
           ).write,
     );
   }

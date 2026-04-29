@@ -1,6 +1,8 @@
 import { Entity } from '@lastolivegames/becsy';
 import { IPointData } from '@pixi/math';
 import { mat3, vec2 } from 'gl-matrix';
+import { updateGlobalTransform } from './systems/Transform';
+import { updateComputedPoints } from './systems/ComputePoints';
 import { isNil, path2Absolute } from '@antv/util';
 import {
   CaptureUpdateAction,
@@ -35,10 +37,19 @@ import {
   strokeWidthForHitTest,
   cloneStrokeWithHitTestWidth,
   cloneSerializedNodes,
+  prepareSerializedNodesForSvgExport,
+  type DesignVariablesSvgExportMode,
   decompose,
   transformPath,
   mat3WithoutTranslation,
+  buildDesignVariableRefreshPatch,
+  expandSerializedNodesForSvgExport,
 } from './utils';
+import type { AnimationGifQuality } from './utils/animationExportCodec';
+export type { AnimationGifQuality } from './utils/animationExportCodec';
+import {
+  getRegisteredIconifyIconFamilies as getRegisteredIconifyIconFamiliesList,
+} from './utils/icon-font';
 import type {
   BrushSerializedNode,
   GSerializedNode,
@@ -80,6 +91,7 @@ import {
   Parent,
   Path,
   Polyline,
+  RasterAnimationExportRequest,
   RasterScreenshotRequest,
   RBush,
   Rect,
@@ -88,6 +100,8 @@ import {
   Text,
   Theme,
   ThemeMode,
+  mergeThemeState,
+  resolveThemeModeFromPreference,
   ToBeDeleted,
   Transform,
   UI,
@@ -118,10 +132,57 @@ export interface StateManagement {
   onChange: (snapshot: { appState: AppState; nodes: SerializedNode[] }) => void;
 }
 
+/** When multiple selection, align according to the geometric envelope (world coordinate system) of the selection, and  {@link API.alignSelectedNodes} 一致。 */
+export type NodeAlignment =
+  | 'left'
+  | 'right'
+  | 'top'
+  | 'bottom'
+  | 'centerH'
+  | 'centerV';
+
+/** When multiple selection, the geometric envelope is distributed at equal intervals in the horizontal or vertical direction. */
+export type DistributeSpacingAxis = 'horizontal' | 'vertical';
+
 export enum ExportFormat {
   SVG = 'svg',
   PNG = 'png',
   JPEG = 'jpeg',
+  /** WebM（VP8/VP9），Suitable for filters with engine time animation */
+  WEBM = 'webm',
+  GIF = 'gif',
+}
+
+/** {@link API.export} options: format, download behavior, target node, raster scale, etc。 */
+export interface ExportOptions {
+  format: ExportFormat;
+  /** Triggers download when 'true'; Default `true`。 */
+  download?: boolean;
+  /** nodes to be exported; An empty array represents the entire canvas. Default '[]'. */
+  nodes?: SerializedNode[];
+  /**
+   * Local raster derived side length scale (relative logical selection), only valid for PNG / JPEG, etc.; Default '1'。
+   * @see RasterScreenshotRequest.scale
+   */
+  scale?: number;
+  /**
+   * Animation export duration (seconds), WEBM / GIF only; Default '3', capped at about '15'.
+   */
+  durationSec?: number;
+  /**
+   * Animation export frame rate, WEBM / GIF only; The default is '24', and the upper limit is about '30'.
+   */
+  fps?: number;
+  /**
+   * First frame engine time (seconds), WEBM / GIF only; Default '0'.
+   * @see RasterAnimationExportRequest.timeStart
+   */
+  timeStart?: number;
+  /**
+   * GIF Export quality (palette color files per frame): 'ExportFormat.GIF' only; Default 'high' (256 colors).
+   * @see RasterAnimationExportRequest.gifQuality
+   */
+  gifQuality?: AnimationGifQuality;
 }
 
 export class DefaultStateManagement implements StateManagement {
@@ -222,27 +283,95 @@ export class API {
     return this.stateManagement.getAppState();
   }
 
-  setAppState(appState: Partial<AppState>) {
+  /** The currently registered icon collection id (the 'family' parameter of 'registerIconifyIcons'). */
+  getRegisteredIconifyIconFamilies(): string[] {
+    return getRegisteredIconifyIconFamiliesList();
+  }
+
+  setAppState(
+    appState: Partial<AppState>,
+    options?: {
+      recordDesignVariableUndo?: boolean;
+      /** When true 'variables' replaces the entire table (for removing keys, etc.), merges with the old key by default */
+      replaceVariables?: boolean;
+    },
+  ) {
+    const patch: Partial<AppState> = { ...appState };
+    if (
+      Object.prototype.hasOwnProperty.call(patch, 'themePreference') &&
+      patch.themePreference !== undefined &&
+      !Object.prototype.hasOwnProperty.call(patch, 'themeMode')
+    ) {
+      patch.themeMode = resolveThemeModeFromPreference(patch.themePreference);
+    }
+
     const oldAppState = this.getAppState();
-    const { cameraZoom, cameraX, cameraY, cameraRotation } = appState;
+    const { cameraZoom, cameraX, cameraY, cameraRotation } = patch;
 
     if (
-      Object.prototype.hasOwnProperty.call(appState, 'checkboardStyle') &&
-      appState.checkboardStyle !== oldAppState.checkboardStyle
+      Object.prototype.hasOwnProperty.call(patch, 'checkboardStyle') &&
+      patch.checkboardStyle !== oldAppState.checkboardStyle
     ) {
       safeAddComponent(this.#canvas, Grid, {
-        checkboardStyle: appState.checkboardStyle as CheckboardStyle,
+        checkboardStyle: patch.checkboardStyle as CheckboardStyle,
       });
     }
 
+    let themeAppStatePatch: Partial<AppState> = {};
+
     if (
-      Object.prototype.hasOwnProperty.call(appState, 'themeMode') &&
-      appState.themeMode !== undefined &&
-      appState.themeMode !== oldAppState.themeMode
+      Object.prototype.hasOwnProperty.call(patch, 'theme') ||
+      Object.prototype.hasOwnProperty.call(patch, 'themeMode') ||
+      Object.prototype.hasOwnProperty.call(patch, 'themePreference')
     ) {
-      safeAddComponent(this.#canvas, Theme, {
-        mode: appState.themeMode as ThemeMode,
-      });
+      const nextThemeMode =
+        patch.themeMode !== undefined
+          ? patch.themeMode
+          : oldAppState.themeMode;
+      const mergedTheme = mergeThemeState(
+        { ...oldAppState.theme, mode: oldAppState.themeMode },
+        {
+          ...(patch.theme ?? {}),
+          mode: nextThemeMode,
+        },
+      );
+      themeAppStatePatch = {
+        themeMode: nextThemeMode,
+        theme: {
+          mode: mergedTheme.mode,
+          colors: mergedTheme.colors,
+        },
+      };
+      if (this.#canvas?.has(Theme)) {
+        safeAddComponent(this.#canvas, Theme, {
+          mode: mergedTheme.mode,
+          colors: mergedTheme.colors,
+        });
+      }
+    }
+
+    let propertiesPanelSectionsOpenPatch: Partial<AppState> = {};
+    if (
+      Object.prototype.hasOwnProperty.call(patch, 'propertiesPanelSectionsOpen')
+    ) {
+      propertiesPanelSectionsOpenPatch = {
+        propertiesPanelSectionsOpen: {
+          ...oldAppState.propertiesPanelSectionsOpen,
+          ...patch.propertiesPanelSectionsOpen,
+        },
+      };
+    }
+
+    let variablesPatch: Partial<AppState> = {};
+    const prevVariables = oldAppState.variables ?? {};
+    if (Object.prototype.hasOwnProperty.call(patch, 'variables')) {
+      const mergedVariables = options?.replaceVariables
+        ? (patch.variables as NonNullable<AppState['variables']>)
+        : {
+          ...prevVariables,
+          ...patch.variables,
+        };
+      variablesPatch = { variables: mergedVariables };
     }
 
     if (
@@ -276,10 +405,42 @@ export class API {
       }
     }
 
-    this.stateManagement.setAppState({
+    const nextAppState = {
       ...oldAppState,
-      ...appState,
-    });
+      ...patch,
+      ...themeAppStatePatch,
+      ...propertiesPanelSectionsOpenPatch,
+      ...variablesPatch,
+    };
+    const themeModeChanged = nextAppState.themeMode !== oldAppState.themeMode;
+
+    this.stateManagement.setAppState(nextAppState);
+
+    const variablesActuallyChanged =
+      Object.prototype.hasOwnProperty.call(patch, 'variables') &&
+      JSON.stringify((variablesPatch as { variables?: object }).variables) !==
+      JSON.stringify(prevVariables);
+
+    const shouldRefreshDesignVariableBindings =
+      variablesActuallyChanged ||
+      (themeModeChanged && Object.keys(nextAppState.variables ?? {}).length > 0);
+
+    if (shouldRefreshDesignVariableBindings) {
+      this.runAtNextTick(() => {
+        for (const node of this.getNodes()) {
+          if (this.#idEntityMap.has(node.id)) {
+            const varPatch = buildDesignVariableRefreshPatch(node);
+            if (Object.keys(varPatch).length > 0) {
+              this.updateNode(node, varPatch, false);
+            }
+          }
+        }
+        // 撤销/重做应用 AppState 时不要再次 record（见 {@link AppStateChange.applyTo}）
+        if (options?.recordDesignVariableUndo !== false) {
+          this.record();
+        }
+      });
+    }
   }
 
   getNodes() {
@@ -306,6 +467,17 @@ export class API {
 
   getEntityCommands() {
     return this.#idEntityMap;
+  }
+
+  /**
+   * 与反序列化相同：`spawn` 出子实体。供 `mutateElement` 中 iconfont 子 path 数量增加时补全。
+   */
+  spawnEntityCommands(): EntityCommands {
+    return this.commands.spawn();
+  }
+
+  appendEntityChild(parent: Entity, child: EntityCommands) {
+    this.commands.entity(parent).appendChild(child);
   }
 
   getEntity(node: SerializedNode) {
@@ -416,6 +588,37 @@ export class API {
         scaleY: node.scaleY ?? 1,
       };
     }
+  }
+
+  /**
+   * 浅拷贝节点列表，并用 ECS 当前几何覆盖 x/y/width/height/rotation/scale（如 Flex/Yoga 仅写 ECS、序列化节点未同步时，导出 SVG 前调用）。
+   * 对带 {@link Rect} 的 `rect` / `rough-rect` 同时覆盖 `cornerRadius`，保证导出与运行时一致。
+   */
+  readLayoutFromECS(nodes: SerializedNode[]): SerializedNode[] {
+    return nodes.map((node) => {
+      const g = this.getAbsoluteTransformAndSize(node);
+      const out: SerializedNode = {
+        ...node,
+        x: g.x,
+        y: g.y,
+        width: g.width,
+        height: g.height,
+        rotation: g.rotation,
+        scaleX: g.scaleX,
+        scaleY: g.scaleY,
+      };
+      const entity = this.getEntity(node);
+      if (
+        entity &&
+        entity.has(Rect) &&
+        (node.type === 'rect' || node.type === 'rough-rect')
+      ) {
+        (out as { cornerRadius?: number }).cornerRadius = entity.read(
+          Rect,
+        ).cornerRadius;
+      }
+      return out;
+    });
   }
 
   getCanvas() {
@@ -618,7 +821,14 @@ export class API {
       const [x, y] = vec2.transformMat3(vec2.create(), [point.x, point.y], invMatrix);
 
       let isIntersected = false;
-      const hasFill = (entity.has(FillSolid) && entity.read(FillSolid).value !== 'none') || entity.has(FillGradient) || entity.has(FillImage) || entity.has(FillPattern);
+      const fillSolid = entity.has(FillSolid) ? entity.read(FillSolid).value : '';
+      const hasFill =
+        (entity.has(FillSolid) &&
+          fillSolid !== 'none' &&
+          fillSolid !== '') ||
+        entity.has(FillGradient) ||
+        entity.has(FillImage) ||
+        entity.has(FillPattern);
       const fill = hasFill ? 'black' : undefined;
       const hasStroke = entity.has(Stroke);
       const stroke = hasStroke ? entity.read(Stroke) : undefined;
@@ -1070,16 +1280,22 @@ export class API {
     preserveSelection = false,
     updateAppState = true,
   ) {
+    const prevAppState = this.getAppState();
+    const prevSelectedIds = prevAppState.layersSelected;
+
     if (!preserveSelection) {
-      this.getAppState().layersSelected.forEach((id) => {
+      prevSelectedIds.forEach((id) => {
         const entity = this.#idEntityMap.get(id)?.id();
         if (entity && entity.has(Selected)) {
           entity.remove(Selected);
         }
+        // 与 handleSelectedMoved 等路径写入的 Highlighted 同步清理，否则取消选中后仍残留描边高亮
+        if (entity) {
+          safeRemoveComponent(entity, Highlighted);
+        }
       });
     }
 
-    const prevAppState = this.getAppState();
     // remove duplicates
     const layersSelected = preserveSelection
       ? [
@@ -1090,9 +1306,16 @@ export class API {
         .map((node) => node.id)
         .filter((id, index, self) => self.indexOf(id) === index);
     if (updateAppState) {
+      const layersHighlighted = preserveSelection
+        ? prevAppState.layersHighlighted
+        : prevAppState.layersHighlighted.filter(
+          (id) =>
+            !prevSelectedIds.includes(id) || layersSelected.includes(id),
+        );
       this.setAppState({
         ...prevAppState,
         layersSelected,
+        layersHighlighted,
       });
     }
 
@@ -1106,10 +1329,14 @@ export class API {
   }
 
   deselectNodes(nodes: SerializedNode[]) {
+    const deselectIds = nodes.map((node) => node.id);
     nodes.forEach((node) => {
       const entity = this.#idEntityMap.get(node.id)?.id();
       if (entity && entity.has(Selected)) {
         entity.remove(Selected);
+      }
+      if (entity) {
+        safeRemoveComponent(entity, Highlighted);
       }
     });
 
@@ -1117,7 +1344,10 @@ export class API {
     this.setAppState({
       ...prevAppState,
       layersSelected: prevAppState.layersSelected.filter(
-        (id) => !nodes.map((node) => node.id).includes(id),
+        (id) => !deselectIds.includes(id),
+      ),
+      layersHighlighted: prevAppState.layersHighlighted.filter(
+        (id) => !deselectIds.includes(id),
       ),
     });
   }
@@ -1246,7 +1476,11 @@ export class API {
         this.#canvas.read(Canvas).fonts,
         this.commands,
         this.#idEntityMap,
-        { lookupNodes: this.#mergeSceneWithBatchForEdgeLookup([node]) },
+        {
+          lookupNodes: this.#mergeSceneWithBatchForEdgeLookup([node]),
+          variables: this.getAppState().variables,
+          themeMode: this.getAppState().themeMode,
+        },
       );
       this.#idEntityMap.set(node.id, idEntityMap.get(node.id));
 
@@ -1305,6 +1539,8 @@ export class API {
         {
           lookupNodes:
             this.#mergeSceneWithBatchForEdgeLookup(nonExistentNodes),
+          variables: this.getAppState().variables,
+          themeMode: this.getAppState().themeMode,
         },
       );
       nonExistentNodes.forEach((node) => {
@@ -1374,6 +1610,11 @@ export class API {
         diff.width = height * aspectRatio;
       }
       diff.height = height;
+    }
+
+    if ((node as { display?: string }).display === 'flex') {
+      if (!isNil(width)) (diff as { flexHugWidth?: boolean }).flexHugWidth = false;
+      if (!isNil(height)) (diff as { flexHugHeight?: boolean }).flexHugHeight = false;
     }
 
     if (delta) {
@@ -1543,6 +1784,249 @@ export class API {
       }
     });
     return bounds;
+  }
+
+  /**
+   * 将选中的多个节点在**世界空间**中按各节点 {@link ComputedBounds.geometryWorldBounds} 的并集对齐
+   *（与变换器多选选区同语义）。跳过 {@link SerializedNode.locked|locked} 的节点；至少两个未锁定。
+   */
+  alignSelectedNodes(alignment: NodeAlignment, nodeIds?: string[]) {
+    const ids = nodeIds ?? this.getAppState().layersSelected;
+    if (ids.length < 2) {
+      return;
+    }
+    const nodes = ids
+      .map((id) => this.getNodeById(id))
+      .filter(
+        (n): n is SerializedNode => !!n && n.locked !== true,
+      );
+    if (nodes.length < 2) {
+      return;
+    }
+    const union = this.getGeometryBounds(nodes);
+    if (
+      !Number.isFinite(union.minX) ||
+      !Number.isFinite(union.maxX) ||
+      !Number.isFinite(union.minY) ||
+      !Number.isFinite(union.maxY) ||
+      union.minX > union.maxX ||
+      union.minY > union.maxY
+    ) {
+      return;
+    }
+
+    for (const node of nodes) {
+      const entity = this.getEntity(node);
+      if (!entity?.has(ComputedBounds)) {
+        continue;
+      }
+      const g = entity.read(ComputedBounds).geometryWorldBounds;
+      if (
+        !Number.isFinite(g.minX) ||
+        !Number.isFinite(g.maxX) ||
+        !Number.isFinite(g.minY) ||
+        !Number.isFinite(g.maxY) ||
+        g.minX > g.maxX ||
+        g.minY > g.maxY
+      ) {
+        continue;
+      }
+      let dx = 0;
+      let dy = 0;
+      if (alignment === 'left') {
+        dx = union.minX - g.minX;
+      } else if (alignment === 'right') {
+        dx = union.maxX - g.maxX;
+      } else if (alignment === 'top') {
+        dy = union.minY - g.minY;
+      } else if (alignment === 'bottom') {
+        dy = union.maxY - g.maxY;
+      } else if (alignment === 'centerH') {
+        const gc = (g.minX + g.maxX) * 0.5;
+        const uc = (union.minX + union.maxX) * 0.5;
+        dx = uc - gc;
+      } else {
+        const gc = (g.minY + g.maxY) * 0.5;
+        const uc = (union.minY + union.maxY) * 0.5;
+        dy = uc - gc;
+      }
+      this.#applyNodeWorldDelta(node, dx, dy);
+    }
+
+    this.record();
+  }
+
+  /**
+   * 将多个选中节点在**世界空间**中沿水平或竖直方向做**等间距**分布：固定整体首尾（沿该轴的 min/max
+   * 几何包络），在相邻两物体之间使用相同间隔；基于 {@link ComputedBounds.geometryWorldBounds} 与
+   * {@link alignSelectedNodes} 相同的 OBB 更新。跳过 `locked` 的节点，至少两个未锁。
+   */
+  distributeSelectedNodesSpacing(
+    axis: DistributeSpacingAxis,
+    nodeIds?: string[],
+  ) {
+    const ids = nodeIds ?? this.getAppState().layersSelected;
+    if (ids.length < 2) {
+      return;
+    }
+    const nodes = ids
+      .map((id) => this.getNodeById(id))
+      .filter(
+        (n): n is SerializedNode => !!n && n.locked !== true,
+      );
+    if (nodes.length < 2) {
+      return;
+    }
+    const entries: {
+      node: SerializedNode;
+      minX: number;
+      maxX: number;
+      minY: number;
+      maxY: number;
+      w: number;
+      h: number;
+    }[] = [];
+    for (const node of nodes) {
+      const entity = this.getEntity(node);
+      if (!entity?.has(ComputedBounds)) {
+        continue;
+      }
+      const g = entity.read(ComputedBounds).geometryWorldBounds;
+      if (
+        !Number.isFinite(g.minX) ||
+        !Number.isFinite(g.maxX) ||
+        !Number.isFinite(g.minY) ||
+        !Number.isFinite(g.maxY) ||
+        g.minX > g.maxX ||
+        g.minY > g.maxY
+      ) {
+        continue;
+      }
+      entries.push({
+        node,
+        minX: g.minX,
+        maxX: g.maxX,
+        minY: g.minY,
+        maxY: g.maxY,
+        w: g.maxX - g.minX,
+        h: g.maxY - g.minY,
+      });
+    }
+    if (entries.length < 2) {
+      return;
+    }
+    if (axis === 'horizontal') {
+      entries.sort((a, b) => a.minX - b.minX);
+    } else {
+      entries.sort((a, b) => a.minY - b.minY);
+    }
+    const n = entries.length;
+    if (axis === 'horizontal') {
+      const sumW = entries.reduce((s, e) => s + e.w, 0);
+      const span = entries[n - 1]!.maxX - entries[0]!.minX;
+      const gGap = (span - sumW) / (n - 1);
+      if (!Number.isFinite(gGap)) {
+        return;
+      }
+      const targetMinX: number[] = new Array(n);
+      targetMinX[0] = entries[0]!.minX;
+      for (let i = 1; i < n; i++) {
+        targetMinX[i] = targetMinX[i - 1]! + entries[i - 1]!.w + gGap;
+      }
+      for (let i = 0; i < n; i++) {
+        this.#applyNodeWorldDelta(
+          entries[i]!.node,
+          targetMinX[i]! - entries[i]!.minX,
+          0,
+        );
+      }
+    } else {
+      const sumH = entries.reduce((s, e) => s + e.h, 0);
+      const span = entries[n - 1]!.maxY - entries[0]!.minY;
+      const gGap = (span - sumH) / (n - 1);
+      if (!Number.isFinite(gGap)) {
+        return;
+      }
+      const targetMinY: number[] = new Array(n);
+      targetMinY[0] = entries[0]!.minY;
+      for (let i = 1; i < n; i++) {
+        targetMinY[i] = targetMinY[i - 1]! + entries[i - 1]!.h + gGap;
+      }
+      for (let i = 0; i < n; i++) {
+        this.#applyNodeWorldDelta(
+          entries[i]!.node,
+          0,
+          targetMinY[i]! - entries[i]!.minY,
+        );
+      }
+    }
+    this.record();
+  }
+
+  #applyNodeWorldDelta(node: SerializedNode, dx: number, dy: number) {
+    if (Math.abs(dx) < 1e-9 && Math.abs(dy) < 1e-9) {
+      return;
+    }
+    const entity = this.getEntity(node);
+    if (!entity) {
+      return;
+    }
+    const epsilon = 0.01;
+    const oldNode = { ...node, ...this.getAbsoluteTransformAndSize(node) };
+    const oldAttrs = {
+      x: oldNode.x ?? 0,
+      y: oldNode.y ?? 0,
+      width: oldNode.width ?? 0,
+      height: oldNode.height ?? 0,
+      rotation: oldNode.rotation ?? 0,
+      scaleX: oldNode.scaleX ?? 1,
+      scaleY: oldNode.scaleY ?? 1,
+    };
+    const wSign = oldAttrs.width;
+    const hSign = oldAttrs.height;
+    const delta = mat3.create();
+    mat3.fromTranslation(delta, [dx, dy]);
+    const parentTransform = this.getParentTransform(entity);
+    const localTransform = this.getTransform(oldNode);
+    const newLocalTransform = mat3.create();
+    mat3.multiply(newLocalTransform, parentTransform, localTransform);
+    mat3.multiply(newLocalTransform, delta, newLocalTransform);
+    mat3.multiply(
+      newLocalTransform,
+      mat3.invert(mat3.create(), parentTransform),
+      newLocalTransform,
+    );
+    const { rotation, translation, scale } = decompose(newLocalTransform);
+    const obb = {
+      x: translation[0],
+      y: translation[1],
+      width: Math.max(
+        Math.abs((oldNode.width ?? 0) * scale[0]),
+        epsilon,
+      ),
+      height: Math.max(
+        Math.abs((oldNode.height ?? 0) * scale[1]),
+        epsilon,
+      ),
+      rotation,
+      scaleX: oldAttrs.scaleX * (Math.sign(wSign) || 1),
+      scaleY: oldAttrs.scaleY * (Math.sign(hSign) || 1),
+    };
+    if (entity.hasSomeOf(Polyline, Path, Line)) {
+      const signW = Math.sign(wSign) || 1;
+      const signH = Math.sign(hSign) || 1;
+      obb.scaleX = Math.sign(oldAttrs.scaleX || 1) * signW;
+      obb.scaleY = Math.sign(oldAttrs.scaleY || 1) * signH;
+    }
+    this.updateNodeOBB(
+      node,
+      obb,
+      node.lockAspectRatio,
+      undefined,
+      oldNode,
+    );
+    updateGlobalTransform(entity);
+    updateComputedPoints(entity);
   }
 
   deleteNodesById(ids: SerializedNode['id'][]) {
@@ -1828,7 +2312,12 @@ export class API {
     this.#history.clear();
   }
 
-  export(format: ExportFormat, download = true, nodes: SerializedNode[] = []) {
+  export(options: ExportOptions) {
+    const {
+      format,
+      download = true,
+      nodes = [],
+    } = options;
     if (format === ExportFormat.SVG) {
       safeAddComponent(this.#canvas, VectorScreenshotRequest, {
         canvas: this.#canvas,
@@ -1836,11 +2325,52 @@ export class API {
         nodes,
       });
     } else if (format === ExportFormat.PNG || format === ExportFormat.JPEG) {
+      const scale =
+        options.scale != null && Number.isFinite(options.scale)
+          ? Math.max(0.25, Math.min(8, options.scale))
+          : 1;
       safeAddComponent(this.#canvas, RasterScreenshotRequest, {
         canvas: this.#canvas,
         type: `image/${format}`,
         download,
         nodes,
+        scale,
+      });
+    } else if (format === ExportFormat.WEBM || format === ExportFormat.GIF) {
+      const scale =
+        options.scale != null && Number.isFinite(options.scale)
+          ? Math.max(0.25, Math.min(8, options.scale))
+          : 1;
+      const durationRaw = options.durationSec;
+      const durationSec = Math.max(
+        0.2,
+        Math.min(
+          15,
+          durationRaw != null && Number.isFinite(durationRaw) ? durationRaw : 3,
+        ),
+      );
+      const fpsRaw = options.fps;
+      const fps = Math.max(
+        1,
+        Math.min(30, fpsRaw != null && Number.isFinite(fpsRaw) ? fpsRaw : 24),
+      );
+      const timeStartRaw = options.timeStart;
+      const timeStart =
+        timeStartRaw != null && Number.isFinite(timeStartRaw) ? timeStartRaw : 0;
+      const gq = options.gifQuality;
+      const gifQuality: AnimationGifQuality =
+        gq === 'medium' || gq === 'low' || gq === 'high' ? gq : 'high';
+      safeAddComponent(this.#canvas, RasterAnimationExportRequest, {
+        canvas: this.#canvas,
+        download,
+        format: format === ExportFormat.WEBM ? 'webm' : 'gif',
+        durationSec,
+        fps,
+        grid: false,
+        nodes,
+        scale,
+        timeStart,
+        gifQuality: format === ExportFormat.GIF ? gifQuality : 'high',
       });
     }
 
@@ -1853,9 +2383,15 @@ export class API {
   async renderToSVG(nodes: SerializedNode[], options: Partial<{
     grid: boolean;
     padding?: number;
+    /** 默认 `resolved`；`css-var` 会注入 `:root` 变量并输出 `var(--token)` */
+    designVariablesExport?: DesignVariablesSvgExportMode;
   }> = {}) {
     const canvas = this.#canvas;
-    const { grid: gridEnabled, padding = 0 } = options;
+    const {
+      grid: gridEnabled,
+      padding = 0,
+      designVariablesExport = 'resolved',
+    } = options;
     const { cameras, api } = canvas.read(Canvas);
     const { width, height } = canvas.read(Canvas);
     const { mode, colors } = canvas.read(Theme);
@@ -1864,7 +2400,7 @@ export class API {
     const hasNodes = nodes && nodes.length;
 
     if (hasNodes) {
-      return toSVGElement(api, nodes, padding);
+      return toSVGElement(api, nodes, padding, { designVariablesExport });
     }
 
     const $namespace = createSVGElement('svg');
@@ -1893,9 +2429,26 @@ export class API {
       }
     }
 
-    (await serializeNodesToSVGElements(
-      api.getNodes()
-    )).forEach((element) => {
+    const prep = prepareSerializedNodesForSvgExport(
+      api.readLayoutFromECS(api.getNodes()),
+      api.getAppState().variables,
+      designVariablesExport,
+      api.getAppState().themeMode,
+    );
+    const exportNodes = expandSerializedNodesForSvgExport(
+      prep.nodes,
+      api.getNodes(),
+    );
+    if (prep.cssRootStyle) {
+      const $defs = createSVGElement('defs');
+      const $style = DOMAdapter.get()
+        .getDocument()
+        .createElementNS('http://www.w3.org/2000/svg', 'style');
+      $style.textContent = prep.cssRootStyle;
+      $defs.appendChild($style);
+      $namespace.insertBefore($defs, $namespace.firstChild);
+    }
+    (await serializeNodesToSVGElements(exportNodes)).forEach((element) => {
       $namespace.appendChild(element);
     });
     return $namespace;

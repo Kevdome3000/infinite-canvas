@@ -13,7 +13,8 @@ import {
   TransparentBlack,
   Texture,
   PrimitiveTopology,
-} from '@antv/g-device-api';
+  TextureUsage,
+} from '@infinite-canvas-tutorial/device-api';
 import { Entity } from '@lastolivegames/becsy';
 import { mat3 } from 'gl-matrix';
 import earcut from 'earcut';
@@ -24,13 +25,21 @@ import {
   isClockWise,
   paddingMat3,
   parseColor,
+  parseGradient,
+  isMeshGradientGradient,
   triangulate,
 } from '../utils';
+import { parseEffect, filterRasterPostEffects } from '../utils/filter';
+import { createSolidFillMaskRasterForFilter } from '../utils/solidShapeRasterForFilter';
 import {
   ComputedPoints,
+  ComputedBounds,
   Ellipse,
+  FillGradient,
   FillImage,
+  FillPattern,
   FillSolid,
+  FillTexture,
   GlobalRenderOrder,
   GlobalTransform,
   Opacity,
@@ -43,6 +52,7 @@ import {
   ComputedRough,
   Mat3,
   VectorNetwork,
+  Filter,
 } from '../components';
 
 const strokeAlignmentMap = {
@@ -54,6 +64,10 @@ const strokeAlignmentMap = {
 export class Mesh extends Drawcall {
   #uniformBuffer: Buffer;
   #texture: Texture;
+  /** Unfiltered GPU texture when applying {@link Filter} (chain samples this). */
+  #rawFillImageTexture: Texture | null = null;
+  /** True when {@link #texture} is the post-process chain output (do not `destroy` in Mesh.destroy). */
+  #fillTextureFromPostChain = false;
 
   points: number[] = [];
 
@@ -64,6 +78,58 @@ export class Mesh extends Drawcall {
       ? shape.read(Stroke)
       : { dasharray: [] };
     return dasharray[0] > 0 && dasharray[1] > 0;
+  }
+
+  /**
+   * Run GPU post chain on `raw` when {@link Filter} lists raster-supported effects
+   * ({@link filterRasterPostEffects}).
+   */
+  private applyRasterFilterChainIfNeeded(
+    instance: Entity,
+    raw: Texture,
+    tw: number,
+    th: number,
+  ): Texture {
+    if (
+      this.instanced ||
+      !instance.has(Filter) ||
+      !instance.read(Filter).value
+    ) {
+      return raw;
+    }
+    const effects = filterRasterPostEffects(
+      parseEffect(instance.read(Filter).value),
+    );
+    if (effects.length === 0) {
+      return raw;
+    }
+    this.#rawFillImageTexture = raw;
+    this.createPostProcessing(effects, raw, tw, th);
+    const { texture: filtered } = this.renderPostProcessingTextureSpace(tw, th);
+    this.#fillTextureFromPostChain = true;
+    return filtered;
+  }
+
+  /**
+   * Rasterize {@link FillSolid} geometry to a mask bitmap for texture-space filters
+   * (vector silhouette + premultiplied-ish RGBA, same bounds as {@link ComputedBounds} used for `u_FillUVRect`).
+   */
+  private createSolidFillRasterCanvas(
+    shape: Entity,
+    tw: number,
+    th: number,
+  ): HTMLCanvasElement | OffscreenCanvas {
+    const fill = shape.read(FillSolid).value;
+    const { r: fr, g: fg, b: fb, opacity: fo } = parseColor(fill);
+    const fillRgba = `rgba(${fr},${fg},${fb},${fo})`;
+    const { minX, minY, maxX, maxY } = shape.read(ComputedBounds).geometryBounds;
+    return createSolidFillMaskRasterForFilter(
+      shape,
+      fillRgba,
+      { minX, minY, maxX, maxY },
+      tw,
+      th,
+    );
   }
 
   validate(shape: Entity) {
@@ -114,13 +180,39 @@ export class Mesh extends Drawcall {
 
     const isInstanceFillImage = this.shapes[0].has(FillImage);
     const isShapeFillImage = shape.has(FillImage);
+    const isInstanceFillGradient = this.shapes[0].has(FillGradient);
+    const isShapeFillGradient = shape.has(FillGradient);
+    const isInstanceFillPattern = this.shapes[0].has(FillPattern);
+    const isShapeFillPattern = shape.has(FillPattern);
+    const isInstanceFillTexture = this.shapes[0].has(FillTexture);
+    const isShapeFillTexture = shape.has(FillTexture);
 
     if (isInstanceFillImage !== isShapeFillImage) {
       return false;
     }
 
+    if (isInstanceFillGradient !== isShapeFillGradient) {
+      return false;
+    }
+
+    if (isInstanceFillPattern !== isShapeFillPattern) {
+      return false;
+    }
+
+    if (isInstanceFillTexture !== isShapeFillTexture) {
+      return false;
+    }
+
     if (isInstanceFillImage && isShapeFillImage) {
       return this.shapes[0].read(FillImage).src === shape.read(FillImage).src;
+    }
+
+    if (isInstanceFillGradient && isShapeFillGradient) {
+      return this.shapes[0].read(FillGradient) === shape.read(FillGradient);
+    }
+
+    if (this.shapes[0].has(Filter) || shape.has(Filter)) {
+      return false;
     }
 
     return true;
@@ -244,7 +336,8 @@ export class Mesh extends Drawcall {
     this.createProgram(vert, frag, defines);
     if (!this.#uniformBuffer) {
       this.#uniformBuffer = this.device.createBuffer({
-        viewOrSize: Float32Array.BYTES_PER_ELEMENT * (16 + 4 + 4 + 4 + 4 + 4),
+        viewOrSize:
+          Float32Array.BYTES_PER_ELEMENT * (16 + 4 + 4 + 4 + 4 + 4 + 4),
         usage: BufferUsage.UNIFORM,
         hint: BufferFrequencyHint.DYNAMIC,
       });
@@ -294,6 +387,128 @@ export class Mesh extends Drawcall {
         },
       ],
     };
+
+    if (this.useFillImage) {
+      if (this.bindings) {
+        this.bindings.destroy();
+      }
+
+      const instance = this.shapes[0];
+
+      this.#fillTextureFromPostChain = false;
+      if (!instance.has(Filter)) {
+        this.destroyFullPostProcessingChain();
+      }
+      if (this.#rawFillImageTexture) {
+        this.#rawFillImageTexture.destroy();
+        this.#rawFillImageTexture = null;
+      }
+
+      if (instance.has(FillGradient) || instance.has(FillPattern)) {
+        const { minX, minY, maxX, maxY } =
+          instance.read(ComputedBounds).geometryBounds;
+        const width = maxX - minX;
+        const height = maxY - minY;
+        const fillGradients = instance.has(FillGradient)
+          ? parseGradient(instance.read(FillGradient).value)
+          : undefined;
+        const meshFill =
+          fillGradients?.length === 1 ? fillGradients[0] : undefined;
+        if (instance.has(FillPattern)) {
+          const canvas = this.texturePool.getOrCreatePattern({
+            pattern: instance.read(FillPattern),
+            width,
+            height,
+          });
+          const texture = this.device.createTexture({
+            format: Format.U8_RGBA_NORM,
+            width: 128,
+            height: 128,
+            usage: TextureUsage.SAMPLED,
+          });
+          texture.setImageData([canvas]);
+          this.#texture = this.applyRasterFilterChainIfNeeded(
+            instance,
+            texture,
+            128,
+            128,
+          );
+        } else if (meshFill && isMeshGradientGradient(meshFill)) {
+          const raw = this.renderMeshGradientTexture(meshFill, 128, 128);
+          this.#texture = this.applyRasterFilterChainIfNeeded(
+            instance,
+            raw,
+            128,
+            128,
+          );
+        } else {
+          const canvas = this.texturePool.getOrCreateGradient({
+            gradients: fillGradients ?? [],
+            min: [minX, minY],
+            width,
+            height,
+          });
+          const texture = this.device.createTexture({
+            format: Format.U8_RGBA_NORM,
+            width: 128,
+            height: 128,
+            usage: TextureUsage.SAMPLED,
+          });
+          texture.setImageData([canvas]);
+          this.#texture = this.applyRasterFilterChainIfNeeded(
+            instance,
+            texture,
+            128,
+            128,
+          );
+        }
+      } else if (instance.has(FillTexture)) {
+        this.#texture = instance.read(FillTexture).value;
+      } else if (instance.has(FillImage)) {
+        const src = instance.read(FillImage).src as ImageBitmap;
+        const tw = Math.max(1, src.width);
+        const th = Math.max(1, src.height);
+        const raw = this.device.createTexture({
+          format: Format.U8_RGBA_NORM,
+          width: tw,
+          height: th,
+          usage: TextureUsage.SAMPLED,
+        });
+        raw.setImageData([src]);
+        this.#texture = this.applyRasterFilterChainIfNeeded(
+          instance,
+          raw,
+          tw,
+          th,
+        );
+      } else if (instance.has(FillSolid)) {
+        const { minX, minY, maxX, maxY } =
+          instance.read(ComputedBounds).geometryBounds;
+        const tw = Math.max(1, Math.ceil(maxX - minX));
+        const th = Math.max(1, Math.ceil(maxY - minY));
+        const canvas = this.createSolidFillRasterCanvas(instance, tw, th);
+        const raw = this.device.createTexture({
+          format: Format.U8_RGBA_NORM,
+          width: tw,
+          height: th,
+          usage: TextureUsage.SAMPLED,
+        });
+        raw.setImageData([canvas as HTMLCanvasElement]);
+        this.#texture = this.applyRasterFilterChainIfNeeded(
+          instance,
+          raw,
+          tw,
+          th,
+        );
+      }
+
+      bindings.samplerBindings = [
+        {
+          texture: this.#texture,
+          sampler: this.createSampler(),
+        },
+      ];
+    }
 
     this.bindings = this.renderCache.createBindings(bindings);
   }
@@ -381,10 +596,17 @@ export class Mesh extends Drawcall {
   }
 
   destroy(): void {
+    this.destroyFullPostProcessingChain();
+    this.#rawFillImageTexture?.destroy();
+    this.#rawFillImageTexture = null;
+    if (!this.#fillTextureFromPostChain) {
+      this.#texture?.destroy?.();
+    }
+    this.#texture = null;
+    this.#fillTextureFromPostChain = false;
     super.destroy();
     if (this.program) {
       this.#uniformBuffer?.destroy();
-      this.#texture?.destroy();
     }
   }
 
@@ -412,6 +634,33 @@ export class Mesh extends Drawcall {
         : { color: null, width: 0, alignment: 'center' };
     const { r: sr, g: sg, b: sb, opacity: so } = parseColor(strokeColor);
 
+    let minX = 0;
+    let minY = 0;
+    let invWidth = 0;
+    let invHeight = 0;
+    if (shape.has(FillGradient) || shape.has(FillPattern)) {
+      const { minX: gMinX, minY: gMinY, maxX: gMaxX, maxY: gMaxY } = shape.read(ComputedBounds).geometryBounds;
+      const geometryWidth = gMaxX - gMinX;
+      const geometryHeight = gMaxY - gMinY;
+      minX = gMinX;
+      minY = gMinY;
+      invWidth = geometryWidth === 0 ? 0 : 1 / geometryWidth;
+      invHeight = geometryHeight === 0 ? 0 : 1 / geometryHeight;
+    } else if (this.useFillImage && shape.has(ComputedBounds)) {
+      const { minX: gMinX, minY: gMinY, maxX: gMaxX, maxY: gMaxY } = shape.read(ComputedBounds).geometryBounds;
+      const geometryWidth = gMaxX - gMinX;
+      const geometryHeight = gMaxY - gMinY;
+      minX = gMinX;
+      minY = gMinY;
+      invWidth = geometryWidth === 0 ? 0 : 1 / geometryWidth;
+      invHeight = geometryHeight === 0 ? 0 : 1 / geometryHeight;
+    } else {
+      minX = 0;
+      minY = 0;
+      invWidth = 0;
+      invHeight = 0;
+    }
+
     const u_FillColor = [fr / 255, fg / 255, fb / 255, fo];
     const u_StrokeColor = [sr / 255, sg / 255, sb / 255, so];
     const u_ZIndexStrokeWidth = [
@@ -426,18 +675,26 @@ export class Mesh extends Drawcall {
       strokeOpacity,
       sizeAttenuation ? 1 : 0,
     ];
+    const u_FillUVRect = [minX, minY, invWidth, invHeight];
 
     if (this.isWatercolorRoughMesh()) {
       u_Opacity[1] *= 0.05;
     }
 
     return [
-      [...u_FillColor, ...u_StrokeColor, ...u_ZIndexStrokeWidth, ...u_Opacity],
+      [
+        ...u_FillColor,
+        ...u_StrokeColor,
+        ...u_ZIndexStrokeWidth,
+        ...u_Opacity,
+        ...u_FillUVRect,
+      ],
       {
         u_FillColor,
         u_StrokeColor,
         u_ZIndexStrokeWidth,
         u_Opacity,
+        u_FillUVRect,
       },
     ];
   }

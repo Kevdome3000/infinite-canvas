@@ -7,17 +7,14 @@ import {
   AppState,
   CheckboardStyle,
   readSystemClipboard,
-  ThemeMode,
+  effectiveThemePreference,
+  resolveThemeModeFromPreference,
+  type ThemePreference,
+  ExportFormat,
 } from '@infinite-canvas-tutorial/ecs';
 import { apiContext, appStateContext } from '../context';
 import { ExtendedAPI } from '../API';
 import { executeCopy, executeCut, executePaste } from './context-menu';
-
-export enum ExportFormat {
-  SVG = 'svg',
-  PNG = 'png',
-  JPEG = 'jpeg',
-}
 
 @customElement('ic-spectrum-top-navbar')
 @localized()
@@ -94,7 +91,7 @@ export class TopNavbar extends LitElement {
   private handleExport(event: CustomEvent) {
     const format = (event.target as any).value as ExportFormat;
 
-    this.api.export(format);
+    this.api.export({ format });
   }
 
   private handleEdit(event: CustomEvent) {
@@ -134,15 +131,14 @@ export class TopNavbar extends LitElement {
   }
 
   private handleConfigTheme(event: CustomEvent) {
-    const selected = (event.target as any).selected[0];
-    let themeMode = selected === 'dark' ? ThemeMode.DARK : ThemeMode.LIGHT;
-    if (selected === 'system') {
-      themeMode = window.matchMedia('(prefers-color-scheme: dark)').matches
-        ? ThemeMode.DARK
-        : ThemeMode.LIGHT;
-    }
-
+    const raw = (event.target as any).selected[0] as string;
+    const themePreference: ThemePreference =
+      raw === 'light' || raw === 'dark' || raw === 'system'
+        ? raw
+        : 'system';
+    const themeMode = resolveThemeModeFromPreference(themePreference);
     this.api.setAppState({
+      themePreference,
       themeMode,
     });
   }
@@ -276,7 +272,9 @@ export class TopNavbar extends LitElement {
                     <sp-menu
                       slot="submenu"
                       selects="single"
-                      .selected=${[this.appState.themeMode]}
+                      .selected=${[
+                        effectiveThemePreference(this.appState),
+                      ]}
                       @change=${this.handleConfigTheme}
                     >
                       <sp-menu-item value="light">
@@ -312,6 +310,8 @@ export class TopNavbar extends LitElement {
                   <sp-menu-item value=${ExportFormat.SVG}>SVG</sp-menu-item>
                   <sp-menu-item value=${ExportFormat.PNG}>PNG</sp-menu-item>
                   <sp-menu-item value=${ExportFormat.JPEG}>JPEG</sp-menu-item>
+                  <sp-menu-item value=${ExportFormat.WEBM}>WebM</sp-menu-item>
+                  <sp-menu-item value=${ExportFormat.GIF}>GIF</sp-menu-item>
                 </sp-menu>
               </sp-menu-item>
             </sp-action-menu>

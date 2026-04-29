@@ -1,6 +1,7 @@
 ---
 outline: deep
 ---
+
 <script setup>
 import Mermaid from '../../components/Mermaid.vue'
 import MermaidRough from '../../components/MermaidRough.vue'
@@ -8,6 +9,9 @@ import MermaidFlowchart from '../../components/MermaidFlowchart.vue'
 import MermaidFlowchartWatercolor from '../../components/MermaidFlowchartWatercolor.vue'
 import MermaidSequence from '../../components/MermaidSequence.vue'
 import MermaidState from '../../components/MermaidState.vue'
+import MermaidERD from '../../components/MermaidERD.vue'
+import MermaidClass from '../../components/MermaidClass.vue'
+import MermaidMindmap from '../../components/MermaidMindmap.vue'
 </script>
 
 该插件提供了一个工具方法，将 Mermaid 语法转换成画布的场景图，详见：[课程 32 - 文本生成图表]
@@ -47,9 +51,24 @@ api.runAtNextTick(() => {
 
 <MermaidSequence />
 
-## [WIP] state
+## state
 
-<!-- <MermaidState /> -->
+<MermaidState />
+
+## ERD
+
+<MermaidERD />
+
+## Class
+
+<MermaidClass />
+
+## Mindmap
+
+[课程 23 - 思维导图]
+
+<MermaidMindmap />
 
 [课程 32 - 文本生成图表]: /zh/guide/lesson-032
+[课程 23 - 思维导图]: /zh/guide/lesson-023
 [watercolorizer]: https://github.com/32bitkid/watercolorizer

@@ -47,6 +47,7 @@ import {
   ClipMode,
   Flex,
   Group,
+  IconFont,
   ColumnLayout
 } from '../../components';
 import type {
@@ -58,7 +59,9 @@ import type {
   EmbedSerializedNode,
   FillAttributes,
   FilterAttributes,
+  GSerializedNode,
   HtmlSerializedNode,
+  IconFontSerializedNode,
   InnerShadowAttributes,
   LineSerializedNode,
   MarkerAttributes,
@@ -84,12 +87,24 @@ import {
   transformPath,
   serializeBrushPoints,
 } from '../serialize';
+import {
+  buildIconFontScalablePrimitives,
+  resolveIconFontWireStyle,
+} from '../icon-font';
 import { Mat3 } from '../../components/math/Mat3';
 import { formatNumber } from '../serialize/points';
 import { deserializeBrushPoints, deserializePoints } from './points';
 import { Commands, EntityCommands } from '../../commands';
 import { isGradient } from '../gradient';
 import { isPattern } from '../pattern';
+import {
+  resolveDesignVariableValue,
+  designVariableRefKeyFromWire,
+  type DesignVariablesMap,
+} from '../design-variables';
+import { getComputedInheritGroupWireMap } from '../inherit-group-wire';
+import { buildGroupWirePresentation } from '../group-presentation';
+import type { ThemeMode } from '../../components/Theme';
 import { measureText } from '../../systems';
 import { DOMAdapter } from '../../environment';
 import { safeAddComponent } from '../../history';
@@ -106,6 +121,8 @@ import {
 } from '../path-edit';
 import { pointAndNormalAlongPolylineByT } from '../polyline-arclength';
 import simplify from 'simplify-js';
+import { expandRefSerializedNodes, mergeSerializedNodesForRefLookup } from './expand-ref-nodes';
+import { insertIconFontChildFromPrimitive } from '../insert-icon-font-child-entity';
 
 export function inferXYWidthHeight(node: SerializedNode) {
   if (node.type === 'g') {
@@ -120,7 +137,7 @@ export function inferXYWidthHeight(node: SerializedNode) {
   ) {
     const { type } = node;
     let bounds: AABB;
-    if (type === 'rect' || type === 'html' || type === 'embed') {
+    if (type === 'rect' || type === 'html' || type === 'embed' || type === 'iconfont') {
       bounds = Rect.getGeometryBounds(node as Partial<Rect>);
     } else if (type === 'ellipse' || type === 'rough-ellipse') {
       bounds = Ellipse.getGeometryBounds(node);
@@ -514,8 +531,10 @@ function pathWorldToLocalPathD(worldD: string, snap: EdgePathPreserveSnapshot): 
  * preserve 写入局部 `d` 后：按与 {@link inferXYWidthHeight} 相同方式用 {@link shiftPath} 把 bbox 最小角贴到局部原点，
  * 再用快照中的旋转/缩放把「归一化前的 bbox 角」映射到世界坐标写回 `x/y`。
  * 切勿在无 `x/y` 时直接调用 {@link inferXYWidthHeight}：会把 `translation` 设成 `d` 的局部 min（常为 0），丢失画布平移。
+ *
+ * 亦用于 {@link applyElementUpdates}：仅更新 `d` 时保持与边绑定一致的布局语义。
  */
-function applyPathPreserveLayoutFromSnapshot(
+export function applyPathPreserveLayoutFromSnapshot(
   edge: SerializedNode,
   prev: EdgePathPreserveSnapshot,
 ): void {
@@ -937,6 +956,10 @@ export type SerializedNodesToEntitiesOptions = {
    * 增量添加（如 {@link API.updateNode} 只传入新节点）时应传入「当前场景 + 本批节点」合并后的列表。
    */
   lookupNodes?: SerializedNode[];
+  /** 文档级设计变量，用于解析 `$token` 形式的 fill/stroke/fontSize 等 */
+  variables?: DesignVariablesMap;
+  /** 用于多主题设计变量条目的条件匹配 */
+  themeMode?: ThemeMode;
 };
 
 export function serializedNodesToEntities(
@@ -949,7 +972,16 @@ export function serializedNodesToEntities(
   entities: Entity[];
   idEntityMap: Map<string, EntityCommands>;
 } {
-  const graph = options?.lookupNodes ?? nodes;
+  const mergedForRef = mergeSerializedNodesForRefLookup(
+    nodes,
+    options?.lookupNodes,
+  );
+  const expandedNodes = expandRefSerializedNodes(nodes, mergedForRef);
+  const graph = mergeSerializedNodesForRefLookup(
+    expandedNodes,
+    options?.lookupNodes,
+  );
+  const inheritGroupWireById = getComputedInheritGroupWireMap(graph);
 
   // The old entities are already added to canvas.
   let existedVertices: string[] = [];
@@ -958,14 +990,14 @@ export function serializedNodesToEntities(
   }
 
   const vertices = Array.from(
-    new Set([...existedVertices, ...nodes.map((node) => node.id)]),
+    new Set([...existedVertices, ...expandedNodes.map((node) => node.id)]),
   );
-  let edges = nodes
+  let edges = expandedNodes
     .filter((node) => !isNil(node.parentId))
     .map((node) => [node.parentId, node.id] as [string, string]);
 
   // bindings should also be sorted
-  nodes.forEach((node) => {
+  expandedNodes.forEach((node) => {
     if (
       node.type === 'line' ||
       node.type === 'polyline' ||
@@ -1000,7 +1032,7 @@ export function serializedNodesToEntities(
 
   const entities: Entity[] = [];
   for (const id of sorted) {
-    const node = nodes.find((n) => n.id === id);
+    const node = expandedNodes.find((n) => n.id === id);
 
     if (!node) {
       continue;
@@ -1012,6 +1044,18 @@ export function serializedNodesToEntities(
     }
 
     const { parentId, type } = node;
+    if (type === 'ref') {
+      throw new Error(
+        'ref nodes must be expanded before serializedNodesToEntities (expandRefSerializedNodes)',
+      );
+    }
+    const designVariables = options?.variables;
+    const themeMode = options?.themeMode;
+    const wirePaint = inheritGroupWireById.get(id) ?? {};
+    const wireMergedAttrs = { ...attributes, ...wirePaint };
+
+    /** `iconfont` 拆成子 path/circle/line 时，父级不挂 Fill/Stroke。 */
+    let skipParentFillStroke = false;
 
     const entityCommands = commands.spawn();
     idEntityMap.set(id, entityCommands);
@@ -1122,7 +1166,15 @@ export function serializedNodesToEntities(
     entityCommands.insert(new Renderable());
 
     if (type === 'g') {
-      entityCommands.insert(new Group());
+      entityCommands.insert(
+        new Group(
+          buildGroupWirePresentation(
+            wireMergedAttrs as GSerializedNode,
+            designVariables,
+            themeMode,
+          ),
+        ),
+      );
     } else if (type === 'ellipse' || type === 'rough-ellipse') {
       entityCommands.insert(
         new Ellipse({
@@ -1138,8 +1190,29 @@ export function serializedNodesToEntities(
       }
     } else if (type === 'rect' || type === 'rough-rect') {
       const { cornerRadius } = attributes as RectSerializedNode;
+      const resolvedCr = resolveDesignVariableValue(
+        cornerRadius,
+        designVariables,
+        themeMode,
+      );
+      const crNum = (() => {
+        if (resolvedCr === undefined || resolvedCr === null) {
+          return undefined;
+        }
+        const n =
+          typeof resolvedCr === 'number'
+            ? resolvedCr
+            : parseFloat(String(resolvedCr));
+        return Number.isFinite(n) ? Math.max(0, n) : undefined;
+      })();
       entityCommands.insert(
-        new Rect({ x: 0, y: 0, width: absoluteWidth, height: absoluteHeight, cornerRadius }),
+        new Rect({
+          x: 0,
+          y: 0,
+          width: absoluteWidth,
+          height: absoluteHeight,
+          cornerRadius: crNum ?? 0,
+        }),
       );
       if (type === 'rough-rect') {
         serializeRough(attributes as RoughAttributes, entityCommands);
@@ -1244,6 +1317,17 @@ export function serializedNodesToEntities(
         edgeLabelOffset,
       } = attributes as TextSerializedNode;
 
+      const resolvedFontSize = resolveDesignVariableValue(
+        fontSize,
+        designVariables,
+        themeMode,
+      );
+      const resolvedDecorationColor = resolveDesignVariableValue(
+        decorationColor,
+        designVariables,
+        themeMode,
+      );
+
       // let anchorX = 0;
       // let anchorY = 0;
       // if (textAlign === 'center') {
@@ -1269,7 +1353,11 @@ export function serializedNodesToEntities(
           anchorY,
           content,
           fontFamily,
-          fontSize,
+          fontSize:
+            typeof resolvedFontSize === 'number'
+              ? resolvedFontSize
+              : Number(resolvedFontSize),
+          fontSizeVariableRef: designVariableRefKeyFromWire(fontSize),
           fontWeight,
           fontStyle,
           fontVariant,
@@ -1289,7 +1377,7 @@ export function serializedNodesToEntities(
       if (decorationLine !== 'none' && decorationThickness > 0) {
         entityCommands.insert(
           new TextDecoration({
-            color: decorationColor,
+            color: resolvedDecorationColor,
             line: decorationLine,
             style: decorationStyle,
             thickness: decorationThickness,
@@ -1337,8 +1425,9 @@ export function serializedNodesToEntities(
       entityCommands.insert(new Embed({ x: 0, y: 0, width: absoluteWidth, height: absoluteHeight, url }));
       entityCommands.insert(new HTMLContainer());
     } else if (type === 'column-layout') {
-      const { gap, padding, alignItems, isAutoLayout } =
+      const { gap, padding: rawPadding, alignItems, isAutoLayout } =
         attributes as ColumnLayoutSerializedNode;
+      const padding = Array.isArray(rawPadding) ? (rawPadding[0] ?? 0) : (rawPadding ?? 0);
       entityCommands.insert(
         new ColumnLayout({ gap, padding, alignItems, isAutoLayout }),
       );
@@ -1363,26 +1452,116 @@ export function serializedNodesToEntities(
           }),
         );
       }
+    } else if (type === 'iconfont') {
+      const {
+        iconFontName = '',
+        iconFontFamily = 'lucide',
+      } = attributes as IconFontSerializedNode;
+      const rName = resolveDesignVariableValue(
+        iconFontName,
+        designVariables,
+        themeMode,
+      );
+      const rFamily = resolveDesignVariableValue(
+        iconFontFamily,
+        designVariables,
+        themeMode,
+      );
+
+      const iconAttrs = wireMergedAttrs as IconFontSerializedNode;
+      const groupPres = buildGroupWirePresentation(
+        iconAttrs,
+        designVariables,
+        themeMode,
+      );
+      const { userColorStroke, userColorFill, rSw } = resolveIconFontWireStyle(
+        iconAttrs,
+        designVariables,
+        themeMode,
+        groupPres,
+      );
+
+      const prims = buildIconFontScalablePrimitives(
+        String(rName ?? iconFontName ?? ''),
+        String(rFamily ?? iconFontFamily ?? 'lucide'),
+        absoluteWidth,
+        absoluteHeight,
+      );
+      if (prims && prims.length > 0) {
+        entityCommands.insert(new Group(groupPres));
+        skipParentFillStroke = true;
+        const v = (attributes as VisibilityAttributes).visibility;
+
+        for (let i = 0; i < prims.length; i++) {
+          const prim = prims[i]!;
+          const ch = commands.spawn();
+          insertIconFontChildFromPrimitive(ch, prim, {
+            userColorStroke,
+            userColorFill,
+            rSw,
+            zIndex: attributes.zIndex != null ? attributes.zIndex! : 0,
+            visibility: (v as 'inherited' | 'hidden' | 'visible' | undefined) ?? 'inherited',
+            name: `${id}__i${i}`,
+          });
+          entityCommands.appendChild(ch);
+        }
+      } else {
+        entityCommands.insert(
+          new Rect({
+            x: 0,
+            y: 0,
+            width: absoluteWidth,
+            height: absoluteHeight,
+            cornerRadius: 0,
+          }),
+        );
+        const fattrs = wireMergedAttrs as FillAttributes & StrokeAttributes;
+        if (fattrs.stroke == null && fattrs.fill != null) {
+          fattrs.stroke = fattrs.fill;
+        }
+        if (fattrs.strokeWidth == null) {
+          fattrs.strokeWidth = 2;
+        }
+        fattrs.fill = 'none';
+      }
+      entityCommands.insert(
+        new IconFont({
+          iconFontName: String(rName ?? iconFontName ?? ''),
+          iconFontFamily: String(rFamily ?? iconFontFamily ?? 'lucide'),
+          layoutWidth: absoluteWidth > 0 ? absoluteWidth : 0,
+          layoutHeight: absoluteHeight > 0 ? absoluteHeight : 0,
+        }),
+      );
     }
 
     if (attributes.clipMode) {
       entityCommands.insert(new ClipMode(attributes.clipMode));
     }
 
-    const { fill, fillOpacity, opacity } = attributes as FillAttributes;
-    if (fill) {
-      if (isGradient(fill)) {
-        entityCommands.insert(new FillGradient(fill));
-      } else if (isDataUrl(fill) || isUrl(fill)) {
-        loadImage(fill, entityCommands.id());
+    const { fill, fillOpacity, opacity } = wireMergedAttrs as FillAttributes;
+    const resolvedFill = resolveDesignVariableValue(
+      fill,
+      designVariables,
+      themeMode,
+    );
+    if (resolvedFill && !skipParentFillStroke) {
+      if (isGradient(resolvedFill)) {
+        entityCommands.insert(new FillGradient(resolvedFill));
+      } else if (isDataUrl(resolvedFill) || isUrl(resolvedFill)) {
+        loadImage(resolvedFill, entityCommands.id());
       } else {
         try {
-          const parsed = JSON.parse(fill) as FillPattern;
+          const parsed = JSON.parse(resolvedFill as string) as FillPattern;
           if (isPattern(parsed)) {
             entityCommands.insert(new FillPattern(parsed));
           }
         } catch (e) {
-          entityCommands.insert(new FillSolid(fill));
+          entityCommands.insert(
+            new FillSolid(
+              resolvedFill as string,
+              designVariableRefKeyFromWire(fill),
+            ),
+          );
         }
       }
     }
@@ -1397,12 +1576,32 @@ export function serializedNodesToEntities(
       strokeOpacity,
       strokeDashoffset,
       strokeAlignment,
-    } = attributes as StrokeAttributes;
-    if (stroke) {
+    } = wireMergedAttrs as StrokeAttributes;
+    const resolvedStroke = resolveDesignVariableValue(
+      stroke,
+      designVariables,
+      themeMode,
+    );
+    const resolvedStrokeWidth = resolveDesignVariableValue(
+      strokeWidth,
+      designVariables,
+      themeMode,
+    );
+    if (resolvedStroke && !skipParentFillStroke) {
+      const rawW =
+        resolvedStrokeWidth !== undefined ? resolvedStrokeWidth : strokeWidth;
+      const widthInit =
+        rawW !== undefined && rawW !== null
+          ? {
+            width: typeof rawW === 'number' ? rawW : Number(rawW),
+          }
+          : {};
       entityCommands.insert(
         new Stroke({
-          color: stroke,
-          width: strokeWidth,
+          color: resolvedStroke,
+          ...widthInit,
+          colorVariableRef: designVariableRefKeyFromWire(stroke),
+          widthVariableRef: designVariableRefKeyFromWire(strokeWidth),
           // comma and/or white space separated
           dasharray:
             strokeDasharray === 'none'
@@ -1433,11 +1632,28 @@ export function serializedNodesToEntities(
     }
 
     if (opacity || fillOpacity || strokeOpacity) {
+      const rfo = resolveDesignVariableValue(
+        fillOpacity,
+        designVariables,
+        themeMode,
+      );
+      const rso = resolveDesignVariableValue(
+        strokeOpacity,
+        designVariables,
+        themeMode,
+      );
+      const to01 = (v: unknown): number => {
+        if (v === undefined || v === null) {
+          return 1;
+        }
+        const n = typeof v === 'number' ? v : parseFloat(String(v));
+        return Number.isFinite(n) ? Math.max(0, Math.min(1, n)) : 1;
+      };
       entityCommands.insert(
         new Opacity({
           opacity,
-          fillOpacity,
-          strokeOpacity,
+          fillOpacity: to01(rfo),
+          strokeOpacity: to01(rso),
         }),
       );
     }
@@ -1451,7 +1667,11 @@ export function serializedNodesToEntities(
     if (dropShadowBlurRadius) {
       entityCommands.insert(
         new DropShadow({
-          color: dropShadowColor,
+          color: resolveDesignVariableValue(
+            dropShadowColor,
+            designVariables,
+            themeMode,
+          ),
           blurRadius: dropShadowBlurRadius,
           offsetX: dropShadowOffsetX,
           offsetY: dropShadowOffsetY,
@@ -1468,7 +1688,11 @@ export function serializedNodesToEntities(
     if (innerShadowBlurRadius) {
       entityCommands.insert(
         new InnerShadow({
-          color: innerShadowColor,
+          color: resolveDesignVariableValue(
+            innerShadowColor,
+            designVariables,
+            themeMode,
+          ),
           blurRadius: innerShadowBlurRadius,
           offsetX: innerShadowOffsetX,
           offsetY: innerShadowOffsetY,
@@ -1512,6 +1736,7 @@ export function serializedNodesToEntities(
     const { filter } = attributes as FilterAttributes;
     if (filter) {
       entityCommands.insert(new Filter({ value: filter }));
+      entityCommands.insert(new MaterialDirty());
     }
 
     const { display } = attributes as FlexboxLayoutAttributes;

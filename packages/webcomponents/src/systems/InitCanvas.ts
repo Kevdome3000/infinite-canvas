@@ -53,6 +53,8 @@ import {
   Group,
   Theme,
   AnimationPlayer,
+  MaterialDirty,
+  IconFont,
 } from '@infinite-canvas-tutorial/ecs';
 import { Event } from '../event';
 import { ExtendedAPI, pendingCanvases } from '../API';
@@ -117,6 +119,8 @@ export class InitCanvas extends System {
             Flex,
             Theme,
             AnimationPlayer,
+            MaterialDirty,
+            IconFont,
           ).write,
     );
   }
@@ -155,6 +159,13 @@ export class InitCanvas extends System {
         api.getLocale = this.#getLocale;
 
         this.commands.execute();
+
+        const initialAppState = stateManagement.getAppState();
+        api.setAppState({
+          theme: initialAppState.theme,
+          themeMode: initialAppState.themeMode,
+          themePreference: initialAppState.themePreference,
+        });
 
         container.dispatchEvent(new CustomEvent(Event.READY, { detail: api }));
       });

@@ -6,6 +6,7 @@ import { Plugin, type PluginWithConfig } from './types';
 import {
   SetupDevice,
   MeshPipeline,
+  PostEffectTime,
   Sort,
   ComputePoints,
   ComputeRough,
@@ -66,7 +67,9 @@ import {
   Locked,
   ClipMode,
   Flex,
+  FlexLayoutDirty,
   Group,
+  IconFont,
 } from '../components';
 
 export interface RendererPluginOptions {
@@ -95,6 +98,7 @@ function createRendererPlugin(options: RendererPluginOptions = {}): Plugin {
     component(Editable);
     component(Locked);
     component(Flex);
+    component(FlexLayoutDirty);
 
     /**
      * Style
@@ -118,6 +122,7 @@ function createRendererPlugin(options: RendererPluginOptions = {}): Plugin {
     /**
      * Geometry
      */
+    component(IconFont);
     component(Group);
     component(Circle);
     component(Ellipse);
@@ -148,6 +153,7 @@ function createRendererPlugin(options: RendererPluginOptions = {}): Plugin {
     system(Last)(SetCursor);
 
     const RenderSystem = options.rendererSystemCtor ?? MeshPipeline;
+    system((s) => s.before(RenderSystem))(PostEffectTime);
     system(Last)(RenderSystem);
     system((s) => s.before(Deleter, ExportSVG))(RenderSystem);
 

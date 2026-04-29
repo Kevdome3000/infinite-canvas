@@ -9,6 +9,7 @@ const esm = [
   'fractional-indexing',
   'point-to-segment-2d',
   '@chenglou/pretext',
+  'uuid',
 ]
   .map((d) => `_${d}|${d}`)
   .join('|');
@@ -20,6 +21,12 @@ module.exports = {
   preset: 'ts-jest',
   moduleFileExtensions: ['ts', 'tsx', 'js', 'json'],
   modulePathIgnorePatterns: ['dist', '\\.next'],
+  // Workspace package: resolve to source so tests run without a prior device-api build
+  moduleNameMapper: {
+    '^@infinite-canvas-tutorial/device-api$':
+      '<rootDir>/packages/device-api/src/index.ts',
+    '^heic2any$': '<rootDir>/__tests__/mocks/heic2any.ts',
+  },
   collectCoverageFrom: ['packages/ecs/src/**/*.ts'],
   transform: {
     '^.+\\.[tj]s$': [

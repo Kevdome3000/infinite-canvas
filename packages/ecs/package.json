@@ -44,7 +44,7 @@
     "watch": "rimraf ./esm && tsc --module ESNext --outDir esm --watch"
   },
   "dependencies": {
-    "@antv/g-device-api": "^1.6.12",
+    "@infinite-canvas-tutorial/device-api": "workspace:*",
     "@antv/util": "^3.3.10",
     "@lastolivegames/becsy": "^0.16.0",
     "@loaders.gl/core": "^4.2.2",
@@ -54,15 +54,17 @@
     "@watercolorizer/watercolorizer": "^1.1.2",
     "@watercolorizer/convolution": "^1.0.4",
     "arabic-reshaper": "^1.1.0",
-    "@chenglou/pretext": "^0.0.3",
+    "@chenglou/pretext": "^0.0.5",
     "bidi-js": "^1.0.3",
     "bezier-easing": "^2.1.0",
     "bezier-js": "^6.1.4",
     "d3-color": "^3.1.0",
     "earcut": "^3.0.0",
+    "gifenc": "1.0.3",
     "eventemitter3": "^5.0.1",
     "fractional-indexing": "^3.2.0",
     "gl-matrix": "^3.4.3",
+    "heic2any": "^0.0.4",
     "libtess": "^1.2.2",
     "perfect-freehand": "^1.2.2",
     "potpack": "^2.0.0",
@@ -73,7 +75,7 @@
     "simplify-js": "^1.2.4",
     "toposort": "^2.0.2",
     "transformation-matrix": "^3.0.0",
-    "uuid": "^11.1.0"
+    "uuid": "^14.0.0"
   },
   "devDependencies": {
     "@types/bezier-js": "^4.1.3",

@@ -2,11 +2,12 @@
 outline: deep
 description: '学习将画布内容导出为PNG、JPEG和SVG格式图片。实现图片在画布中的渲染，并扩展SVG能力以支持更多设计工具特性。'
 ---
+
 # 课程 10 - 图片导入导出
 
 图片导入导出在无限画布中是一个非常重要的功能，通过图片产物可以和其他工具打通。因此虽然目前我们的画布绘制能力还很有限，但不妨提前考虑和图片相关的问题。在这节课中你将学习到以下内容：
 
--   将画布内容导出成 PNG，JPEG 和 SVG 格式的图片
+-   将画布内容导出成 PNG，JPEG 和 SVG 格式的图片，对于带有时间动画的效果导出成 GIF 格式
 -   在画布中渲染图片
 -   拓展 SVG 的能力，以 `stroke-alignment` 为例
 
@@ -511,6 +512,31 @@ Object.entries(rest).forEach(([key, value]) => {
 
 ![source: https://link.excalidraw.com/readonly/MbbnWPSWXgadXdtmzgeO](https://github.com/user-attachments/assets/e255df0a-13de-4cb6-ae2e-9e885b643c63)
 
+### 导出 GIF {#to-gif}
+
+在后续的 [课程 30 - 时间动画] 中，我们会介绍基于后处理和时间变量实现的动画效果。如果想导出动画，就需要 GIF 或者 MOV 等格式了，我们先来看前者如何实现。
+
+1. 在渲染管线中要支持传入当前的帧序号
+2. 导出画布内容成 PNG，上一小节已经介绍过
+3. 读取像素数据进行调色，例如每帧 256 色。在允许略损的前提下，改为 128 或 64 色 通常能明显减小文件，带渐变/照片的画面会更容易起噪点
+4. 每帧独立调色板：当前是每帧一个 palette（writeFrame 里每帧都 quantize），对扁平 UI 很友好，但对帧间变化小的循环，若改为固定全局调色板或更少关键帧会更省，但实现成本明显更高
+
+```ts
+import { GIFEncoder, applyPalette, quantize } from 'gifenc';
+
+const gif = GIFEncoder();
+for (let i = 0; i < frameCount; i++) {
+    renderFrame(i); // 1.
+    const dataUrl = el.toDataURL('image/png', pngQuality); // 2.
+    const imageData = await imageDataFromPngDataUrl(dataUrl, w, h, ctx!);
+    const palette = quantize(imageData.data, 256); // 3.
+    const index = applyPalette(imageData.data, palette); // 4.
+    gif.writeFrame(index, w, h, { palette, delay });
+}
+gif.finish();
+return new Blob([new Uint8Array(gif.bytes())], { type: 'image/gif' });
+```
+
 ### 导出 PDF {#to-pdf}
 
 现在像素和矢量图都有了，如果还想导出成 PDF 可以使用 [jsPDF]，它提供了添加图片的 API，限于篇幅这里就不介绍了。
@@ -755,6 +781,28 @@ export class RenderCache {
 }
 ```
 
+### iOS Live Photo {#ios-live-photo}
+
+iOS Live Photo 在文件层面通常是 HEIC 静态图 + 配套 MOV。浏览器里的 `<img>` 或者 `@loaders.gl/images` 都不能直接解码 HEIC。
+
+我们想将尽量与普通图片一样处理，先解出一帧静态位图再写入纹理。至于在画布里播 Live Photo 视频，需要后续再单独实现组件，提供点按播放等功能。
+
+```ts
+import heic2any from 'heic2any';
+
+async function decodeHeicBlob(blob: Blob): Promise<ImageBitmap> {
+    const run = (toType: 'image/png' | 'image/jpeg', quality?: number) =>
+        heic2any({
+            blob,
+            toType,
+            quality: toType === 'image/jpeg' ? quality ?? 0.92 : 1,
+        });
+
+    const converted = await run('image/png');
+    return createImageBitmap(converted);
+}
+```
+
 ## 增强 SVG: Stroke alignment {#stroke-alignment}
 
 最后我们来引入一个有趣的话题。我们可以实现目前 SVG 规范还不支持的特性。
@@ -967,3 +1015,4 @@ function strokeOffset(
 [JSON schema in excalidraw]: https://docs.excalidraw.com/docs/codebase/json-schema
 [viewBox]: https://developer.mozilla.org/zh-CN/docs/Web/SVG/Reference/Attribute/viewBox
 [Font subsetting in excalidraw]: https://github.com/excalidraw/excalidraw/issues/1972#issuecomment-2417744618
+[课程 30 - 时间动画]: /zh/guide/lesson-030#time-animation

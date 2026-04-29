@@ -1,67 +1,72 @@
 import { Entity, System } from '@lastolivegames/becsy';
 import { mat3, vec2 } from 'gl-matrix';
 import {
-  AnchorName,
-  Binded,
-  Binding,
-  Brush,
   Camera,
   Canvas,
   Children,
   Circle,
-  ClipMode,
   ComputedBounds,
   ComputedCamera,
-  ComputedCameraControl,
-  ComputedPoints,
-  ComputedTextMetrics,
-  Culled,
   Cursor,
-  DropShadow,
-  Editable,
   Ellipse,
-  Embed,
-  FillGradient,
-  FillImage,
-  FillPattern,
   FillSolid,
   FractionalIndex,
-  GeometryDirty,
   GlobalTransform,
   Group,
-  hasFullOrPartialEdgeBinding,
   Highlighted,
-  HTML,
   Input,
   InputPoint,
-  Line,
-  Locked,
-  Marker,
-  Mat3,
-  MaterialDirty,
   OBB,
   Opacity,
   Parent,
-  PartialBinding,
   Path,
   Pen,
   Polyline,
   RBush,
   Rect,
   Renderable,
-  Rough,
   Selected,
   Stroke,
   StrokeAttenuation,
   Text,
-  ToBeDeleted,
   Transform,
   Transformable,
   TransformableStatus,
   UI,
-  VectorNetwork,
   Visibility,
   ZIndex,
+  AnchorName,
+  VectorNetwork,
+  ComputedCameraControl,
+  ComputedPoints,
+  DropShadow,
+  Culled,
+  ToBeDeleted,
+  Brush,
+  HTML,
+  Embed,
+  Editable,
+  Locked,
+  Line,
+  ClipMode,
+  MaterialDirty,
+  FillGradient,
+  FillImage,
+  FillPattern,
+  Binding,
+  Binded,
+  PartialBinding,
+  hasFullOrPartialEdgeBinding,
+  GeometryDirty,
+  Rough,
+  Marker,
+  Mat3,
+  ComputedTextMetrics,
+  Theme,
+  Flex,
+  FlexLayoutDirty,
+  IconFont,
+  DEFAULT_THEME_COLORS,
 } from '../components';
 import { Commands } from '../commands';
 import {
@@ -79,7 +84,7 @@ import {
   snapToGrid,
 } from '../utils';
 import { API } from '../API';
-import { getOBB, hitTest, TRANSFORMER_ANCHOR_STROKE_COLOR, TRANSFORMER_MASK_FILL_COLOR, } from './RenderTransformer';
+import { getOBB, hitTest } from './RenderTransformer';
 import { updateGlobalTransform } from './Transform';
 import { safeAddComponent } from '../history';
 import { updateComputedPoints } from './ComputePoints';
@@ -259,6 +264,7 @@ export class Select extends System {
             Stroke,
             Rough,
             ComputedTextMetrics,
+            Flex,
           )
           .read.update.and.using(
             GlobalTransform,
@@ -301,8 +307,11 @@ export class Select extends System {
             ClipMode,
             MaterialDirty,
             GeometryDirty,
+            FlexLayoutDirty,
             Locked,
-            Marker
+            Marker,
+            Theme,
+            IconFont,
           ).write,
     );
     this.query((q) => q.using(ComputedCamera, FractionalIndex, RBush).read);
@@ -1493,6 +1502,7 @@ export class Select extends System {
 
     if (shouldShowSelectionBrush) {
       this.renderBrush(
+        api,
         selection,
         // <rect> attribute height: A negative value is not valid. So we need to use the absolute value.
         Math.min(pointerDownViewportX, viewportX),
@@ -2245,6 +2255,16 @@ export class Select extends System {
       //Group:selection OBB is a world subset AABB, which is inconsistent with the Group root Transform and cannot be applied to the root Konva delta；
       // Only send delta to subtree (consistent with multi-select resize)。
       if (entity.has(Group)) {
+        const n = api.getNodeByEntity(entity) as SerializedNode | undefined;
+        if (
+          n &&
+          (n.type === 'iconfont' || (n.type as string) === 'icon_font')
+        ) {
+          // iconfont 根有 Group 与子 path 实体，但子节点无 SerializedNode；需对根调用 updateNodeOBB 以触发
+          // mutate + syncIconFontChildren（子 path 的 d 随 width/height 重算）
+          entitiesToUpdate.push(entity);
+          return;
+        }
         if (entity.has(Parent)) {
           const { children } = entity.read(Parent);
           children.forEach((child) => collectSelectedAndDescendants(child));
@@ -2352,6 +2372,7 @@ export class Select extends System {
   }
 
   private renderBrush(
+    api: API,
     selection: SelectOBB,
     x: number,
     y: number,
@@ -2361,6 +2382,13 @@ export class Select extends System {
     const { brushContainer } = selection;
     brushContainer.setAttribute('visibility', 'visible');
 
+    const canvas = api.getCamera().read(Camera).canvas;
+    const { mode, colors } = canvas.read(Theme);
+    const palette = {
+      ...DEFAULT_THEME_COLORS[mode],
+      ...(colors[mode] ?? {}),
+    };
+
     let brush = brushContainer.firstChild as SVGRectElement;
     if (!brush) {
       brush = createSVGElement('rect') as SVGRectElement;
@@ -2369,12 +2397,12 @@ export class Select extends System {
       brush.setAttribute('width', '0');
       brush.setAttribute('height', '0');
       brush.setAttribute('opacity', '0.5');
-      brush.setAttribute('fill', TRANSFORMER_MASK_FILL_COLOR);
-      brush.setAttribute('stroke', TRANSFORMER_ANCHOR_STROKE_COLOR);
       brush.setAttribute('stroke-width', '1');
       brushContainer.appendChild(brush);
     }
 
+    brush.setAttribute('fill', palette.selectionBrushFill);
+    brush.setAttribute('stroke', palette.selectionBrushStroke);
     brush.setAttribute('x', x.toString());
     brush.setAttribute('y', y.toString());
     brush.setAttribute('width', width.toString());

@@ -14,55 +14,460 @@ import {
   SwapChain,
   RenderTarget,
   Texture,
+  Readback,
   MipmapFilterMode,
   AddressMode,
   FilterMode,
   TextureUsage,
   TransparentWhite,
+  TransparentBlack,
   StencilOp,
   CompareFunction,
-} from '@antv/g-device-api';
+  BlendMode,
+  BlendFactor,
+  ChannelWriteMask,
+  CullMode,
+  type MegaStateDescriptor,
+} from '@infinite-canvas-tutorial/device-api';
 import { Entity } from '@lastolivegames/becsy';
-import { RenderCache, Effect, uid } from '../utils';
+import {
+  RenderCache,
+  Effect,
+  uid,
+  halftoneDotsUniformValues,
+  flutedGlassUniformValues,
+  tsunamiUniformValues,
+  burnUniformValues,
+  crtUniformValues,
+  vignetteUniformValues,
+  asciiUniformValues,
+  glitchUniformValues,
+  liquidGlassUniformValues,
+  heatmapUniformValues,
+  imageDataToHeatmapProcessed,
+  gemSmokeUniformValues,
+  liquidMetalUniformValues,
+  imageDataToLiquidMetalPoissonMap,
+} from '../utils';
 import { Location } from '../shaders/wireframe';
 import { TexturePool } from '../resources';
 import {
   Children,
-  ComputedBounds,
   FillGradient,
   FillImage,
   FillPattern,
+  FillSolid,
   FillTexture,
   Filter,
   ClipMode,
   Wireframe,
 } from '../components';
+import {
+  filterStringUsesEngineTimePost,
+  hasRasterPostEffects,
+} from '../utils/filter';
 import { API } from '../API';
+import { MeshGradientPass } from '../render-graph/MeshGradientPass';
+import type { MeshGradient } from '../utils/gradient';
 import { vert as postProcessingVert } from '../shaders/post-processing/fullscreen';
 import { vert as bigTriangleVert } from '../shaders/post-processing/big-triangle';
 import { frag as copyFrag } from '../shaders/post-processing/copy';
 import { frag as noiseFrag } from '../shaders/post-processing/noise';
-import { frag as brightnessFrag } from '../shaders/post-processing/brightness';
-import { frag as contrastFrag } from '../shaders/post-processing/contrast';
-import {
-  AntialiasingMode,
-  makeAttachmentClearDescriptor,
-  makeBackbufferDescSimple,
-  opaqueWhiteFullClearRenderPassDescriptor,
-} from '../render-graph/utils';
-import { RGAttachmentSlot, RGGraphBuilder } from '../render-graph/interface';
+import { frag as brightnessContrastFrag } from '../shaders/post-processing/brightnessContrast';
+import { frag as hueSaturationFrag } from '../shaders/post-processing/hueSaturation';
+import { frag as pixelateFrag } from '../shaders/post-processing/pixelate';
+import { frag as dotFrag } from '../shaders/post-processing/dot';
+import { frag as colorHalftoneFrag } from '../shaders/post-processing/colorHalftone';
+import { frag as halftoneDotsFrag } from '../shaders/post-processing/halftoneDots';
+import { frag as flutedGlassFrag } from '../shaders/post-processing/flutedGlass';
+import { frag as tsunamiFrag } from '../shaders/post-processing/tsunami';
+import { frag as burnFrag } from '../shaders/post-processing/burn';
+import { frag as crtFrag } from '../shaders/post-processing/crt';
+import { frag as vignetteFrag } from '../shaders/post-processing/vignette';
+import { frag as asciiFrag } from '../shaders/post-processing/ascii';
+import { frag as glitchFrag } from '../shaders/post-processing/glitch';
+import { frag as liquidGlassFrag } from '../shaders/post-processing/liquidGlass';
+import { frag as liquidMetalFrag } from '../shaders/post-processing/liquidMetal';
+import { frag as heatmapFrag } from '../shaders/post-processing/heatmap';
+import { frag as gemSmokeFrag } from '../shaders/post-processing/gemSmoke';
+import type { RGGraphBuilder } from '../render-graph/interface';
 
-const FRAG_MAP = {
+const FRAG_MAP: Record<
+  string,
+  { shader: string }
+> = {
   noise: {
     shader: noiseFrag,
   },
   brightness: {
-    shader: brightnessFrag,
+    shader: brightnessContrastFrag,
   },
   contrast: {
-    shader: contrastFrag,
+    shader: brightnessContrastFrag,
+  },
+  hueSaturation: {
+    shader: hueSaturationFrag,
+  },
+  pixelate: {
+    shader: pixelateFrag,
+  },
+  dot: {
+    shader: dotFrag,
+  },
+  colorHalftone: {
+    shader: colorHalftoneFrag,
+  },
+  halftoneDots: {
+    shader: halftoneDotsFrag,
+  },
+  flutedGlass: {
+    shader: flutedGlassFrag,
+  },
+  tsunami: {
+    shader: tsunamiFrag,
+  },
+  burn: {
+    shader: burnFrag,
+  },
+  crt: {
+    shader: crtFrag,
+  },
+  vignette: {
+    shader: vignetteFrag,
+  },
+  ascii: {
+    shader: asciiFrag,
+  },
+  glitch: {
+    shader: glitchFrag,
+  },
+  liquidGlass: {
+    shader: liquidGlassFrag,
+  },
+  liquidMetal: {
+    shader: liquidMetalFrag,
+  },
+  heatmap: {
+    shader: heatmapFrag,
+  },
+  gemSmoke: {
+    shader: gemSmokeFrag,
   },
 };
+
+function postEffectUniformFloatCount(effect: Effect): number {
+  switch (effect.type) {
+    case 'brightness':
+    case 'contrast':
+    case 'hueSaturation':
+    case 'pixelate':
+      return 4;
+    case 'dot':
+    case 'colorHalftone':
+      return 8;
+    case 'halftoneDots':
+      return 20;
+    case 'flutedGlass':
+      return 36;
+    case 'tsunami':
+      return 16;
+    case 'burn':
+      return 16;
+    case 'crt':
+      return 12;
+    case 'vignette':
+      return 4;
+    case 'ascii':
+      return 12;
+    case 'glitch':
+      return 8;
+    case 'liquidGlass':
+      return 20;
+    case 'liquidMetal':
+      return 24;
+    case 'heatmap':
+      return 56;
+    case 'gemSmoke':
+      return 48;
+    case 'drop-shadow':
+      return 2;
+    case 'fxaa':
+      return 1;
+    default:
+      return 1;
+  }
+}
+
+/** Required by {@link RenderCache.createRenderPipeline} (descriptor hash reads `attachmentsState`). */
+const POST_PROCESS_FULLSCREEN_MEGA: MegaStateDescriptor = {
+  attachmentsState: [
+    {
+      channelWriteMask: ChannelWriteMask.ALL,
+      rgbBlendState: {
+        blendMode: BlendMode.ADD,
+        blendSrcFactor: BlendFactor.ONE,
+        blendDstFactor: BlendFactor.ZERO,
+      },
+      alphaBlendState: {
+        blendMode: BlendMode.ADD,
+        blendSrcFactor: BlendFactor.ONE,
+        blendDstFactor: BlendFactor.ZERO,
+      },
+    },
+  ],
+  blendConstant: TransparentBlack,
+  cullMode: CullMode.NONE,
+  depthWrite: false,
+  depthCompare: CompareFunction.ALWAYS,
+  stencilWrite: false,
+  stencilFront: {
+    compare: CompareFunction.ALWAYS,
+    passOp: StencilOp.KEEP,
+    failOp: StencilOp.KEEP,
+    depthFailOp: StencilOp.KEEP,
+  },
+  stencilBack: {
+    compare: CompareFunction.ALWAYS,
+    passOp: StencilOp.KEEP,
+    failOp: StencilOp.KEEP,
+    depthFailOp: StencilOp.KEEP,
+  },
+};
+
+/** `u_LM5` y component in std140 block (24 floats for liquid metal). */
+const LIQUID_METAL_U_LM5_Y_OFFSET_FLOATS = 21;
+/** `u_HM2.z` in std140 block (56 floats for heatmap: third vec4, .z). */
+const HEATMAP_U_HM2_Z_OFFSET_FLOATS = 10;
+/** `u_GS5.z` in std140 (48 floats for gem-smoke: sixth vec4, .z). */
+const GEM_SMOKE_U_GS5_Z_OFFSET_FLOATS = 22;
+
+function setPostEffectUniformData(
+  effect: Effect,
+  buffer: Buffer,
+  textureWidth?: number,
+  textureHeight?: number,
+): void {
+  const count = postEffectUniformFloatCount(effect);
+  const data = new Float32Array(count);
+  let i = 0;
+  switch (effect.type) {
+    case 'brightness':
+      data[i++] = effect.value;
+      data[i++] = 0;
+      data[i++] = 0;
+      data[i++] = 0;
+      break;
+    case 'contrast':
+      data[i++] = 0;
+      data[i++] = effect.value;
+      data[i++] = 0;
+      data[i++] = 0;
+      break;
+    case 'hueSaturation': {
+      let h = effect.hue;
+      let s = effect.saturation;
+      if (!Number.isFinite(h)) {
+        h = 0;
+      } else {
+        h = Math.max(-1, Math.min(1, h));
+      }
+      if (!Number.isFinite(s)) {
+        s = 0;
+      } else {
+        s = Math.max(-1, Math.min(1, s));
+        if (s > 0.999) {
+          s = 0.999;
+        }
+      }
+      data[i++] = h;
+      data[i++] = s;
+      data[i++] = 0;
+      data[i++] = 0;
+      break;
+    }
+    case 'pixelate': {
+      const tw = Math.max(1, textureWidth ?? 1);
+      const th = Math.max(1, textureHeight ?? 1);
+      let bw = effect.size;
+      let bh = effect.size;
+      if (!Number.isFinite(bw)) {
+        bw = 1;
+      }
+      if (!Number.isFinite(bh)) {
+        bh = 1;
+      }
+      bw = Math.max(1, Math.min(bw, tw));
+      bh = Math.max(1, Math.min(bh, th));
+      data[i++] = bw;
+      data[i++] = bh;
+      data[i++] = tw;
+      data[i++] = th;
+      break;
+    }
+    case 'dot': {
+      const tw = Math.max(1, textureWidth ?? 1);
+      const th = Math.max(1, textureHeight ?? 1);
+      data[i++] = Number.isFinite(effect.angle) ? effect.angle : 5;
+      data[i++] = Number.isFinite(effect.scale) ? effect.scale : 1;
+      data[i++] = effect.grayscale > 0.5 ? 1 : 0;
+      data[i++] = 0;
+      data[i++] = tw;
+      data[i++] = th;
+      data[i++] = 0;
+      data[i++] = 0;
+      break;
+    }
+    case 'colorHalftone': {
+      const tw = Math.max(1, textureWidth ?? 1);
+      const th = Math.max(1, textureHeight ?? 1);
+      let cx = effect.centerX;
+      let cy = effect.centerY;
+      if (
+        cx === undefined ||
+        cy === undefined ||
+        !Number.isFinite(cx) ||
+        !Number.isFinite(cy)
+      ) {
+        cx = tw * 0.5;
+        cy = th * 0.5;
+      }
+      const angle = Number.isFinite(effect.angle) ? effect.angle : 0;
+      let size = effect.size;
+      if (!Number.isFinite(size) || size <= 0) {
+        size = 4;
+      }
+      const scale = Math.PI / size;
+      data[i++] = cx;
+      data[i++] = cy;
+      data[i++] = angle;
+      data[i++] = scale;
+      data[i++] = tw;
+      data[i++] = th;
+      data[i++] = 0;
+      data[i++] = 0;
+      break;
+    }
+    case 'halftoneDots': {
+      const tw = Math.max(1, textureWidth ?? 1);
+      const th = Math.max(1, textureHeight ?? 1);
+      const u = halftoneDotsUniformValues(effect, tw, th);
+      for (let j = 0; j < u.length; j++) {
+        data[i++] = u[j]!;
+      }
+      break;
+    }
+    case 'flutedGlass': {
+      const tw = Math.max(1, textureWidth ?? 1);
+      const th = Math.max(1, textureHeight ?? 1);
+      const u = flutedGlassUniformValues(effect, tw, th);
+      for (let j = 0; j < u.length; j++) {
+        data[i++] = u[j]!;
+      }
+      break;
+    }
+    case 'tsunami': {
+      const tw = Math.max(1, textureWidth ?? 1);
+      const th = Math.max(1, textureHeight ?? 1);
+      const u = tsunamiUniformValues(effect, tw, th);
+      for (let j = 0; j < u.length; j++) {
+        data[i++] = u[j]!;
+      }
+      break;
+    }
+    case 'burn': {
+      const tw = Math.max(1, textureWidth ?? 1);
+      const th = Math.max(1, textureHeight ?? 1);
+      const u = burnUniformValues(effect, tw, th);
+      for (let j = 0; j < u.length; j++) {
+        data[i++] = u[j]!;
+      }
+      break;
+    }
+    case 'crt': {
+      const tw = Math.max(1, textureWidth ?? 1);
+      const th = Math.max(1, textureHeight ?? 1);
+      const u = crtUniformValues(effect, tw, th);
+      for (let j = 0; j < u.length; j++) {
+        data[i++] = u[j]!;
+      }
+      break;
+    }
+    case 'vignette': {
+      const u = vignetteUniformValues(effect);
+      for (let j = 0; j < u.length; j++) {
+        data[i++] = u[j]!;
+      }
+      break;
+    }
+    case 'ascii': {
+      const tw = Math.max(1, textureWidth ?? 1);
+      const th = Math.max(1, textureHeight ?? 1);
+      const u = asciiUniformValues(effect, tw, th);
+      for (let j = 0; j < u.length; j++) {
+        data[i++] = u[j]!;
+      }
+      break;
+    }
+    case 'glitch': {
+      const tw = Math.max(1, textureWidth ?? 1);
+      const th = Math.max(1, textureHeight ?? 1);
+      const u = glitchUniformValues(effect, tw, th);
+      for (let j = 0; j < u.length; j++) {
+        data[i++] = u[j]!;
+      }
+      break;
+    }
+    case 'liquidGlass': {
+      const tw = Math.max(1, textureWidth ?? 1);
+      const th = Math.max(1, textureHeight ?? 1);
+      const u = liquidGlassUniformValues(effect, tw, th);
+      for (let j = 0; j < u.length; j++) {
+        data[i++] = u[j]!;
+      }
+      break;
+    }
+    case 'liquidMetal': {
+      const tw = Math.max(1, textureWidth ?? 1);
+      const th = Math.max(1, textureHeight ?? 1);
+      const u = liquidMetalUniformValues(effect, tw, th);
+      for (let j = 0; j < u.length; j++) {
+        data[i++] = u[j]!;
+      }
+      break;
+    }
+    case 'heatmap': {
+      const tw = Math.max(1, textureWidth ?? 1);
+      const th = Math.max(1, textureHeight ?? 1);
+      const u = heatmapUniformValues(effect, tw, th);
+      for (let j = 0; j < u.length; j++) {
+        data[i++] = u[j]!;
+      }
+      break;
+    }
+    case 'gemSmoke': {
+      const tw = Math.max(1, textureWidth ?? 1);
+      const th = Math.max(1, textureHeight ?? 1);
+      const u = gemSmokeUniformValues(effect, tw, th);
+      for (let j = 0; j < u.length; j++) {
+        data[i++] = u[j]!;
+      }
+      break;
+    }
+    case 'drop-shadow':
+      data[i++] = effect.x;
+      data[i++] = effect.y;
+      break;
+    case 'fxaa':
+      data[i++] = 0;
+      break;
+    default:
+      if ('value' in effect) {
+        data[i++] = effect.value;
+      }
+      break;
+  }
+  buffer.setSubData(0, new Uint8Array(data.buffer));
+}
 
 // TODO: Use a more efficient way to manage Z index.
 export const ZINDEX_FACTOR = 100000;
@@ -128,14 +533,62 @@ export abstract class Drawcall {
   #filterWidth: number;
   #filterHeight: number;
 
-  #bigTriangleProgram: Program;
-  #bigTrianglePipeline: RenderPipeline;
-  #bigTriangleInputLayout: InputLayout;
-  #bigTriangleVertexBuffer: Buffer;
-  #bigTriangleTexture: Texture;
-  #bigTriangleRenderTarget: RenderTarget;
-  #bigTriangleBindings: Bindings;
-  #bigTriangleUniformBuffer: Buffer;
+  /** Ping-pong: copy writes T0 (#filterTexture), passes alternate T0→T1→T0… */
+  #pingPongTexture: Texture;
+  #pingPongRenderTarget: RenderTarget;
+
+  #postEffectPasses: {
+    program: Program;
+    pipeline: RenderPipeline;
+    inputLayout: InputLayout;
+    vertexBuffer: Buffer;
+    uniformBuffer: Buffer;
+    bindings: Bindings;
+    /** Sample from #filterTexture when true, else #pingPongTexture */
+    srcIsT0: boolean;
+    effect: Effect;
+    /**
+     * When true, try WebGL readback + CPU Poisson before this pass (see
+     * {@link #prepareLiquidMetalPoissonForPass}).
+     */
+    liquidMetalPoissonAttempt?: boolean;
+    /**
+     * When true, try WebGL readback + `imageDataToHeatmapProcessed` before this pass
+     * (see {@link #prepareHeatmapForPass}).
+     */
+    heatmapPreprocessAttempt?: boolean;
+    /** Same R/G CPU map as liquid metal ({@link imageDataToLiquidMetalPoissonMap}). */
+    gemSmokePoissonAttempt?: boolean;
+  }[] = [];
+
+  /** GPU upload target for Poisson R/G; same size as the post chain. */
+  #liquidMetalPoissonTexture: Texture | null = null;
+  #liquidMetalPoissonWidth = 0;
+  #liquidMetalPoissonHeight = 0;
+  #readback: Readback | null = null;
+
+  /**
+   * When true, the post chain has exactly one pass that uses CPU Poisson, so a single
+   * `#liquidMetalPoissonTexture` is unambiguous. If 2+ Poisson passes existed, reusing
+   * one buffer between passes would be wrong — always recompute each pass.
+   */
+  #liquidMetalPoissonEngineTimeCacheAllowed = false;
+  /**
+   * After first successful Poisson upload for `useEngineTime` (single pass only), skip
+   * readback + `imageDataToLiquidMetalPoissonMap` (Poisson field does not depend on time).
+   */
+  #liquidMetalPoissonEngineTimeCacheValid = false;
+
+  #heatmapProcessedTexture: Texture | null = null;
+  #heatmapWidth = 0;
+  #heatmapHeight = 0;
+  #heatmapEngineTimeCacheAllowed = false;
+  #heatmapEngineTimeCacheValid = false;
+
+  /** True after {@link createPostProcessing} completes; drives teardown in {@link destroyFullPostProcessingChain}. */
+  #filterChainReady = false;
+
+  static #meshGradientPassByDevice = new WeakMap<Device, MeshGradientPass>();
 
   constructor(
     protected device: Device,
@@ -163,6 +616,8 @@ export abstract class Drawcall {
       this.vertexBufferDatas = [];
       this.vertexBufferDescriptors = [];
     }
+    this.#readback?.destroy();
+    this.#readback = null;
     this.destroyed = true;
   }
 
@@ -184,6 +639,10 @@ export abstract class Drawcall {
     builder: RGGraphBuilder,
   ) {
     if (this.geometryDirty) {
+      // CPU Poisson / heatmap preprocess are derived from the rasterized shape; `useEngineTime`
+      // otherwise skips readback assuming only time changes — invalidate when geometry changes.
+      this.#liquidMetalPoissonEngineTimeCacheValid = false;
+      this.#heatmapEngineTimeCacheValid = false;
       this.createGeometry();
     }
 
@@ -202,60 +661,27 @@ export abstract class Drawcall {
         defines += '#define USE_STENCIL\n';
       }
       this.createMaterial(defines, uniformBuffer);
-    }
-
-    // Handle post processing effects
-    const hasFilter = this.shapes[0]?.has(Filter);
-    if (hasFilter) {
+      // Nested texture-space filter passes set the viewport to the texture size; restore the
+      // main pass viewport so subsequent draws use the full backbuffer (WebGL may not restore).
       const { width, height } = this.swapChain.getCanvas();
-      const renderInput = {
-        backbufferWidth: width,
-        backbufferHeight: height,
-        antialiasingMode: AntialiasingMode.None,
-      };
-      const mainColorDesc = makeBackbufferDescSimple(
-        RGAttachmentSlot.Color0,
-        renderInput,
-        makeAttachmentClearDescriptor(TransparentWhite),
-      );
-      const mainDepthDesc = makeBackbufferDescSimple(
-        RGAttachmentSlot.DepthStencil,
-        renderInput,
-        opaqueWhiteFullClearRenderPassDescriptor,
-      );
-      const mainColorTargetID = builder.createRenderTargetID(
-        mainColorDesc,
-        'Main Color',
-      );
-      const mainDepthTargetID = builder.createRenderTargetID(
-        mainDepthDesc,
-        'Main Depth',
-      );
-      // TODO: one or multiple passes per effect
-      builder.pushPass((pass) => {
-        pass.setDebugName('Offscreen Pass');
-        pass.attachRenderTargetID(RGAttachmentSlot.Color0, mainColorTargetID);
-        pass.attachRenderTargetID(
-          RGAttachmentSlot.DepthStencil,
-          mainDepthTargetID,
-        );
-        pass.exec((renderPass) => {
-          // this.render(renderPass, uniformBuffer, uniformLegacyObject);
-        });
-      });
-
-      builder.pushPass((pass) => {
-        const { minX, minY, maxX, maxY } =
-          this.shapes[0].read(ComputedBounds).renderWorldBounds;
-
-        const tl = this.api.canvas2Viewport({ x: minX, y: minY });
-        const br = this.api.canvas2Viewport({ x: maxX, y: maxY });
-      });
-
-      // Use Sprite
-
-      // drawcall.submit(renderPass, uniformBuffer, uniformLegacyObject);
+      renderPass.setViewport(0, 0, width, height);
+    } else if (
+      this.useFillImage &&
+      this.shapes.length > 0 &&
+      this.#filterChainReady
+    ) {
+      const shape = this.shapes[0];
+      if (
+        shape.has(Filter) &&
+        filterStringUsesEngineTimePost(shape.read(Filter).value)
+      ) {
+        this.renderPostProcessingTextureSpace(this.#filterWidth, this.#filterHeight);
+        const { width, height } = this.swapChain.getCanvas();
+        renderPass.setViewport(0, 0, width, height);
+      }
     }
+
+    void builder;
 
     this.render(renderPass, uniformBuffer, uniformLegacyObject);
 
@@ -354,11 +780,19 @@ export abstract class Drawcall {
   }
 
   protected get useFillImage() {
-    return this.shapes[0]?.hasSomeOf(
-      FillImage,
-      FillTexture,
-      FillGradient,
-      FillPattern,
+    const s = this.shapes[0];
+    if (!s) {
+      return false;
+    }
+    if (
+      s.hasSomeOf(FillImage, FillTexture, FillGradient, FillPattern)
+    ) {
+      return true;
+    }
+    return (
+      s.has(FillSolid) &&
+      s.has(Filter) &&
+      hasRasterPostEffects(s.read(Filter).value)
     );
   }
 
@@ -460,12 +894,353 @@ export abstract class Drawcall {
     });
   }
 
+  #destroyPostEffectPasses(): void {
+    for (const pass of this.#postEffectPasses) {
+      // Program / pipeline / inputLayout / bindings come from {@link RenderCache} — do not
+      // `destroy()` them or the cache will later return deleted WebGL objects.
+      pass.vertexBuffer.destroy();
+      pass.uniformBuffer.destroy();
+    }
+    this.#postEffectPasses = [];
+  }
+
+  /**
+   * Frees GPU resources created by {@link createPostProcessing} (copy pass + ping-pong + effect passes).
+   * Safe to call when no chain was allocated.
+   */
+  protected destroyFullPostProcessingChain(): void {
+    if (!this.#filterChainReady) {
+      this.#destroyPostEffectPasses();
+      return;
+    }
+    this.#filterChainReady = false;
+    this.#destroyPostEffectPasses();
+    // Copy-pass program/pipeline/layout/bindings are cached — only destroy GPU buffers
+    // and non-cached textures / render targets owned by this chain.
+    this.#filterVertexBuffer.destroy();
+    this.#filterIndexBuffer.destroy();
+    this.#filterUniformBuffer.destroy();
+    this.#filterRenderTarget.destroy();
+    this.#filterTexture.destroy();
+    this.#pingPongRenderTarget.destroy();
+    this.#pingPongTexture.destroy();
+    this.#destroyLiquidMetalPoissonTexture();
+    this.#destroyHeatmapProcessedTexture();
+  }
+
+  #rebuildPostEffectPassBindings(): void {
+    const t0 = this.#filterTexture;
+    const t1 = this.#pingPongTexture;
+    for (const pass of this.#postEffectPasses) {
+      pass.bindings = this.renderCache.createBindings({
+        pipeline: pass.pipeline,
+        samplerBindings: [
+          {
+            texture: pass.srcIsT0 ? t0 : t1,
+            sampler: this.createSampler(),
+          },
+        ],
+        uniformBufferBindings: [
+          {
+            buffer: pass.uniformBuffer,
+          },
+        ],
+      });
+    }
+  }
+
+  #getReadback(): Readback {
+    if (!this.#readback) {
+      this.#readback = this.device.createReadback();
+    }
+    return this.#readback;
+  }
+
+  #ensureLiquidMetalPoissonTexture(width: number, height: number): Texture {
+    if (
+      this.#liquidMetalPoissonTexture &&
+      this.#liquidMetalPoissonWidth === width &&
+      this.#liquidMetalPoissonHeight === height
+    ) {
+      return this.#liquidMetalPoissonTexture;
+    }
+    this.#liquidMetalPoissonTexture?.destroy();
+    this.#liquidMetalPoissonWidth = width;
+    this.#liquidMetalPoissonHeight = height;
+    this.#liquidMetalPoissonTexture = this.device.createTexture({
+      format: Format.U8_RGBA_RT,
+      width,
+      height,
+      usage: TextureUsage.RENDER_TARGET,
+    });
+    return this.#liquidMetalPoissonTexture;
+  }
+
+  #createPostEffectPassSamplerBindings(
+    pipeline: RenderPipeline,
+    uniformBuffer: Buffer,
+    sampleTexture: Texture,
+  ): Bindings {
+    return this.renderCache.createBindings({
+      pipeline,
+      samplerBindings: [
+        {
+          texture: sampleTexture,
+          sampler: this.createSampler(),
+        },
+      ],
+      uniformBufferBindings: [
+        {
+          buffer: uniformBuffer,
+        },
+      ],
+    });
+  }
+
+  #patchLiquidMetalPoissonMode(uniformBuffer: Buffer, y: number): void {
+    uniformBuffer.setSubData(
+      LIQUID_METAL_U_LM5_Y_OFFSET_FLOATS * Float32Array.BYTES_PER_ELEMENT,
+      new Uint8Array(new Float32Array([y]).buffer),
+    );
+  }
+
+  #patchGemSmokePoissonMode(uniformBuffer: Buffer, z: number): void {
+    uniformBuffer.setSubData(
+      GEM_SMOKE_U_GS5_Z_OFFSET_FLOATS * Float32Array.BYTES_PER_ELEMENT,
+      new Uint8Array(new Float32Array([z]).buffer),
+    );
+  }
+
+  /**
+   * Per pass: read scene texture, build Poisson R/G map (liquid metal + gem-smoke), or fall back.
+   */
+  #prepareLiquidMetalPoissonForPass(
+    pass: {
+      effect: Effect;
+      liquidMetalPoissonAttempt?: boolean;
+      gemSmokePoissonAttempt?: boolean;
+      pipeline: RenderPipeline;
+      uniformBuffer: Buffer;
+      bindings: Bindings;
+    },
+    srcTex: Texture,
+    isWebGPU: boolean,
+  ): void {
+    if (!pass.liquidMetalPoissonAttempt && !pass.gemSmokePoissonAttempt) {
+      return;
+    }
+    if (isWebGPU) {
+      if (pass.liquidMetalPoissonAttempt) {
+        this.#patchLiquidMetalPoissonMode(pass.uniformBuffer, 0);
+      }
+      if (pass.gemSmokePoissonAttempt) {
+        this.#patchGemSmokePoissonMode(pass.uniformBuffer, 0);
+      }
+      return;
+    }
+    const w = this.#filterWidth;
+    const h = this.#filterHeight;
+    const eff = pass.effect;
+    const poissonForEffect =
+      (eff.type === 'liquidMetal' && (eff as { usePoisson?: boolean }).usePoisson !== false) ||
+      (eff.type === 'gemSmoke' && (eff as { usePoisson?: boolean }).usePoisson !== false);
+    const canReuseEngineTimePoisson =
+      (eff.type === 'liquidMetal' || eff.type === 'gemSmoke') &&
+      eff.useEngineTime === true &&
+      poissonForEffect &&
+      (eff as { useImage: boolean }).useImage &&
+      this.#liquidMetalPoissonEngineTimeCacheAllowed &&
+      this.#liquidMetalPoissonEngineTimeCacheValid &&
+      this.#liquidMetalPoissonTexture != null &&
+      this.#liquidMetalPoissonWidth === w &&
+      this.#liquidMetalPoissonHeight === h;
+    if (canReuseEngineTimePoisson) {
+      pass.bindings = this.#createPostEffectPassSamplerBindings(
+        pass.pipeline,
+        pass.uniformBuffer,
+        this.#liquidMetalPoissonTexture!,
+      );
+      if (eff.type === 'liquidMetal') {
+        this.#patchLiquidMetalPoissonMode(pass.uniformBuffer, 1);
+      }
+      if (eff.type === 'gemSmoke') {
+        this.#patchGemSmokePoissonMode(pass.uniformBuffer, 1);
+      }
+      return;
+    }
+    try {
+      const data = new Uint8Array(w * h * 4);
+      this.#getReadback().readTextureSync(srcTex, 0, 0, w, h, data);
+      const imageData = new ImageData(
+        new Uint8ClampedArray(
+          data.buffer,
+          data.byteOffset,
+          w * h * 4,
+        ),
+        w,
+        h,
+      );
+      const poisson = imageDataToLiquidMetalPoissonMap(imageData);
+      const dest = this.#ensureLiquidMetalPoissonTexture(w, h);
+      dest.setImageData([poisson], 0);
+      pass.bindings = this.#createPostEffectPassSamplerBindings(
+        pass.pipeline,
+        pass.uniformBuffer,
+        dest,
+      );
+      if (eff.type === 'liquidMetal') {
+        this.#patchLiquidMetalPoissonMode(pass.uniformBuffer, 1);
+      }
+      if (eff.type === 'gemSmoke') {
+        this.#patchGemSmokePoissonMode(pass.uniformBuffer, 1);
+      }
+      this.#liquidMetalPoissonEngineTimeCacheValid =
+        (eff.type === 'liquidMetal' || eff.type === 'gemSmoke') &&
+        eff.useEngineTime === true &&
+        this.#liquidMetalPoissonEngineTimeCacheAllowed;
+    } catch {
+      this.#liquidMetalPoissonEngineTimeCacheValid = false;
+      if (eff.type === 'liquidMetal') {
+        this.#patchLiquidMetalPoissonMode(pass.uniformBuffer, 0);
+      }
+      if (eff.type === 'gemSmoke') {
+        this.#patchGemSmokePoissonMode(pass.uniformBuffer, 0);
+      }
+      pass.bindings = this.#createPostEffectPassSamplerBindings(
+        pass.pipeline,
+        pass.uniformBuffer,
+        srcTex,
+      );
+    }
+  }
+
+  #destroyLiquidMetalPoissonTexture(): void {
+    this.#liquidMetalPoissonTexture?.destroy();
+    this.#liquidMetalPoissonTexture = null;
+    this.#liquidMetalPoissonWidth = 0;
+    this.#liquidMetalPoissonHeight = 0;
+    this.#liquidMetalPoissonEngineTimeCacheValid = false;
+  }
+
+  #patchHeatmapPreprocessed(uniformBuffer: Buffer, z: number): void {
+    uniformBuffer.setSubData(
+      HEATMAP_U_HM2_Z_OFFSET_FLOATS * Float32Array.BYTES_PER_ELEMENT,
+      new Uint8Array(new Float32Array([z]).buffer),
+    );
+  }
+
+  #ensureHeatmapProcessedTexture(width: number, height: number): Texture {
+    if (
+      this.#heatmapProcessedTexture &&
+      this.#heatmapWidth === width &&
+      this.#heatmapHeight === height
+    ) {
+      return this.#heatmapProcessedTexture;
+    }
+    this.#heatmapProcessedTexture?.destroy();
+    this.#heatmapWidth = width;
+    this.#heatmapHeight = height;
+    this.#heatmapProcessedTexture = this.device.createTexture({
+      format: Format.U8_RGBA_RT,
+      width,
+      height,
+      usage: TextureUsage.RENDER_TARGET,
+    });
+    return this.#heatmapProcessedTexture;
+  }
+
+  #prepareHeatmapForPass(
+    pass: {
+      effect: Effect;
+      heatmapPreprocessAttempt?: boolean;
+      pipeline: RenderPipeline;
+      uniformBuffer: Buffer;
+      bindings: Bindings;
+    },
+    srcTex: Texture,
+    isWebGPU: boolean,
+  ): void {
+    if (!pass.heatmapPreprocessAttempt) {
+      return;
+    }
+    if (isWebGPU) {
+      this.#patchHeatmapPreprocessed(pass.uniformBuffer, 0);
+      return;
+    }
+    const w = this.#filterWidth;
+    const h = this.#filterHeight;
+    const eff = pass.effect;
+    const canReuseEngineTime =
+      eff.type === 'heatmap' &&
+      eff.useEngineTime === true &&
+      (eff.usePreprocess !== false) &&
+      eff.useImage &&
+      this.#heatmapEngineTimeCacheAllowed &&
+      this.#heatmapEngineTimeCacheValid &&
+      this.#heatmapProcessedTexture != null &&
+      this.#heatmapWidth === w &&
+      this.#heatmapHeight === h;
+    if (canReuseEngineTime) {
+      pass.bindings = this.#createPostEffectPassSamplerBindings(
+        pass.pipeline,
+        pass.uniformBuffer,
+        this.#heatmapProcessedTexture!,
+      );
+      this.#patchHeatmapPreprocessed(pass.uniformBuffer, 1);
+      return;
+    }
+    try {
+      const data = new Uint8Array(w * h * 4);
+      this.#getReadback().readTextureSync(srcTex, 0, 0, w, h, data);
+      const imageData = new ImageData(
+        new Uint8ClampedArray(
+          data.buffer,
+          data.byteOffset,
+          w * h * 4,
+        ),
+        w,
+        h,
+      );
+      const processed = imageDataToHeatmapProcessed(imageData);
+      const dest = this.#ensureHeatmapProcessedTexture(w, h);
+      dest.setImageData([processed], 0);
+      pass.bindings = this.#createPostEffectPassSamplerBindings(
+        pass.pipeline,
+        pass.uniformBuffer,
+        dest,
+      );
+      this.#patchHeatmapPreprocessed(pass.uniformBuffer, 1);
+      this.#heatmapEngineTimeCacheValid =
+        eff.type === 'heatmap' &&
+        eff.useEngineTime === true &&
+        this.#heatmapEngineTimeCacheAllowed;
+    } catch {
+      this.#heatmapEngineTimeCacheValid = false;
+      this.#patchHeatmapPreprocessed(pass.uniformBuffer, 0);
+      pass.bindings = this.#createPostEffectPassSamplerBindings(
+        pass.pipeline,
+        pass.uniformBuffer,
+        srcTex,
+      );
+    }
+  }
+
+  #destroyHeatmapProcessedTexture(): void {
+    this.#heatmapProcessedTexture?.destroy();
+    this.#heatmapProcessedTexture = null;
+    this.#heatmapWidth = 0;
+    this.#heatmapHeight = 0;
+    this.#heatmapEngineTimeCacheValid = false;
+  }
+
   protected createPostProcessing(
     effects: Effect[],
     inputTexture: Texture,
     width: number,
     height: number,
   ) {
+    this.destroyFullPostProcessingChain();
+
     this.#filterWidth = width;
     this.#filterHeight = height;
     this.#filterTexture = this.device.createTexture({
@@ -478,10 +1253,20 @@ export abstract class Drawcall {
       this.#filterTexture,
     );
 
-    const diagnosticDerivativeUniformityHeader =
-      this.device.queryVendorInfo().platformString === 'WebGPU'
-        ? 'diagnostic(off,derivative_uniformity);\n'
-        : '';
+    this.#pingPongTexture = this.device.createTexture({
+      format: Format.U8_RGBA_RT,
+      width,
+      height,
+      usage: TextureUsage.RENDER_TARGET,
+    });
+    this.#pingPongRenderTarget = this.device.createRenderTargetFromTexture(
+      this.#pingPongTexture,
+    );
+
+    const isWebGPU = this.device.queryVendorInfo().platformString === 'WebGPU';
+    const diagnosticDerivativeUniformityHeader = isWebGPU
+      ? 'diagnostic(off,derivative_uniformity);\n'
+      : '';
 
     this.#filterProgram = this.renderCache.createProgram({
       vertex: {
@@ -532,6 +1317,8 @@ export abstract class Drawcall {
       inputLayout: this.#filterInputLayout,
       program: this.#filterProgram,
       colorAttachmentFormats: [Format.U8_RGBA_RT],
+      depthStencilAttachmentFormat: null,
+      megaStateDescriptor: POST_PROCESS_FULLSCREEN_MEGA,
     });
     this.device.setResourceName(this.#filterPipeline, 'FilterPipeline');
 
@@ -550,39 +1337,30 @@ export abstract class Drawcall {
       ],
     });
 
-    effects.forEach((effect) => {
-      const frag = FRAG_MAP[effect.type].shader;
-      const params: number[] = [];
-      if (effect.type === 'drop-shadow') {
-        // FIXME: color, spread, blur
-        params.push(effect.x, effect.y);
-      } else if (effect.type === 'fxaa') {
-        params.push(0);
-      } else {
-        params.push(effect.value);
-      }
+    const t0 = this.#filterTexture;
+    const t1 = this.#pingPongTexture;
 
-      this.#bigTriangleUniformBuffer = this.device.createBuffer({
-        viewOrSize: Float32Array.BYTES_PER_ELEMENT * 4,
+    for (let ei = 0; ei < effects.length; ei++) {
+      const effect = effects[ei];
+      const entry = FRAG_MAP[effect.type];
+      if (!entry) {
+        console.warn(
+          `Unsupported post-processing effect: ${(effect as Effect).type}`,
+        );
+        continue;
+      }
+      const frag = entry.shader;
+      const srcIsT0 = this.#postEffectPasses.length % 2 === 0;
+
+      const uniformBuffer = this.device.createBuffer({
+        viewOrSize:
+          Float32Array.BYTES_PER_ELEMENT * postEffectUniformFloatCount(effect),
         usage: BufferUsage.UNIFORM,
         hint: BufferFrequencyHint.DYNAMIC,
       });
-      this.#bigTriangleUniformBuffer.setSubData(
-        0,
-        new Uint8Array(new Float32Array([...params]).buffer),
-      );
+      setPostEffectUniformData(effect, uniformBuffer, width, height);
 
-      this.#bigTriangleTexture = this.device.createTexture({
-        format: Format.U8_RGBA_RT,
-        width,
-        height,
-        usage: TextureUsage.RENDER_TARGET,
-      });
-      this.#bigTriangleRenderTarget = this.device.createRenderTargetFromTexture(
-        this.#bigTriangleTexture,
-      );
-
-      this.#bigTriangleProgram = this.renderCache.createProgram({
+      const program = this.renderCache.createProgram({
         vertex: {
           glsl: bigTriangleVert,
         },
@@ -592,13 +1370,13 @@ export abstract class Drawcall {
         },
       });
 
-      this.#bigTriangleVertexBuffer = this.device.createBuffer({
+      const vertexBuffer = this.device.createBuffer({
         viewOrSize: new Float32Array([1, 3, -3, -1, 1, -1]),
         usage: BufferUsage.VERTEX,
         hint: BufferFrequencyHint.DYNAMIC,
       });
 
-      this.#bigTriangleInputLayout = this.device.createInputLayout({
+      const inputLayout = this.renderCache.createInputLayout({
         vertexBufferDescriptors: [
           {
             arrayStride: 4 * 2,
@@ -613,108 +1391,186 @@ export abstract class Drawcall {
           },
         ],
         indexBufferFormat: null,
-        program: this.#bigTriangleProgram,
+        program,
       });
 
-      this.#bigTrianglePipeline = this.device.createRenderPipeline({
-        inputLayout: this.#bigTriangleInputLayout,
-        program: this.#bigTriangleProgram,
+      const pipeline = this.renderCache.createRenderPipeline({
+        inputLayout,
+        program,
         colorAttachmentFormats: [Format.U8_RGBA_RT],
+        depthStencilAttachmentFormat: null,
+        megaStateDescriptor: POST_PROCESS_FULLSCREEN_MEGA,
       });
 
-      this.#bigTriangleBindings = this.renderCache.createBindings({
-        pipeline: this.#bigTrianglePipeline,
+      const srcTexture = srcIsT0 ? t0 : t1;
+      const liquidMetalPoissonAttempt =
+        effect.type === 'liquidMetal' &&
+        effect.useImage &&
+        effect.usePoisson !== false;
+      const heatmapPreprocessAttempt =
+        effect.type === 'heatmap' &&
+        effect.useImage &&
+        effect.usePreprocess !== false;
+      const gemSmokePoissonAttempt =
+        effect.type === 'gemSmoke' &&
+        effect.useImage &&
+        effect.usePoisson !== false;
+      const bindings = this.renderCache.createBindings({
+        pipeline,
         samplerBindings: [
           {
-            texture: this.#filterTexture,
+            texture: srcTexture,
             sampler: this.createSampler(),
           },
         ],
         uniformBufferBindings: [
           {
-            buffer: this.#bigTriangleUniformBuffer,
+            buffer: uniformBuffer,
           },
         ],
       });
-    });
+
+      this.#postEffectPasses.push({
+        program,
+        pipeline,
+        inputLayout,
+        vertexBuffer,
+        uniformBuffer,
+        bindings,
+        srcIsT0,
+        effect,
+        liquidMetalPoissonAttempt,
+        heatmapPreprocessAttempt,
+        gemSmokePoissonAttempt,
+      });
+    }
+
+    let nPoissonRgPass = 0;
+    for (const p of this.#postEffectPasses) {
+      if (p.liquidMetalPoissonAttempt || p.gemSmokePoissonAttempt) {
+        nPoissonRgPass++;
+      }
+    }
+    this.#liquidMetalPoissonEngineTimeCacheAllowed = nPoissonRgPass === 1;
+    this.#liquidMetalPoissonEngineTimeCacheValid = false;
+
+    let nHeatmap = 0;
+    for (const p of this.#postEffectPasses) {
+      if (p.heatmapPreprocessAttempt) {
+        nHeatmap++;
+      }
+    }
+    this.#heatmapEngineTimeCacheAllowed = nHeatmap === 1;
+    this.#heatmapEngineTimeCacheValid = false;
+
+    const n = this.#postEffectPasses.length;
+    const lastTexture =
+      n === 0
+        ? this.#filterTexture
+        : (n - 1) % 2 === 0
+          ? this.#pingPongTexture
+          : this.#filterTexture;
+
+    this.#filterChainReady = true;
 
     return {
-      texture: this.#bigTriangleTexture,
+      texture: lastTexture,
     };
   }
 
-  protected renderPostProcessing(
-    x: number,
-    y: number,
+  /**
+   * Run the post-processing chain for an input texture that already matches `width`×`height`
+   * (no canvas-sized crop). Used for per-shape FillImage filter in texture space.
+   */
+  protected renderPostProcessingTextureSpace(width: number, height: number) {
+    const isWebGPU = this.device.queryVendorInfo().platformString === 'WebGPU';
+    return this.#runPostProcessingWithUniforms(width, height, () => {
+      const inputSize: number[] = [];
+      const outputFrame: number[] = [];
+      const outputTexture: number[] = [];
+      // Must match canvas crop path convention: v_Uv = a_Position * (outputFrame.zw / u_InputSize.xy).
+      // For full WxH input → WxH output, use u_InputSize.xy = (W,H), not (W/2,H/2).
+      inputSize[0] = width;
+      inputSize[1] = height;
+      inputSize[2] = 1 / width;
+      inputSize[3] = 1 / height;
+      outputFrame[0] = 0;
+      outputFrame[1] = 0;
+      outputFrame[2] = width;
+      outputFrame[3] = height;
+      outputTexture[0] = width;
+      outputTexture[1] = height;
+      outputTexture[2] = 1;
+      // fullscreen.frag: u_OutputTexture.w flips v_Uv.y for sampling. WebGL full-texture path uses 0;
+      // WebGPU needs 1 so UV matches NDC/texture row order (same idea as renderPostProcessing).
+      outputTexture[3] = isWebGPU ? 1 : 0;
+      return { inputSize, outputFrame, outputTexture };
+    });
+  }
+
+  /**
+   * 将 `mesh-gradient` 全屏光栅化到 GPU 纹理（与 FillGradient 的 128×128 贴图策略一致）。
+   * `width`/`height` 若无效会在 {@link MeshGradientPass} 内夹紧，避免 WebGL 0×0 附件。
+   */
+  protected renderMeshGradientTexture(
+    gradient: MeshGradient,
     width: number,
     height: number,
-    widthInCanvasCoords: number,
-    heightInCanvasCoords: number,
-    zoomScale: number,
-  ) {
+  ): Texture {
+    let pass = Drawcall.#meshGradientPassByDevice.get(this.device);
+    if (!pass) {
+      pass = new MeshGradientPass(this.device, this.renderCache);
+      Drawcall.#meshGradientPassByDevice.set(this.device, pass);
+    }
+    return pass.render(gradient, width, height);
+  }
+
+  #runPostProcessingWithUniforms(
+    width: number,
+    height: number,
+    buildUniforms: () => {
+      inputSize: number[];
+      outputFrame: number[];
+      outputTexture: number[];
+    },
+  ): { resized: boolean; texture: Texture } {
     let resized = false;
     if (this.#filterWidth !== width || this.#filterHeight !== height) {
-      this.#filterRenderTarget.destroy();
-      this.#filterTexture.destroy();
-      this.#filterTexture = this.device.createTexture({
-        format: Format.U8_RGBA_RT,
-        width,
-        height,
-        usage: TextureUsage.RENDER_TARGET,
-      });
-      this.#filterRenderTarget = this.device.createRenderTargetFromTexture(
-        this.#filterTexture,
-      );
-      this.#bigTriangleRenderTarget.destroy();
-      this.#bigTriangleTexture.destroy();
-      this.#bigTriangleBindings.destroy();
-      this.#bigTriangleTexture = this.device.createTexture({
-        format: Format.U8_RGBA_RT,
-        width,
-        height,
-        usage: TextureUsage.RENDER_TARGET,
-      });
-      this.#bigTriangleRenderTarget = this.device.createRenderTargetFromTexture(
-        this.#bigTriangleTexture,
-      );
-      this.#bigTriangleBindings = this.renderCache.createBindings({
-        pipeline: this.#bigTrianglePipeline,
-        samplerBindings: [
-          {
-            texture: this.#filterTexture,
-            sampler: this.createSampler(),
-          },
-        ],
-        uniformBufferBindings: [
-          {
-            buffer: this.#bigTriangleUniformBuffer,
-          },
-        ],
-      });
+      if (this.#filterChainReady) {
+        this.#filterRenderTarget.destroy();
+        this.#filterTexture.destroy();
+        this.#pingPongRenderTarget.destroy();
+        this.#pingPongTexture.destroy();
+
+        this.#filterTexture = this.device.createTexture({
+          format: Format.U8_RGBA_RT,
+          width,
+          height,
+          usage: TextureUsage.RENDER_TARGET,
+        });
+        this.#filterRenderTarget = this.device.createRenderTargetFromTexture(
+          this.#filterTexture,
+        );
+        this.#pingPongTexture = this.device.createTexture({
+          format: Format.U8_RGBA_RT,
+          width,
+          height,
+          usage: TextureUsage.RENDER_TARGET,
+        });
+        this.#pingPongRenderTarget = this.device.createRenderTargetFromTexture(
+          this.#pingPongTexture,
+        );
+
+        this.#rebuildPostEffectPassBindings();
+        this.#destroyLiquidMetalPoissonTexture();
+        this.#destroyHeatmapProcessedTexture();
+      }
       this.#filterWidth = width;
       this.#filterHeight = height;
       resized = true;
     }
 
-    const { width: canvasWidth, height: canvasHeight } =
-      this.swapChain.getCanvas();
-
-    const inputSize: number[] = [];
-    const outputFrame: number[] = [];
-    const outputTexture: number[] = [];
-    inputSize[0] = canvasWidth / 2;
-    inputSize[1] = canvasHeight / 2;
-    inputSize[2] = 1 / inputSize[0];
-    inputSize[3] = 1 / inputSize[1];
-
-    outputFrame[0] = x;
-    outputFrame[1] = y;
-    outputFrame[2] = width;
-    outputFrame[3] = height;
-
-    outputTexture[0] = widthInCanvasCoords;
-    outputTexture[1] = heightInCanvasCoords;
-    outputTexture[2] = zoomScale;
+    const { inputSize, outputFrame, outputTexture } = buildUniforms();
     const buffer = [...inputSize, ...outputFrame, ...outputTexture];
     this.#filterUniformBuffer.setSubData(
       0,
@@ -726,6 +1582,19 @@ export abstract class Drawcall {
       u_OutputFrame: outputFrame,
       u_OutputTexture: outputTexture,
     });
+
+    for (const pass of this.#postEffectPasses) {
+      setPostEffectUniformData(
+        pass.effect,
+        pass.uniformBuffer,
+        width,
+        height,
+      );
+    }
+
+    const isWebGPU =
+      this.device.queryVendorInfo().platformString === 'WebGPU';
+
     const filterRenderPass = this.device.createRenderPass({
       colorAttachment: [this.#filterRenderTarget],
       colorResolveTo: [null],
@@ -746,26 +1615,85 @@ export abstract class Drawcall {
     filterRenderPass.drawIndexed(6, 1);
     this.device.submitPass(filterRenderPass);
 
-    const bigTriangleRenderPass = this.device.createRenderPass({
-      colorAttachment: [this.#bigTriangleRenderTarget],
-      colorResolveTo: [null],
-      colorClearColor: [TransparentWhite],
-      colorStore: [true],
-      depthStencilAttachment: null,
-      depthStencilResolveTo: null,
-    });
-    bigTriangleRenderPass.setViewport(0, 0, width, height);
-    bigTriangleRenderPass.setPipeline(this.#bigTrianglePipeline);
-    bigTriangleRenderPass.setVertexInput(
-      this.#bigTriangleInputLayout,
-      [{ buffer: this.#bigTriangleVertexBuffer }],
-      null,
-    );
-    bigTriangleRenderPass.setBindings(this.#bigTriangleBindings);
-    bigTriangleRenderPass.draw(3);
-    this.device.submitPass(bigTriangleRenderPass);
+    const t0 = this.#filterTexture;
+    const t1 = this.#pingPongTexture;
+    for (let pi = 0; pi < this.#postEffectPasses.length; pi++) {
+      const pass = this.#postEffectPasses[pi]!;
+      this.#prepareLiquidMetalPoissonForPass(
+        pass,
+        pass.srcIsT0 ? t0 : t1,
+        isWebGPU,
+      );
+      this.#prepareHeatmapForPass(
+        pass,
+        pass.srcIsT0 ? t0 : t1,
+        isWebGPU,
+      );
+      const dstRT =
+        pi % 2 === 0 ? this.#pingPongRenderTarget : this.#filterRenderTarget;
+      const effectPass = this.device.createRenderPass({
+        colorAttachment: [dstRT],
+        colorResolveTo: [null],
+        colorClearColor: [TransparentWhite],
+        colorStore: [true],
+        depthStencilAttachment: null,
+        depthStencilResolveTo: null,
+      });
+      effectPass.setViewport(0, 0, width, height);
+      effectPass.setPipeline(pass.pipeline);
+      effectPass.setVertexInput(
+        pass.inputLayout,
+        [{ buffer: pass.vertexBuffer }],
+        null,
+      );
+      effectPass.setBindings(pass.bindings);
+      effectPass.draw(3);
+      this.device.submitPass(effectPass);
+    }
 
-    return { resized, texture: this.#bigTriangleTexture };
+    const n = this.#postEffectPasses.length;
+    const outTexture =
+      n === 0
+        ? this.#filterTexture
+        : (n - 1) % 2 === 0
+          ? this.#pingPongTexture
+          : this.#filterTexture;
+
+    return { resized, texture: outTexture };
+  }
+
+  protected renderPostProcessing(
+    x: number,
+    y: number,
+    width: number,
+    height: number,
+    widthInCanvasCoords: number,
+    heightInCanvasCoords: number,
+    zoomScale: number,
+  ) {
+    const { width: canvasWidth, height: canvasHeight } =
+      this.swapChain.getCanvas();
+
+    return this.#runPostProcessingWithUniforms(width, height, () => {
+      const inputSize: number[] = [];
+      const outputFrame: number[] = [];
+      const outputTexture: number[] = [];
+      inputSize[0] = canvasWidth / 2;
+      inputSize[1] = canvasHeight / 2;
+      inputSize[2] = 1 / inputSize[0];
+      inputSize[3] = 1 / inputSize[1];
+
+      outputFrame[0] = x;
+      outputFrame[1] = y;
+      outputFrame[2] = width;
+      outputFrame[3] = height;
+
+      outputTexture[0] = widthInCanvasCoords;
+      outputTexture[1] = heightInCanvasCoords;
+      outputTexture[2] = zoomScale;
+      outputTexture[3] = 1;
+      return { inputSize, outputFrame, outputTexture };
+    });
   }
 
   protected createSampler() {

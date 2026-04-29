@@ -19,9 +19,9 @@
     "url": "https://github.com/xiaoiver"
   },
   "scripts": {
-    "dev": "vitepress dev docs",
+    "dev": "NODE_OPTIONS='--max-http-header-size=65536' vitepress dev docs",
     "build": "vitepress build docs",
-    "preview": "vitepress preview docs"
+    "preview": "NODE_OPTIONS='--max-http-header-size=65536' vitepress preview docs"
   },
   "dependencies": {
     "@loaders.gl/core": "^4.2.2",
@@ -41,11 +41,13 @@
     "@infinite-canvas-tutorial/d2": "workspace:*",
     "@infinite-canvas-tutorial/drawio": "workspace:*",
     "@infinite-canvas-tutorial/yoga": "workspace:*",
-    "@infinite-canvas-tutorial/mermaid": "workspace:*"
+    "@infinite-canvas-tutorial/mermaid": "workspace:*",
+    "@infinite-canvas-tutorial/lottie": "workspace:*"
   },
   "devDependencies": {
     "@ant-design/icons-vue": "^7.0.1",
     "@antv/hierarchy": "^0.6.14",
+    "@iconify/json": "^2.2.466",
     "@liveblocks/client": "^3.10.1",
     "@liveblocks/yjs": "^3.10.1",
     "@shoelace-style/shoelace": "^2.0.0",

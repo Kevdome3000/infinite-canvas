@@ -2,10 +2,12 @@
 outline: deep
 description: '集成Flex布局系统，支持Yoga排版引擎。探索WebGL环境下的布局引擎构建，实现响应式界面设计。'
 ---
+
 <script setup>
 import YogaGap from '../../components/YogaGap.vue'
 import YogaFlexBasisGrowShrink from '../../components/YogaFlexBasisGrowShrink.vue'
 import YogaAlignItemsJustifyContent from '../../components/YogaAlignItemsJustifyContent.vue'
+import YogaButton from '../../components/YogaButton.vue'
 import YogaMinMaxWidthHeight from '../../components/YogaMinMaxWidthHeight.vue'
 </script>
 
@@ -232,6 +234,10 @@ class YogaSystem extends System {
 
 <YogaAlignItemsJustifyContent />
 
+很容易实现按钮：
+
+<YogaButton />
+
 ### Gap {#gap}
 
 下面这个例子展示了 `padding` 和 `gap` 的效果：
@@ -269,9 +275,23 @@ const parent = {
 
 <YogaMinMaxWidthHeight />
 
-## [WIP] 导出 SVG {#export-svg}
+### Hug contents {#hug}
+
+在某一轴或两轴上，父级不给出（或只给部分）外扩尺寸，由子级测量结果 + `padding/gap` 决定父级宽高。这在 Figma 中称作 [Hug contents]。
+
+而在 Yoga 的实现中，只要不把节点设成固定宽高，就会根据子节点算出父节点的尺寸，当然前提是子节点可以被测量，Yoga 会在布局后给出容器的 `getComputedWidth() / getComputedHeight()`，这就是「由内容撑开父级」。
+
+## 导出 SVG {#export-svg}
 
 由于 CSS Flexbox 只支持 HTML 元素作为容器，SVG 元素不可以。因此在导出 SVG 时，仍然需要使用布局之后的绝对位置。
+
+```ts
+const layoutNodes = api.readLayoutFromECS(nodes);
+
+(await serializeNodesToSVGElements(layoutNodes)).forEach((element) => {
+    $namespace.appendChild(element);
+});
+```
 
 ## 扩展阅读 {#extended-reading}
 
@@ -279,6 +299,7 @@ const parent = {
 -   [clay]
 -   [react-three-flex]
 -   [Figma - Guide to auto layout]
+-   [Layout in rive]
 
 [Yoga]: https://yogalayout.com/
 [yoga-layout-prebuilt]: https://github.com/vadimdemedes/yoga-layout-prebuilt
@@ -300,3 +321,5 @@ const parent = {
 [Flex Basis, Grow, and Shrink]: https://www.yogalayout.dev/docs/styling/flex-basis-grow-shrink
 [Min/Max Width and Height]: https://www.yogalayout.dev/docs/styling/min-max-width-height
 [Layout in pencil.dev]: https://docs.pencil.dev/for-developers/the-pen-format#layout
+[Layout in rive]: https://rive.app/docs/editor/layouts/layouts-overview
+[Hug contents]: https://help.figma.com/hc/en-us/articles/360040451373-Guide-to-auto-layout#hug

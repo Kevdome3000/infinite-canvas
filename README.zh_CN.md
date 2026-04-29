@@ -383,13 +383,15 @@ pnpm run dev
 
 ## 课程 30 - 图像后处理与渲染图 [🔗](https://infinitecanvas.cc/zh/guide/lesson-030)
 
--   图像后处理，例如噪声、亮度调整等效果
+-   图像后处理，例如噪声、亮度调整、halftone、液态玻璃、CRT、Glitch、Ascii 等效果
+-   配套的可叠加的滤镜效果编辑面板
+-   将时间动画导出成 GIF 和 WebM 格式动画
 -   渲染图的设计思路与实现
 -   使用 FXAA 进行快速抗锯齿
 
-|                Image processing                 |     |
-| :---------------------------------------------: | :-: |
-| ![image processing](./screenshots/lesson30.png) |     |
+|                                       Image processing                                       |                Effects panel                 |
+| :------------------------------------------------------------------------------------------: | :------------------------------------------: |
+| ![image processing](./screenshots/lesson30.png) ![effects panel](./screenshots/pixelate.png) | ![effects panel](./screenshots/halftone.png) |
 
 ## 课程 31 - 图形间的绑定关系 [🔗](https://infinitecanvas.cc/zh/guide/lesson-031)
 
@@ -424,9 +426,9 @@ pnpm run dev
     -   Flex Basis, Grow, and Shrink
     -   Min/Max Width and Height
 
-|                   Gap                   |          AlignItems & JustifyContent           |
-| :-------------------------------------: | :--------------------------------------------: |
-| ![Yoga gap](./screenshots/yoga-gap.gif) | ![Yoga gap](./screenshots/yoga-alignitems.gif) |
+|                   Gap                   |          AlignItems & JustifyContent           |                  Layout panel                   |
+| :-------------------------------------: | :--------------------------------------------: | :---------------------------------------------: |
+| ![Yoga gap](./screenshots/yoga-gap.gif) | ![Yoga gap](./screenshots/yoga-alignitems.gif) | ![layout panel](./screenshots/layout-panel.png) |
 
 ## 课程 34 - Frame 与裁切 [🔗](https://infinitecanvas.cc/zh/guide/lesson-034)
 
@@ -467,9 +469,18 @@ pnpm run dev
     -   生成 mipmap
     -   与 vello 渲染管线结合，合成最终结果
 
-|               Radiance Cascades               |
-| :-------------------------------------------: |
-| ![vello](./screenshots/radiance-cascades.png) |
+|               Radiance Cascades               | with mermaid flowchart, mindmap, state diagram |
+| :-------------------------------------------: | :--------------------------------------------: |
+| ![vello](./screenshots/radiance-cascades.png) |    ![mermaid](./screenshots/rc-mermaid.png)    |
+
+## 课程 38 - 从设计到代码 [🔗](https://infinitecanvas.cc/zh/guide/lesson-038)
+
+-   实现变量与主题
+-   支持 iconfont 渲染，在运行时引入 lucide、material 等图标集
+
+|           Variables and themes            | Iconfont(lucide, material and pixelarticons) |
+| :---------------------------------------: | :------------------------------------------: |
+| ![variables](./screenshots/variables.png) |   ![variables](./screenshots/iconfont.png)   |
 
 [在线体验]: app.infinitecanvas.cc
 [infinitecanvas]: https://infinitecanvas.tools/

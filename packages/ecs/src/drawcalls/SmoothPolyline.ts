@@ -10,7 +10,7 @@ import {
   VertexStepMode,
   CompareFunction,
   TransparentBlack,
-} from '@antv/g-device-api';
+} from '@infinite-canvas-tutorial/device-api';
 import { Entity } from '@lastolivegames/becsy';
 import { mat3 } from 'gl-matrix';
 import { Drawcall, ZINDEX_FACTOR, STENCIL_CLIP_REF } from './Drawcall';
@@ -705,6 +705,11 @@ export function updateBuffer(object: Entity, useRoughStroke = true) {
         );
       })
       .flat(2);
+
+    // degenerated path, draw a circle instead
+    if (points.length === 2) {
+      points.push(points[0] + epsilon, points[1]);
+    }
   } else if (object.has(Rect)) {
     const { x, y, width, height } = object.read(Rect);
     points = [

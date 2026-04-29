@@ -4,6 +4,7 @@ import {
   Pen,
   DefaultPlugins,
   TRANSFORMER_MASK_FILL_COLOR,
+  Task,
 } from '@infinite-canvas-tutorial/ecs';
 import { ref, onMounted, onUnmounted } from 'vue';
 import { Event, UIPlugin } from '@infinite-canvas-tutorial/webcomponents';
@@ -28,6 +29,18 @@ onMounted(async () => {
     api.setAppState({
       penbarSelected: Pen.SELECT,
       penbarAll: [Pen.SELECT],
+      taskbarSelected: [
+        Task.SHOW_PROPERTIES_PANEL,
+      ],
+      propertiesPanelSectionsOpen: {
+        shape: false,
+        transform: false,
+        layout: true,
+        effects: false,
+        multiSelectAlignment: true,
+        multiSelectEffects: true,
+        exportSection: true,
+      },
     });
 
     const parent = {
@@ -98,7 +111,7 @@ onUnmounted(async () => {
 </script>
 
 <template>
-  <ic-spectrum-canvas ref="wrapper" style="width: 100%; height: 300px"
+  <ic-spectrum-canvas ref="wrapper" style="width: 100%; height: 500px"
     app-state='{"topbarVisible":true, "cameraZoom": 0.6, "cameraX": -200, "cameraY": 50}'>
   </ic-spectrum-canvas>
 </template>

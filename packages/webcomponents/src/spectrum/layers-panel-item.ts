@@ -1,26 +1,28 @@
-import { html, css, LitElement } from 'lit';
+import { css, html, LitElement } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
+import { query } from 'lit/decorators/query.js';
+import type { LayerName } from './layer-name';
+import './layer-name.js';
 import { when } from 'lit/directives/when.js';
 import { consume } from '@lit/context';
 import {
-  SerializedNode,
-  AppState,
-  Task,
   API,
+  AppState,
+  SerializedNode,
+  Task,
 } from '@infinite-canvas-tutorial/ecs';
 import {
   OverlayOpenCloseDetail,
   trigger,
 } from '@spectrum-web-components/overlay';
 import { apiContext, appStateContext } from '../context';
-import { msg, str, localized } from '@lit/localize';
+import { localized, msg, str } from '@lit/localize';
 
 @customElement('ic-spectrum-layers-panel-item')
 @localized()
 export class LayersPanelItem extends LitElement {
   static styles = css`
     :host {
-      width: 320px;
       height: 64px;
       display: flex;
       align-items: center;
@@ -38,6 +40,8 @@ export class LayersPanelItem extends LitElement {
 
     ic-spectrum-layer-name {
       flex: 1;
+      margin-left: 8px;
+      min-width: 0;
     }
 
     :host([selected]) {
@@ -65,6 +69,13 @@ export class LayersPanelItem extends LitElement {
       justify-content: space-between;
       margin: 0;
     }
+
+    .layer-row {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      width: 100%;
+    }
   `;
 
   @property()
@@ -87,6 +98,23 @@ export class LayersPanelItem extends LitElement {
 
   @consume({ context: appStateContext, subscribe: true })
   appState: AppState;
+
+  @query('ic-spectrum-layer-name')
+  private layerNameEl?: LayerName;
+
+  private handleItemDblClick(e: MouseEvent) {
+    if (this.node.locked) {
+      return;
+    }
+    const t = e.target;
+    if (!(t instanceof Element)) {
+      return;
+    }
+    if (t.closest('sp-action-button')) {
+      return;
+    }
+    this.layerNameEl?.beginEditing();
+  }
 
   private handleToggleExpand(e: Event) {
     e.stopPropagation();
@@ -170,6 +198,7 @@ export class LayersPanelItem extends LitElement {
       !this.appState.taskbarSelected.includes(Task.SHOW_PROPERTIES_PANEL);
 
     return html`
+      <div class="layer-row" @dblclick=${this.handleItemDblClick}>
         <sp-action-button quiet size="s" @click=${this.handleToggleVisibility}>
           ${when(
             isVisible,
@@ -187,10 +216,7 @@ export class LayersPanelItem extends LitElement {
           ${when(
             isLocked,
             () => html`<sp-icon-lock-closed slot="icon"></sp-icon-lock-closed>`,
-            () =>
-              html`<sp-icon-lock-open
-                slot="icon"
-              ></sp-icon-lock-open>`,
+            () => html`<sp-icon-lock-open slot="icon"></sp-icon-lock-open>`,
           )}
           <sp-tooltip self-managed placement="bottom">
             ${isLocked ? msg(str`Unlock layer`) : msg(str`Lock layer`)}
@@ -201,54 +227,61 @@ export class LayersPanelItem extends LitElement {
           .node=${this.node}
           ?selected=${this.selected}
         ></ic-spectrum-layer-thumbnail>
-      
-      <ic-spectrum-layer-name
-        .node=${this.node}></ic-spectrum-layer-name>
-      <div 
-        class="layer-actions" style="visibility: ${
-          showProperties ? 'visible' : 'hidden'
-        };">
-        <sp-action-button quiet size="m" .selected=${isOpen} ${trigger(
-      this.renderOverlayContent,
-      {
-        open: isOpen,
-        triggerInteraction: 'click',
-        overlayOptions: {
-          placement: 'bottom',
-          offset: 6,
-        },
-      },
-    )}>
-          <sp-icon-properties slot="icon"></sp-icon-properties>
-          <sp-tooltip self-managed placement="bottom">
-            ${msg(str`Layer properties`)}</sp-tooltip
+
+        <ic-spectrum-layer-name .node=${this.node}></ic-spectrum-layer-name>
+        <div
+          class="layer-actions"
+          style="visibility: ${showProperties ? 'visible' : 'hidden'};"
+        >
+          <sp-action-button
+            quiet
+            size="m"
+            .selected=${isOpen}
+            ${trigger(this.renderOverlayContent, {
+              open: isOpen,
+              triggerInteraction: 'click',
+              overlayOptions: {
+                placement: 'bottom',
+                offset: 6,
+              },
+            })}
           >
-        </sp-action-button>
-      </div>
-      <span>
-      ${when(
-        this.hasChildren,
-        () => html`
-          <sp-action-button quiet size="s" @click=${this.handleToggleExpand}>
-            ${when(
-              isExpanded,
-              () =>
-                html`<sp-icon-chevron-down slot="icon"></sp-icon-chevron-down>`,
-              () =>
-                html`<sp-icon-chevron-right
-                  slot="icon"
-                ></sp-icon-chevron-right>`,
-            )}
-            <sp-tooltip self-managed placement="left">
-              ${isExpanded ? msg(str`Collapse`) : msg(str`Expand`)}
-            </sp-tooltip>
+            <sp-icon-properties slot="icon"></sp-icon-properties>
+            <sp-tooltip self-managed placement="bottom">
+              ${msg(str`Layer properties`)}</sp-tooltip
+            >
           </sp-action-button>
-        `,
-        () => html``,
-      )}
-      </span>
-      
-    </span>`;
+        </div>
+        <span>
+          ${when(
+            this.hasChildren,
+            () => html`
+              <sp-action-button
+                quiet
+                size="s"
+                @click=${this.handleToggleExpand}
+              >
+                ${when(
+                  isExpanded,
+                  () =>
+                    html`<sp-icon-chevron-down
+                      slot="icon"
+                    ></sp-icon-chevron-down>`,
+                  () =>
+                    html`<sp-icon-chevron-right
+                      slot="icon"
+                    ></sp-icon-chevron-right>`,
+                )}
+                <sp-tooltip self-managed placement="left">
+                  ${isExpanded ? msg(str`Collapse`) : msg(str`Expand`)}
+                </sp-tooltip>
+              </sp-action-button>
+            `,
+            () => html``,
+          )}
+        </span>
+      </div>
+    `;
   }
 }
 

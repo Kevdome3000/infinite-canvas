@@ -382,13 +382,15 @@ If you want to use it in your own project, you can refer to:
 
 ## Lesson 30 - Image processing and render graph [🔗](https://infinitecanvas.cc/guide/lesson-030)
 
--   Image processing, including brightness, noise, etc.
+-   Image processing, including brightness, noise, liquid glass, CRT, Glitch, Ascii etc.
+-   Effects panel
+-   Export time-based shader animation in GIF or WebM format
 -   The design concept and implementation of Render graph
 -   Use FXAA render pass
 
-|                Image processing                 |     |
-| :---------------------------------------------: | :-: |
-| ![image processing](./screenshots/lesson30.png) |     |
+|                                       Image processing                                       |                Effects panel                 |
+| :------------------------------------------------------------------------------------------: | :------------------------------------------: |
+| ![image processing](./screenshots/lesson30.png) ![effects panel](./screenshots/pixelate.png) | ![effects panel](./screenshots/halftone.png) |
 
 ## Lesson 31 - Bindings between shapes [🔗](https://infinitecanvas.cc/guide/lesson-031)
 
@@ -423,9 +425,9 @@ If you want to use it in your own project, you can refer to:
     -   Flex Basis, Grow, and Shrink
     -   Min/Max Width and Height
 
-|                   Gap                   |          AlignItems & JustifyContent           |
-| :-------------------------------------: | :--------------------------------------------: |
-| ![Yoga gap](./screenshots/yoga-gap.gif) | ![Yoga gap](./screenshots/yoga-alignitems.gif) |
+|                   Gap                   |          AlignItems & JustifyContent           |                  Layout panel                   |
+| :-------------------------------------: | :--------------------------------------------: | :---------------------------------------------: |
+| ![Yoga gap](./screenshots/yoga-gap.gif) | ![Yoga gap](./screenshots/yoga-alignitems.gif) | ![layout panel](./screenshots/layout-panel.png) |
 
 ## Lesson 34 - Frame and clip [🔗](https://infinitecanvas.cc/guide/lesson-034)
 
@@ -466,9 +468,18 @@ If you want to use it in your own project, you can refer to:
     -   Generate mipmap
     -   Composite with vello pipeline
 
-|               Radiance Cascades               |
-| :-------------------------------------------: |
-| ![vello](./screenshots/radiance-cascades.png) |
+|               Radiance Cascades               | with mermaid flowchart, mindmap, state diagram |
+| :-------------------------------------------: | :--------------------------------------------: |
+| ![vello](./screenshots/radiance-cascades.png) |    ![mermaid](./screenshots/rc-mermaid.png)    |
+
+## Lesson 38 - From design to code [🔗](https://infinitecanvas.cc/guide/lesson-038)
+
+-   Variables and themes
+-   Render iconfont, import lucide, material and other iconsets
+
+|           Variables and themes            | Iconfont(lucide, material and pixelarticons) |
+| :---------------------------------------: | :------------------------------------------: |
+| ![variables](./screenshots/variables.png) |   ![variables](./screenshots/iconfont.png)   |
 
 [Online App]: app.infinitecanvas.cc
 [infinitecanvas]: https://infinitecanvas.tools/

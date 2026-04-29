@@ -1,6 +1,7 @@
 import { CanvasData, Event, IndexedDbStorageService, UIPlugin } from '../src';
 import {
   App,
+  registerIconifyIconSet,
   svgElementsToSerializedNodes,
   svgSvgElementToComputedCamera,
   DefaultPlugins,
@@ -38,6 +39,9 @@ import {
   Pen,
   Task,
   CheckboardStyle,
+  TRANSFORMER_MASK_FILL_COLOR,
+  TesselationMethod,
+  SerializedNode,
 } from '../../ecs';
 import { Event, UIPlugin } from '../src';
 import '../src/spectrum';
@@ -45,6 +49,7 @@ import { LaserPointerPlugin } from '../../plugin-laser-pointer/src';
 import { EraserPlugin } from '../../plugin-eraser/src';
 import { LassoPlugin } from '../../plugin-lasso/src';
 import { YogaPlugin } from '../../plugin-yoga/src';
+import { loadAnimation } from '../../plugin-lottie/src';
 import { InitVello, VelloPipeline, registerFont } from '../../plugin-vello/src';
 import '../../plugin-laser-pointer/src/spectrum';
 import '../../plugin-eraser/src/spectrum';
@@ -268,6 +273,7 @@ async function openCanvas(id?: string) {
       Pen.DRAW_ARROW,
       Pen.DRAW_ROUGH_RECT,
       Pen.DRAW_ROUGH_ELLIPSE,
+      Pen.DRAW_ICONFONT,
       Pen.IMAGE,
       Pen.LASSO,
       Pen.TEXT,
@@ -297,9 +303,23 @@ async function openCanvas(id?: string) {
         Task.SHOW_LAYERS_PANEL,
         Task.SHOW_PROPERTIES_PANEL,
       ],
+    taskbarSelected: [
+      Task.SHOW_PROPERTIES_PANEL,
+    ],
+    propertiesPanelSectionsOpen: {
+      shape: false,
+      transform: false,
+      layout: false,
+      flexItem: true,
+      effects: false,
+      multiSelectAlignment: true,
+      multiSelectEffects: true,
+      exportSection: true,
+      iconFont: true,
+    },
     penbarVisible: true,
     taskbarVisible: true,
-    checkboardStyle: CheckboardStyle.NONE,
+    checkboardStyle: CheckboardStyle.GRID,
       snapToPixelGridEnabled: true,
     snapToPixelGridSize: 1,
       // snapToPixelGridEnabled: false,
@@ -320,480 +340,158 @@ async function openCanvas(id?: string) {
     // layersLassoing: ['parent'],
     });
 
-  const node1: RectSerializedNode = {
-    id: 'binding-curved-rect-1',
-    type: 'path',
-    d: 'M 100 0 L 200 100 L 300 0 Z',
-    stroke: 'black',
-    strokeWidth: 10,
-    zIndex: 1,
-  };
-  const node2 = {
-    id: 'binding-curved-rect-2',
-    type: 'ellipse',
-    x: 225,
-    y: 120,
-    width: 100,
-    height: 100,
-    fill: 'red',
-    zIndex: 2,
-  };
-  const node3 = {
-    id: 'binding-curved-rect-3',
-    type: 'rect',
-    x: 400,
-    y: 150,
-    width: 100,
-    height: 100,
-    fill: 'green',
-  };
-  const edge1 = {
-    id: 'binding-curved-line-1',
-    type: 'path',
-    // type: 'polyline',
-    // type: 'line',
-    fromId: 'binding-curved-rect-1',
-    toId: 'binding-curved-rect-1',
-    // targetPoint: {
-    //   x: 300,
-    //   y: 0,
-    // },
-    stroke: 'black',
-    strokeWidth: 10,
-    markerEnd: 'line',
-    edgeStyle: EdgeStyle.ORTHOGONAL,
-    // exitX: 0.5,
-    // exitY: 0.5,
-    // exitDx: 0,
-    // exitDy: 50,
-    curved: true,
-  };
-  const edge2 = {
-    id: 'binding-curved-line-2',
-    type: 'path',
-    fromId: 'binding-curved-rect-2',
-    toId: 'binding-curved-rect-3',
-    stroke: 'black',
-    strokeWidth: 10,
-    markerEnd: 'line',
-    edgeStyle: EdgeStyle.ORTHOGONAL,
-    curved: true,
-  };
-
-  const line = {
-    id: 'line-1',
-    type: 'line',
-    x1: 100,
-    y1: 200,
-    x2: 200,
-    y2: 300,
-    stroke: 'white',
-    strokeWidth: 10,
-  };
-
-  const polyline = {
-    id: 'polyline-1',
-    type: 'polyline',
-    points: '100,0 200,100 300,0',
-    stroke: 'white',
-    strokeWidth: 10,
-    zIndex: 3,
-  };
-
   const path = {
-    id: 'path-1',
+    id: 'cj03l-path',
     type: 'path',
-    d: 'M 100 0 L 200 100 L 300 0 Z',
-    stroke: 'black',
-    strokeWidth: 10,
-    zIndex: 3,
+    d: 'M150 0 L121 90 L198 35 L102 35 L179 90 Z',
+    fill: 'black',
+    fillRule: 'evenodd',
+    // wireframe: true,
+    tessellationMethod: TesselationMethod.LIBTESS,
+    stroke: 'none',
+    strokeWidth: 0,
+    zIndex: 0,
+    filter:
+      'liquid-metal(2, 0.1, 0.3, 0.3, 0.07, 0.4, 70, 3, 1, transparent, #ffffff, auto, 1)',
   }
 
-  const vn = {
-    type: 'vector-network',
-    id: 'vn-1',
-    zIndex: 3,
-    stroke: 'black',
-    strokeWidth: 10,
-    fill: 'red',
+  /** 对齐 https://shaders.paper.design 的 `<LiquidMetal image=… fit=contain … />` 典型参数（ ecs 的 filter 串无 speed/scale/fit，由节点尺寸与 fill 位图体现）。 */
+  const image = {
+    id: 'cj03l-image',
+    type: 'rect',
+    width: 400,
+    height: 300,
+    x: 0,
+    y: 0,
+    // fill: 'https://shaders.paper.design/images/logos/diamond.svg',
+    fill: "/soundboard.heic",
+    // fill: 'black',
+    zIndex: 2,
+  } as const;
 
-    // The vertices of the triangle
-    vertices: [
-      { x: 100, y: 0 },
-      { x: 200, y: 100 },
-      { x: 300, y: 0 },
-    ],
+  const button = {
+    "id": "cj03l",
+    type: 'rect',
+    display: 'flex',
+    "x": 100,
+    "y": 100,
+    "name": "Button/Default",
+    "height": 40,
+    "fill": "$--primary",
+    "cornerRadius": "$--radius-pill",
+    "gap": 6,
+    "padding": [10, 16],
+    "justifyContent": "center",
+    "alignItems": "center",
+    zIndex: 0,
+  } as const;
 
-    // The edges of the triangle. 'start' and 'end' refer to indices in the vertices array.
-    segments: [
-      {
-        start: 0,
-        tangentStart: { x: 0, y: 0 }, // optional
-        end: 1,
-        tangentEnd: { x: 0, y: 0 }, // optional
-      },
-      {
-        start: 1,
-        end: 2,
-      },
-      {
-        start: 2,
-        end: 0,
-      },
-    ],
+  const text = {
+    id: 'cj03l-text',
+    parentId: 'cj03l',
+    type: 'text',
+    content: 'Button',
+    fontFamily: 'sans-serif',
+    fontSize: 14,
+    lineHeight: 20,
+    "fill": "$--primary-foreground",
+    textAlign: 'center',
+    textBaseline: 'middle',
+    zIndex: 1,
+  } as const;
 
-    // The loop that forms the triangle. Each loop is a
-    // sequence of indices into the segments array.
-    regions: [{ fillRule: 'nonzero', loops: [[0, 1, 2]] }],
+  const BlenderIcon = {
+    id: 'blender-icon-material-icon-theme',
+    type: 'iconfont' as const,
+    x: 50,
+    y: 50,
+    width: 32,
+    height: 32,
+    zIndex: 1,
+    iconFontName: 'android',
+    iconFontFamily: 'material-icon-theme',
+    lockAspectRatio: true,
   };
 
-  // Bezier
-  const vn2 = {
-    type: 'vector-network',
-    id: 'vn-2',
-    zIndex: 3,
-    stroke: 'black',
-    strokeWidth: 10,
-    vertices: [
+  const AndroidIcon = {
+    id: 'android-icon-material-icon-theme',
+    type: 'iconfont' as const,
+    x: 300,
+    y: 300,
+    width: 100,
+    height: 100,
+    zIndex: 1,
+    iconFontName: 'atom',
+    iconFontFamily: 'lucide',
+    lockAspectRatio: true,
+  };
+
+
+  api.setAppState({
+    penbarNameLabelVisible: true,
+    variables: {
+      // 避免用 #FFFFFF：默认画布背景为浅色（如 #fbfbfb），白填充/白描边会几乎看不见
+      '--primary': { type: 'color', value: '#FF8400' },
+      '--primary-foreground': { type: 'color', value: '#111111' },
+      '--radius-pill': { type: 'number', value: 999 },
+    },
+  });
+
+  {
+    const m = await import('@iconify/json/json/lucide.json');
+    registerIconifyIconSet('lucide', m);
+  }
+  {
+    const m = await import('@iconify/json/json/material-icon-theme.json');
+    registerIconifyIconSet('material-icon-theme', m);
+  }
+
+  api.runAtNextTick(() => {
+    api.updateNodes([
+      // AndroidIcon,
+      // BlenderIcon,
       {
+        id: 'foo',
+        type: 'rect',
+        name: 'foo',
+        reusable: true,
         x: 0,
         y: 0,
-        strokeLinecap: 'round',
-        strokeLinejoin: 'round',
-      },
+        width: 100,
+        height: 100,
+        zIndex: 0,
+        fill: '#FF0000',
+      } as SerializedNode,
       {
-        x: 100,
+        id: 'bar',
+        type: 'ref',
+        name: 'bar',
+        ref: 'foo',
+        x: 120,
         y: 0,
-        strokeLinecap: 'round',
-        strokeLinejoin: 'round',
-      }
-    ],
-    segments: [
-      {
-        start: 0,
-        end: 1,
-        tangentStart: { x: 50, y: -50 },
-        tangentEnd: { x: -50, y: -50 }
-      }
-    ],
-    regions: []
-  };
-
-  const vn3 = {
-    type: 'vector-network',
-    id: 'vn-3',
-    zIndex: 3,
-    stroke: 'black',
-    strokeWidth: 10,
-    fill: 'red',
-    "regions": [
-      {
-        "fillRule": "nonzero",
-        "loops": [
-          [
-            10,
-            11,
-            12,
-            13
-          ]
-        ],
-        "fills": [
-          {
-            "type": "SOLID",
-            "visible": true,
-            "opacity": 1,
-            "blendMode": "NORMAL",
-            "color": {
-              "r": 0.9882352948188782,
-              "g": 0.5411764979362488,
-              "b": 0.4117647111415863
-            },
-            "boundVariables": {}
-          }
-        ],
-        "fillStyleId": ""
-      }
-    ],
-    "segments": [
-      {
-        "start": 0,
-        "end": 1,
-        "tangentStart": {
-          "x": 10.685233116149902,
-          "y": -64.4997329711914
-        },
-        "tangentEnd": {
-          "x": -70.5,
-          "y": -8.500020027160645
-        }
-      },
-      {
-        "start": 1,
-        "end": 2,
-        "tangentStart": {
-          "x": 34.5614013671875,
-          "y": 64.82703399658203
-        },
-        "tangentEnd": {
-          "x": 0,
-          "y": 0
-        }
-      },
-      {
-        "start": 2,
-        "end": 3,
-        "tangentStart": {
-          "x": 0,
-          "y": 0
-        },
-        "tangentEnd": {
-          "x": 17.183069229125977,
-          "y": -48.62030029296875
-        }
-      },
-      {
-        "start": 3,
-        "end": 4,
-        "tangentStart": {
-          "x": -74,
-          "y": 39.99969482421875
-        },
-        "tangentEnd": {
-          "x": 0,
-          "y": 0
-        }
-      },
-      {
-        "start": 4,
-        "end": 0,
-        "tangentStart": {
-          "x": 10.739418029785156,
-          "y": -64.82703399658203
-        },
-        "tangentEnd": {
-          "x": -10.685233116149902,
-          "y": 64.4997329711914
-        }
-      },
-      {
-        "start": 5,
-        "end": 1,
-        "tangentStart": {
-          "x": 0,
-          "y": 0
-        },
-        "tangentEnd": {
-          "x": -11.520466804504395,
-          "y": 50.96342086791992
-        }
-      },
-      {
-        "start": 3,
-        "end": 5,
-        "tangentStart": {
-          "x": -28.8987979888916,
-          "y": -62.483909606933594
-        },
-        "tangentEnd": {
-          "x": 0,
-          "y": 0
-        }
-      },
-      {
-        "start": 4,
-        "end": 5,
-        "tangentStart": {
-          "x": 0,
-          "y": 0
-        },
-        "tangentEnd": {
-          "x": 0,
-          "y": 0
-        }
-      },
-      {
-        "start": 6,
-        "end": 7,
-        "tangentStart": {
-          "x": 0,
-          "y": 0
-        },
-        "tangentEnd": {
-          "x": 0,
-          "y": 0
-        }
-      },
-      {
-        "start": 7,
-        "end": 8,
-        "tangentStart": {
-          "x": 0,
-          "y": 0
-        },
-        "tangentEnd": {
-          "x": 0,
-          "y": 0
-        }
-      },
-      {
-        "start": 2,
-        "end": 1,
-        "tangentStart": {
-          "x": 0,
-          "y": 0
-        },
-        "tangentEnd": {
-          "x": 0,
-          "y": 0
-        }
-      },
-      {
-        "start": 1,
-        "end": 5,
-        "tangentStart": {
-          "x": 0,
-          "y": 0
-        },
-        "tangentEnd": {
-          "x": 0,
-          "y": 0
-        }
-      },
-      {
-        "start": 5,
-        "end": 3,
-        "tangentStart": {
-          "x": 0,
-          "y": 0
-        },
-        "tangentEnd": {
-          "x": 0,
-          "y": 0
-        }
-      },
-      {
-        "start": 3,
-        "end": 2,
-        "tangentStart": {
-          "x": 0,
-          "y": 0
-        },
-        "tangentEnd": {
-          "x": 0,
-          "y": 0
-        }
-      }
-    ],
-    "vertices": [
-      {
-        "x": 144,
-        "y": 73.6352767944336,
-        "strokeCap": "NONE",
-        "strokeJoin": "MITER",
-        "cornerRadius": 0,
-        "handleMirroring": "ANGLE_AND_LENGTH"
-      },
-      {
-        "x": 294.5,
-        "y": 2.135254383087158,
-        "strokeCap": "NONE",
-        "strokeJoin": "MITER",
-        "cornerRadius": 0,
-        "handleMirroring": "ANGLE_AND_LENGTH"
-      },
-      {
-        "x": 383,
-        "y": 168.13525390625,
-        "strokeCap": "NONE",
-        "strokeJoin": "MITER",
-        "cornerRadius": 0,
-        "handleMirroring": "NONE"
-      },
-      {
-        "x": 339,
-        "y": 292.63531494140625,
-        "strokeCap": "NONE",
-        "strokeJoin": "MITER",
-        "cornerRadius": 0,
-        "handleMirroring": "ANGLE_AND_LENGTH"
-      },
-      {
-        "x": 116.5,
-        "y": 239.63525390625,
-        "strokeCap": "NONE",
-        "strokeJoin": "MITER",
-        "cornerRadius": 0,
-        "handleMirroring": "NONE"
-      },
-      {
-        "x": 265,
-        "y": 132.63525390625,
-        "strokeCap": "NONE",
-        "strokeJoin": "MITER",
-        "cornerRadius": 0,
-        "handleMirroring": "NONE"
-      },
-      {
-        "x": 51,
-        "y": 37.135257720947266,
-        "strokeCap": "ARROW_LINES",
-        "strokeJoin": "MITER",
-        "cornerRadius": 0,
-        "handleMirroring": "NONE"
-      },
-      {
-        "x": 33,
-        "y": 177.13525390625,
-        "strokeCap": "NONE",
-        "strokeJoin": "MITER",
-        "cornerRadius": 0,
-        "handleMirroring": "NONE"
-      },
-      {
-        "x": 0,
-        "y": 85.6352767944336,
-        "strokeCap": "NONE",
-        "strokeJoin": "MITER",
-        "cornerRadius": 0,
-        "handleMirroring": "NONE"
-      }
-    ]
-  }
-
-  api.updateNodes([
-    // vn,
-    // vn2,
-    // vn3,
-    node1,
-    // node2,
-    // line,
-    // polyline,
-    // path
-    // node3,
-    // edge1, edge2
-  ]);
-  // api.selectNodes([node1])
+        zIndex: 1,
+      } as SerializedNode,
+      image,
+      // button,
+      // text,
+    ]);
+  });
 
     isLoading = false;
 
-  const animation = api.animate(
-    node1,
-    [
-      { fill: 'green', d: 'M 100 0 L 200 100 L 300 0 Z' },
-      { fill: 'red', d: 'M 100 0 L 200 100 L 300 0 Q 400 100 500 0' },
-    ],
-    { duration: 1000, direction: 'alternate', iterations: 'infinite', easing: 'ease-in-out' },
-  );
-
-  // animation.finish();
+  //   api.runAtNextTick(() => {
+  //     animation.render(api);
+  //     animation.play();
+  //   });
+  // });
   });
 
-const VelloRendererPlugin = RendererPlugin.configure({
-  setupDeviceSystemCtor: InitVello,
-  rendererSystemCtor: VelloPipeline,
-});
-DefaultPlugins.splice(DefaultPlugins.indexOf(DefaultRendererPlugin), 1, VelloRendererPlugin);
-// registerFont('/Gaegu-Regular.ttf');
+// const VelloRendererPlugin = RendererPlugin.configure({
+//   setupDeviceSystemCtor: InitVello,
+//   rendererSystemCtor: VelloPipeline,
+// });
+// DefaultPlugins.splice(DefaultPlugins.indexOf(DefaultRendererPlugin), 1, VelloRendererPlugin);
+// // registerFont('/Gaegu-Regular.ttf');
 // registerFont('/NotoSansCJKsc-VF.ttf');
 // registerFont('/NotoSans-Regular.ttf');
 // registerFont('/NotoSans-Bold.ttf');

@@ -7,7 +7,7 @@ import {
   BufferUsage,
   SwapChain,
   TransparentWhite,
-} from '@antv/g-device-api';
+} from '@infinite-canvas-tutorial/device-api';
 import {
   Camera,
   Canvas,
@@ -19,6 +19,7 @@ import {
   ComputedPoints,
   ComputedRough,
   ComputedTextMetrics,
+  AnimationExportOutput,
   Culled,
   DropShadow,
   Ellipse,
@@ -37,6 +38,7 @@ import {
   Opacity,
   Path,
   Polyline,
+  RasterAnimationExportRequest,
   RasterScreenshotRequest,
   Rect,
   Renderable,
@@ -65,11 +67,24 @@ import {
   ClipMode,
   Flex,
 } from '../components';
-import { Effect, paddingMat3, parseColor, parseEffect } from '../utils';
+import {
+  Effect,
+  filterStringUsesEngineTimePost,
+  paddingMat3,
+  parseColor,
+  parseEffect,
+} from '../utils';
 import type { SerializedNode } from '../types/serialized-node';
 import { GridRenderer } from '../render-graph/GridRenderer';
 import { BatchManager } from './BatchManager';
 import { getSceneRoot } from './Transform';
+import {
+  pickWebmMimeType,
+  recordWebMFromCanvas,
+  encodeGifFromCanvas,
+  maxColorsForAnimationGifQuality,
+} from '../utils/animationExportCodec';
+import { setPostEffectEngineTimeSeconds } from '../utils/postEffectEngineTime';
 import { safeAddComponent, safeRemoveComponent } from '../history';
 import { SetupDevice } from './SetupDevice';
 import { API } from '../API';
@@ -90,6 +105,18 @@ type GPURenderer = {
   batchManager: BatchManager;
   filters: Record<Effect['type'], PostProcessingRenderer>;
   renderGraph: RenderGraph;
+};
+
+/**
+ * 动画栅格导出或覆盖引擎时间时传入 {@link MeshPipeline.renderCamera}。
+ */
+export type MeshRenderCameraOptions = {
+  postEffectTimeSec?: number;
+  rasterForExport?: {
+    grid: boolean;
+    nodes: SerializedNode[];
+    scale: number;
+  };
 };
 
 export class MeshPipeline extends System {
@@ -145,6 +172,10 @@ export class MeshPipeline extends System {
     (q) => q.addedChangedOrRemoved.with(RasterScreenshotRequest).trackWrites,
   );
 
+  private rasterAnimationExportRequests = this.query(
+    (q) => q.addedChangedOrRemoved.with(RasterAnimationExportRequest).trackWrites,
+  );
+
   private fillSolids = this.query(
     (q) => q.addedChangedOrRemoved.with(FillSolid).trackWrites,
   );
@@ -196,6 +227,8 @@ export class MeshPipeline extends System {
   private filters = this.query(
     (q) => q.addedChangedOrRemoved.with(Filter).trackWrites,
   );
+  /** Used to force continuous frames when CRT `useEngineTime` animates without component churn. */
+  private filtersCurrent = this.query((q) => q.current.with(Filter).read);
   private clipModes = this.query(
     (q) => q.addedChangedOrRemoved.with(ClipMode).trackWrites,
   );
@@ -260,6 +293,8 @@ export class MeshPipeline extends System {
           )
           .read.and.using(
             RasterScreenshotRequest,
+            RasterAnimationExportRequest,
+            AnimationExportOutput,
             Screenshot,
             GeometryDirty,
             MaterialDirty,
@@ -305,9 +340,18 @@ export class MeshPipeline extends System {
     };
   }
 
-  private renderCamera(canvas: Entity, camera: Entity, sort = false) {
+  private renderCamera(
+    canvas: Entity,
+    camera: Entity,
+    sort = false,
+    renderOpts?: MeshRenderCameraOptions,
+  ) {
     if (!canvas.has(GPUResource)) {
       return;
+    }
+
+    if (renderOpts?.postEffectTimeSec != null) {
+      setPostEffectEngineTimeSeconds(renderOpts.postEffectTimeSec);
     }
 
     let renderer: GPURenderer;
@@ -319,13 +363,27 @@ export class MeshPipeline extends System {
     const request = canvas.has(RasterScreenshotRequest)
       ? canvas.read(RasterScreenshotRequest)
       : null;
-    const { type, encoderOptions, grid, download, nodes } = request ?? {
-      type: 'image/png',
-      encoderOptions: 1,
-      grid: false,
-      nodes: [],
-    };
-    const shouldRenderGrid = !request || grid;
+    const raster = request
+      ? request
+      : renderOpts?.rasterForExport
+        ? {
+          type: 'image/png' as const,
+          encoderOptions: 0.92,
+          grid: renderOpts.rasterForExport.grid,
+          download: false,
+          nodes: renderOpts.rasterForExport.nodes,
+          scale: renderOpts.rasterForExport.scale,
+        }
+        : null;
+    const { type, encoderOptions, grid, download, nodes, scale: rasterScale = 1 } =
+      raster ?? {
+        type: 'image/png' as const,
+        encoderOptions: 1,
+        grid: false,
+        nodes: [],
+        scale: 1,
+      };
+    const shouldRenderGrid = !raster || grid;
     const shouldRenderPartially = nodes.length > 0;
 
     const PADDING = 0;
@@ -346,10 +404,17 @@ export class MeshPipeline extends System {
         exportLogicalWidth > 0 &&
         exportLogicalHeight > 0
       ) {
-        // Export at 1:1 (1 pixel per logical unit), do not scale by devicePixelRatio
-        // to avoid 2x size on HiDPI displays.
-        const exportPixelWidth = Math.ceil(exportLogicalWidth);
-        const exportPixelHeight = Math.ceil(exportLogicalHeight);
+        const s = Math.max(
+          0.25,
+          Math.min(8, Number.isFinite(rasterScale) ? rasterScale : 1),
+        );
+        // 与主画布一致：投影用「逻辑」选区宽高，离屏 buffer 为 逻辑×s 像素，使 1 个世界单位在图像上占 s 个像素。
+        // 若投影也乘 s，则正交范围变成 0..(逻辑×s)，而节点仍在 0..逻辑 内，内容只会占图像的 1/s 区域。
+        const exportPixelWidth = Math.max(1, Math.ceil(exportLogicalWidth * s));
+        const exportPixelHeight = Math.max(
+          1,
+          Math.ceil(exportLogicalHeight * s),
+        );
         this.setupDevice.resizeOffscreen(exportPixelWidth, exportPixelHeight);
 
         const viewMatrixGL = mat3.create();
@@ -399,7 +464,7 @@ export class MeshPipeline extends System {
     const { width, height } = swapChain.getCanvas();
     const onscreenTexture = swapChain.getOnscreenTexture();
 
-    if (request) {
+    if (raster) {
       batchManager.hideUIs();
     }
 
@@ -527,6 +592,95 @@ export class MeshPipeline extends System {
     }
   }
 
+  private async runRasterAnimationExport(
+    canvas: Entity,
+    camera: Entity,
+    req: {
+      download: boolean;
+      format: 'webm' | 'gif';
+      durationSec: number;
+      fps: number;
+      grid: boolean;
+      nodes: SerializedNode[];
+      scale: number;
+      timeStart: number;
+      gifQuality: 'high' | 'medium' | 'low';
+    },
+  ): Promise<void> {
+    const { durationSec, fps, timeStart, download } = req;
+    let { format } = req;
+    const totalFrames = Math.max(
+      1,
+      Math.min(450, Math.ceil(Math.max(0, durationSec) * Math.max(1, fps))),
+    );
+    const invFps = 1 / Math.max(1, fps);
+    const renderFrame = (frameIndex: number) => {
+      this.renderCamera(canvas, camera, true, {
+        postEffectTimeSec: timeStart + frameIndex * invFps,
+        rasterForExport: {
+          grid: req.grid,
+          nodes: req.nodes,
+          scale: req.scale,
+        },
+      });
+    };
+    if (!canvas.has(GPUResource)) {
+      return;
+    }
+    if (format === 'webm' && !pickWebmMimeType()) {
+      format = 'gif';
+    }
+    const usePartial = req.nodes.length > 0;
+    const getExportCanvas = (): HTMLCanvasElement => {
+      if (usePartial) {
+        return this.setupDevice
+          .getOffscreenGPUResource()
+          .swapChain.getCanvas() as HTMLCanvasElement;
+      }
+      return canvas
+        .read(GPUResource)
+        .swapChain.getCanvas() as HTMLCanvasElement;
+    };
+    try {
+      let blob: Blob;
+      if (format === 'webm') {
+        blob = await recordWebMFromCanvas(
+          getExportCanvas,
+          totalFrames,
+          renderFrame,
+        );
+      } else {
+        blob = await encodeGifFromCanvas(
+          getExportCanvas,
+          totalFrames,
+          fps,
+          renderFrame,
+          0.92,
+          maxColorsForAnimationGifQuality(req.gifQuality),
+        );
+      }
+      const ext = format === 'webm' ? 'webm' : 'gif';
+      safeAddComponent(canvas, AnimationExportOutput, {
+        canvas,
+        download,
+        blob,
+        fileName: `infinite-canvas-animation.${ext}`,
+      });
+    } catch (e) {
+      console.error('Raster animation export failed', e);
+    }
+  }
+
+  private anyFilterUsesEngineTimePost(): boolean {
+    for (const entity of this.filtersCurrent.current) {
+      const { value } = entity.read(Filter);
+      if (filterStringUsesEngineTimePost(value)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   execute() {
     new Set([
       ...this.renderables.added,
@@ -560,6 +714,10 @@ export class MeshPipeline extends System {
         if (entity.has(Text)) {
           safeAddComponent(entity, MaterialDirty);
         }
+      }
+
+      if (entity.has(FillGradient)) {
+        safeAddComponent(entity, MaterialDirty);
       }
 
       // The gpu resources is not ready for the camera.
@@ -603,11 +761,40 @@ export class MeshPipeline extends System {
       }
     });
 
+    const engineTimeNeedsContinuousRender = this.anyFilterUsesEngineTimePost();
+
     this.canvases.current.forEach((canvas) => {
+      if (
+        this.rasterAnimationExportRequests.addedChangedOrRemoved.includes(
+          canvas,
+        ) &&
+        canvas.has(RasterAnimationExportRequest)
+      ) {
+        const r = canvas.read(RasterAnimationExportRequest);
+        const snapshot = {
+          download: r.download,
+          format: r.format,
+          durationSec: r.durationSec,
+          fps: r.fps,
+          grid: r.grid,
+          nodes: r.nodes,
+          scale: r.scale,
+          timeStart: r.timeStart,
+          gifQuality: r.gifQuality,
+        };
+        safeRemoveComponent(canvas, RasterAnimationExportRequest);
+        const { cameras } = canvas.read(Canvas);
+        const firstCamera = cameras[0];
+        if (firstCamera) {
+          void this.runRasterAnimationExport(canvas, firstCamera, snapshot);
+        }
+        return;
+      }
       let toRender =
         this.grids.addedChangedOrRemoved.includes(canvas) ||
         this.themes.addedChangedOrRemoved.includes(canvas) ||
-        this.rasterScreenshotRequests.addedChangedOrRemoved.includes(canvas);
+        this.rasterScreenshotRequests.addedChangedOrRemoved.includes(canvas) ||
+        engineTimeNeedsContinuousRender;
 
       const { cameras } = canvas.read(Canvas);
       cameras.forEach((camera) => {

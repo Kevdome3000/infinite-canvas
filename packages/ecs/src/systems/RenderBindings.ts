@@ -23,6 +23,7 @@ import {
   ZIndex,
   Polyline,
   Path,
+  Flex,
 } from '../components';
 import { getSceneRoot, updateGlobalTransform } from './Transform';
 import type {
@@ -69,7 +70,6 @@ export class RenderBindings extends System {
             ComputedBounds,
             Camera,
             Canvas,
-            Binding,
             FractionalIndex,
             Parent,
             Children,
@@ -90,7 +90,9 @@ export class RenderBindings extends System {
             EdgeLabel,
             Text,
             Binded,
+            Binding,
             PartialBinding,
+            Flex
           )
           .write,
     );
@@ -110,7 +112,10 @@ export class RenderBindings extends System {
       const { canvas } = camera.read(Camera);
       const { api } = canvas.read(Canvas);
 
-      const edge = api.getNodeByEntity(edgeEntity) as EdgeState;
+      const edge = api.getNodeByEntity(edgeEntity) as EdgeState | undefined;
+      if (!edge) {
+        return;
+      }
 
       let pathPreserve: EdgePathPreserveSnapshot | undefined;
       if (edge.type === 'path' || edge.type === 'rough-path') {

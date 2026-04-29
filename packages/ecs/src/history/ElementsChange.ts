@@ -15,7 +15,16 @@ import {
   loadImage,
   deserializeBrushPoints,
 } from '../utils';
-import type { SerializedNode, SerializedNodeAttributes } from '../types/serialized-node';
+import {
+  resolveDesignVariableValue,
+  designVariableRefKeyFromWire,
+} from '../utils/design-variables';
+import type {
+  GSerializedNode,
+  IconFontSerializedNode,
+  SerializedNode,
+  SerializedNodeAttributes,
+} from '../types/serialized-node';
 import { API } from '../API';
 import { refreshComputedRoughForEntity } from '../systems/ComputeRough';
 import {
@@ -54,9 +63,28 @@ import {
   Locked,
   ClipMode,
   GeometryDirty,
+  Flex,
+  FlexLayoutDirty,
+  Group,
+  IconFont,
 } from '../components';
 import { getDescendants } from '../systems';
 import { syncEdgeBindingForEntity } from '../utils/binding/sync-edge-entity';
+import {
+  buildIconFontScalablePrimitives,
+  mapSvgLineCap,
+  mapSvgLineJoin,
+  pathFillRuleFromIconStyle,
+  pickChildFill,
+  pickStrokeColorForChild,
+  resolveIconFontWireStyle,
+  strokeWidthFromIconStyle,
+  type ScaledIconPrimitive,
+} from '../utils/icon-font';
+import { insertIconFontChildFromPrimitive } from '../utils/insert-icon-font-child-entity';
+import { getComputedInheritGroupWireForId } from '../utils/inherit-group-wire';
+import { buildGroupWirePresentation } from '../utils/group-presentation';
+import { TesselationMethod } from '../components/geometry/Path';
 
 export type SceneElementsMap = Map<SerializedNode['id'], SerializedNode>;
 
@@ -72,6 +100,119 @@ export type Mutable<T> = {
 };
 
 export const getUpdatedTimestamp = () => Date.now();
+
+/** 与 serialized-node 中 FlexboxLayoutAttributes 字段一致，变更时需让 Yoga 重新计算布局（即使 ComputedBounds 未变） */
+const FLEX_LAYOUT_MUTATION_KEYS: readonly string[] = [
+  'display',
+  'padding',
+  'margin',
+  'gap',
+  'rowGap',
+  'columnGap',
+  'alignItems',
+  'alignSelf',
+  'justifyContent',
+  'flexDirection',
+  'flexWrap',
+  'flexGrow',
+  'flexShrink',
+  'flexBasis',
+  'flex',
+  'minWidth',
+  'maxWidth',
+  'minHeight',
+  'maxHeight',
+];
+
+function flexLayoutKeysChanged(
+  updates: object,
+  skipOverrideKeys: readonly string[],
+  previous: Record<string, unknown>,
+  keys: readonly string[],
+): boolean {
+  return keys.some(
+    (k) =>
+      k in updates &&
+      !skipOverrideKeys.includes(k) &&
+      (updates as Record<string, unknown>)[k] !== previous[k],
+  );
+}
+
+/** 整表 `updateNode(node, undefined)` 时 updates 与 element 同引用，值与快照总相等，须按「键在」标脏，否则首帧/加载后不会 markFlexLayoutDirty。变量表刷新已改为窄 patch。 */
+function shouldMarkFlexContainerForLayout(
+  entity: Entity,
+  updates: object,
+  element: object,
+  skipOverrideKeys: readonly string[],
+  preFlexLayout: Record<string, unknown>,
+): boolean {
+  if (!entity.has(Flex)) {
+    return false;
+  }
+  if (Object.is(updates, element)) {
+    return FLEX_LAYOUT_MUTATION_KEYS.some(
+      (k) => k in updates && !skipOverrideKeys.includes(k),
+    );
+  }
+  return flexLayoutKeysChanged(
+    updates,
+    skipOverrideKeys,
+    preFlexLayout,
+    FLEX_LAYOUT_MUTATION_KEYS,
+  );
+}
+
+/** 子项上影响 Yoga 的布局键：实体无 Flex 组件，需标记父级 flex 容器以触发 Yoga */
+const FLEX_ITEM_PARENT_RELAYOUT_KEYS: readonly string[] = [
+  'flexGrow',
+  'flexShrink',
+  'flexBasis',
+  'alignSelf',
+  'padding',
+  'margin',
+  'minWidth',
+  'maxWidth',
+  'minHeight',
+  'maxHeight',
+  'content',
+  'fontSize',
+  'lineHeight',
+  'fontFamily',
+  'fontWeight',
+  'fontStyle',
+  'letterSpacing',
+  'width',
+  'height',
+];
+
+/**
+ * 见 {@link flexLayoutKeysChanged} 与 `previous` 比较。整表自同步（updates===element）不标父级，免变量表式全量 `updateNode` 误伤。
+ */
+function updatesAffectFlexItemInParentTree(
+  updates: object,
+  element: object,
+  skipOverrideKeys: readonly string[],
+  previous: Record<string, unknown>,
+): boolean {
+  if (Object.is(updates, element)) {
+    return false;
+  }
+  return flexLayoutKeysChanged(
+    updates,
+    skipOverrideKeys,
+    previous,
+    FLEX_ITEM_PARENT_RELAYOUT_KEYS,
+  );
+}
+
+/**
+ * YogaSystem 用 `q.added.with(FlexLayoutDirty)` 驱动；`safeAddComponent` 在组件已存在时
+ * 不会再次 `add`，已脏的节点上连续改 padding 等会无法二次触发。先移除再添加以保证每帧可侦测到 added。
+ */
+function markFlexLayoutDirty(entity: Entity) {
+  safeRemoveComponent(entity, FlexLayoutDirty);
+  safeAddComponent(entity, FlexLayoutDirty);
+}
 
 export function safeAddComponent<T>(
   entity: Entity,
@@ -99,6 +240,205 @@ export function safeRemoveComponent<T>(
   if (entity.has(componentCtor)) {
     entity.remove(componentCtor);
   }
+}
+
+function syncIconFontChildGeometryToPrim(
+  child: Entity,
+  prim: ScaledIconPrimitive,
+) {
+  const sameKind =
+    (prim.kind === 'path' && child.has(Path)) ||
+    (prim.kind === 'ellipse' && child.has(Ellipse)) ||
+    (prim.kind === 'line' && child.has(Line));
+  if (sameKind) {
+    if (prim.kind === 'path') {
+      const p = child.write(Path);
+      p.d = prim.d;
+      p.fillRule = pathFillRuleFromIconStyle(prim.style);
+    } else if (prim.kind === 'ellipse') {
+      const e = child.write(Ellipse);
+      e.cx = prim.cx;
+      e.cy = prim.cy;
+      e.rx = prim.rx;
+      e.ry = prim.ry;
+    } else {
+      const ln = child.write(Line);
+      ln.x1 = prim.x1;
+      ln.y1 = prim.y1;
+      ln.x2 = prim.x2;
+      ln.y2 = prim.y2;
+    }
+    safeAddComponent(child, GeometryDirty);
+    return;
+  }
+  safeRemoveComponent(child, Path);
+  safeRemoveComponent(child, Ellipse);
+  safeRemoveComponent(child, Line);
+  if (prim.kind === 'path') {
+    safeAddComponent(child, Path, {
+      d: prim.d,
+      tessellationMethod: TesselationMethod.LIBTESS,
+      fillRule: pathFillRuleFromIconStyle(prim.style),
+    });
+  } else if (prim.kind === 'ellipse') {
+    safeAddComponent(child, Ellipse, {
+      cx: prim.cx,
+      cy: prim.cy,
+      rx: prim.rx,
+      ry: prim.ry,
+    });
+  } else {
+    safeAddComponent(child, Line, {
+      x1: prim.x1,
+      y1: prim.y1,
+      x2: prim.x2,
+      y2: prim.y2,
+    });
+  }
+  safeAddComponent(child, GeometryDirty);
+}
+
+/**
+ * `iconfont` 的矢量与颜色在子 path 实体上；根节点 width/height 等变更时需重算 primitive 并写回子几何。
+ */
+function syncIconFontChildrenFromUpdatedNode(
+  rootEntity: Entity,
+  node: IconFontSerializedNode,
+  api: API,
+) {
+  if (!rootEntity.has(Parent)) {
+    return;
+  }
+  const designVariables = api.getAppState().variables;
+  const themeMode = api.getAppState().themeMode;
+  const w = node.width ?? 0;
+  const h = node.height ?? 0;
+  const scenePatched = api
+    .getNodes()
+    .map((n) => (n.id === node.id ? node : n));
+  const nodeInherit = {
+    ...node,
+    ...getComputedInheritGroupWireForId(node.id, scenePatched),
+  } as IconFontSerializedNode;
+  const groupPres = buildGroupWirePresentation(
+    nodeInherit,
+    designVariables,
+    themeMode,
+  );
+  const { userColorStroke, userColorFill, rSw } = resolveIconFontWireStyle(
+    nodeInherit,
+    designVariables,
+    themeMode,
+    groupPres,
+  );
+  const rName = resolveDesignVariableValue(
+    node.iconFontName ?? '',
+    designVariables,
+    themeMode,
+  );
+  const rFamily = resolveDesignVariableValue(
+    node.iconFontFamily ?? 'lucide',
+    designVariables,
+    themeMode,
+  );
+  const prims = buildIconFontScalablePrimitives(
+    String(rName ?? node.iconFontName ?? ''),
+    String(rFamily ?? node.iconFontFamily ?? 'lucide'),
+    w,
+    h,
+  );
+  const initialChildren = rootEntity.read(Parent).children;
+
+  const hideIconFontChild = (child: Entity) => {
+    safeAddComponent(child, Visibility, { value: 'hidden' });
+    safeAddComponent(child, MaterialDirty);
+  };
+
+  if (!prims || prims.length === 0) {
+    for (const child of initialChildren) {
+      hideIconFontChild(child);
+    }
+    if (rootEntity.has(IconFont) && w > 0 && h > 0) {
+      const iw = rootEntity.write(IconFont);
+      iw.layoutWidth = w;
+      iw.layoutHeight = h;
+    }
+    safeAddComponent(rootEntity, Group, groupPres);
+    safeRemoveComponent(rootEntity, FillSolid);
+    safeRemoveComponent(rootEntity, FillGradient);
+    safeRemoveComponent(rootEntity, FillImage);
+    safeRemoveComponent(rootEntity, FillPattern);
+    safeRemoveComponent(rootEntity, Stroke);
+    safeAddComponent(rootEntity, MaterialDirty);
+    return;
+  }
+
+  const zForChild = node.zIndex != null ? node.zIndex : 0;
+  const childVisibility =
+    (node.visibility as 'inherited' | 'hidden' | 'visible' | undefined) ?? 'inherited';
+
+  for (let i = 0; i < prims.length; i++) {
+    const prim = prims[i]!;
+    let child: Entity;
+    if (i < initialChildren.length) {
+      child = initialChildren[i]!;
+      safeAddComponent(child, Visibility, { value: 'inherited' });
+      syncIconFontChildGeometryToPrim(child, prim);
+    } else {
+      const ch = api.spawnEntityCommands();
+      insertIconFontChildFromPrimitive(ch, prim, {
+        userColorStroke,
+        userColorFill,
+        rSw,
+        zIndex: zForChild,
+        visibility: childVisibility,
+        name: `${node.id}__i${i}`,
+      });
+      api.appendEntityChild(rootEntity, ch);
+      child = ch.id();
+    }
+    safeAddComponent(child, Stroke, {
+      color: pickStrokeColorForChild(
+        prim.style,
+        userColorStroke,
+        userColorFill,
+      ),
+      width: strokeWidthFromIconStyle(prim.style, rSw, {
+        primKind: prim.kind,
+      }),
+      linecap: mapSvgLineCap(prim.style.strokeLinecap),
+      linejoin: mapSvgLineJoin(prim.style.strokeLinejoin),
+    });
+    const fillPart = pickChildFill(
+      prim.style,
+      userColorFill,
+      userColorStroke,
+    );
+    if (fillPart && fillPart !== 'none') {
+      safeAddComponent(child, FillSolid, {
+        value: fillPart,
+        fillVariableRef: '',
+      });
+    } else {
+      safeRemoveComponent(child, FillSolid);
+    }
+    safeAddComponent(child, MaterialDirty);
+  }
+  for (let i = prims.length; i < initialChildren.length; i++) {
+    hideIconFontChild(initialChildren[i]!);
+  }
+  if (rootEntity.has(IconFont) && w > 0 && h > 0) {
+    const iw = rootEntity.write(IconFont);
+    iw.layoutWidth = w;
+    iw.layoutHeight = h;
+  }
+  safeAddComponent(rootEntity, Group, groupPres);
+  safeRemoveComponent(rootEntity, FillSolid);
+  safeRemoveComponent(rootEntity, FillGradient);
+  safeRemoveComponent(rootEntity, FillImage);
+  safeRemoveComponent(rootEntity, FillPattern);
+  safeRemoveComponent(rootEntity, Stroke);
+  safeAddComponent(rootEntity, MaterialDirty);
 }
 
 export class ElementsChange implements Change<SceneElementsMap> {
@@ -630,6 +970,20 @@ export const mutateElement = <TElement extends Mutable<SerializedNode>>(
 ): TElement => {
   let didChange = false;
 
+  const el = element as Record<string, unknown>;
+  const preFlexLayout: Record<string, unknown> = {};
+  for (const k of FLEX_LAYOUT_MUTATION_KEYS) {
+    if (k in updates && !skipOverrideKeys.includes(k)) {
+      preFlexLayout[k] = el[k];
+    }
+  }
+  const preFlexItemParent: Record<string, unknown> = {};
+  for (const k of FLEX_ITEM_PARENT_RELAYOUT_KEYS) {
+    if (k in updates && !skipOverrideKeys.includes(k)) {
+      preFlexItemParent[k] = el[k];
+    }
+  }
+
   for (const key in updates) {
     const value = (updates as any)[key];
     // if (typeof value !== 'undefined') {
@@ -643,6 +997,17 @@ export const mutateElement = <TElement extends Mutable<SerializedNode>>(
   if (!didChange) {
     return element;
   }
+
+  const designVariables = api.getAppState().variables;
+  const themeMode = api.getAppState().themeMode;
+  const elNode = element as SerializedNode;
+  const scenePatched = api
+    .getNodes()
+    .map((n) => (n.id === elNode.id ? elNode : n));
+  const withInheritPaint = {
+    ...elNode,
+    ...getComputedInheritGroupWireForId(elNode.id, scenePatched),
+  };
 
   const { name, visibility } = updates;
   const {
@@ -670,6 +1035,7 @@ export const mutateElement = <TElement extends Mutable<SerializedNode>>(
     y,
     width,
     height,
+    cornerRadius,
     rotation,
     scaleX,
     scaleY,
@@ -680,6 +1046,8 @@ export const mutateElement = <TElement extends Mutable<SerializedNode>>(
     fontWeight,
     fontStyle,
     fontKerning,
+    letterSpacing,
+    lineHeight,
     textAlign,
     textBaseline,
     content,
@@ -723,6 +1091,10 @@ export const mutateElement = <TElement extends Mutable<SerializedNode>>(
     clipMode,
   } = updates as unknown as SerializedNodeAttributes;
 
+  /** 矢量/颜色在子 path 上；若对根写 Fill/Stroke 会与 `syncIconFontChildren` 子实体冲突或渲染异常。 */
+  const t = (element as SerializedNode).type;
+  const isIconFontWireNode = t === 'iconfont' || (t as string) === 'icon_font';
+
   if ('parentId' in updates) {
     if (parentId) {
       const parentNode = api.getNodeById(parentId);
@@ -756,28 +1128,40 @@ export const mutateElement = <TElement extends Mutable<SerializedNode>>(
   if ('visibility' in updates) {
     entity.write(Visibility).value = visibility;
   }
-  if ('fill' in updates) {
-    if (isGradient(fill)) {
+  if ('fill' in updates && !isIconFontWireNode) {
+    const resolvedFill = resolveDesignVariableValue(
+      fill,
+      designVariables,
+      themeMode,
+    );
+    if (isGradient(resolvedFill)) {
       safeRemoveComponent(entity, FillSolid);
       safeRemoveComponent(entity, FillImage);
       safeRemoveComponent(entity, FillPattern);
 
       safeAddComponent(entity, MaterialDirty);
-      safeAddComponent(entity, FillGradient, { value: fill });
-    } else if (isDataUrl(fill) || isUrl(fill)) {
+      safeAddComponent(entity, FillGradient, { value: resolvedFill });
+    } else if (isDataUrl(resolvedFill) || isUrl(resolvedFill)) {
       safeRemoveComponent(entity, FillSolid);
       safeRemoveComponent(entity, FillGradient);
       safeRemoveComponent(entity, FillPattern);
 
       safeAddComponent(entity, MaterialDirty);
-      loadImage(fill, entity);
+      loadImage(resolvedFill, entity);
     } else {
-      if (entity.has(FillGradient)) {
+      if (entity.has(FillGradient) || entity.has(FillImage) || entity.has(FillPattern)) {
         safeAddComponent(entity, MaterialDirty);
       }
 
       safeRemoveComponent(entity, FillGradient);
-      safeAddComponent(entity, FillSolid, { value: fill });
+      safeRemoveComponent(entity, FillImage);
+      safeRemoveComponent(entity, FillPattern);
+      safeAddComponent(entity, FillSolid, {
+        value: resolvedFill as string,
+        fillVariableRef: designVariableRefKeyFromWire(
+          typeof fill === 'string' ? fill : undefined,
+        ),
+      });
     }
   }
   if ('brushStamp' in updates) {
@@ -793,32 +1177,77 @@ export const mutateElement = <TElement extends Mutable<SerializedNode>>(
       safeAddComponent(child, MaterialDirty);
     });
   }
-  if ('stroke' in updates) {
-    safeAddComponent(entity, Stroke, { color: stroke });
+  if ('stroke' in updates && !isIconFontWireNode) {
+    safeAddComponent(entity, Stroke, {
+      color: resolveDesignVariableValue(stroke, designVariables, themeMode),
+      colorVariableRef: designVariableRefKeyFromWire(
+        typeof stroke === 'string' ? stroke : undefined,
+      ),
+    });
   }
-  if ('strokeWidth' in updates) {
-    safeAddComponent(entity, Stroke, { width: strokeWidth });
+  if ('strokeWidth' in updates && !isIconFontWireNode) {
+    const w = resolveDesignVariableValue(
+      strokeWidth,
+      designVariables,
+      themeMode,
+    );
+    safeAddComponent(entity, Stroke, {
+      ...(w !== undefined && w !== null
+        ? { width: typeof w === 'number' ? w : Number(w) }
+        : {}),
+      widthVariableRef: designVariableRefKeyFromWire(strokeWidth),
+    });
   }
-  if ('strokeLinecap' in updates) {
+  if ('strokeLinecap' in updates && !isIconFontWireNode) {
     safeAddComponent(entity, Stroke, { linecap: strokeLinecap });
   }
-  if ('strokeLinejoin' in updates) {
+  if ('strokeLinejoin' in updates && !isIconFontWireNode) {
     safeAddComponent(entity, Stroke, { linejoin: strokeLinejoin });
   }
-  if ('strokeAlignment' in updates) {
+  if ('strokeAlignment' in updates && !isIconFontWireNode) {
     safeAddComponent(entity, Stroke, { alignment: strokeAlignment });
   }
   if ('opacity' in updates) {
     safeAddComponent(entity, Opacity, { opacity });
   }
   if ('fillOpacity' in updates) {
-    safeAddComponent(entity, Opacity, { fillOpacity });
+    const fo = resolveDesignVariableValue(
+      fillOpacity,
+      designVariables,
+      themeMode,
+    );
+    const n =
+      fo !== undefined && fo !== null
+        ? typeof fo === 'number'
+          ? fo
+          : parseFloat(String(fo))
+        : NaN;
+    const v = Number.isFinite(n) ? Math.max(0, Math.min(1, n)) : 1;
+    safeAddComponent(entity, Opacity, { fillOpacity: v });
   }
   if ('strokeOpacity' in updates) {
-    safeAddComponent(entity, Opacity, { strokeOpacity });
+    const so = resolveDesignVariableValue(
+      strokeOpacity,
+      designVariables,
+      themeMode,
+    );
+    const n =
+      so !== undefined && so !== null
+        ? typeof so === 'number'
+          ? so
+          : parseFloat(String(so))
+        : NaN;
+    const v = Number.isFinite(n) ? Math.max(0, Math.min(1, n)) : 1;
+    safeAddComponent(entity, Opacity, { strokeOpacity: v });
   }
   if ('dropShadowColor' in updates) {
-    safeAddComponent(entity, DropShadow, { color: dropShadowColor });
+    safeAddComponent(entity, DropShadow, {
+      color: resolveDesignVariableValue(
+        dropShadowColor,
+        designVariables,
+        themeMode,
+      ),
+    });
   }
   if ('dropShadowBlurRadius' in updates) {
     safeAddComponent(entity, DropShadow, { blurRadius: dropShadowBlurRadius });
@@ -830,7 +1259,13 @@ export const mutateElement = <TElement extends Mutable<SerializedNode>>(
     safeAddComponent(entity, DropShadow, { offsetY: dropShadowOffsetY });
   }
   if ('innerShadowColor' in updates) {
-    safeAddComponent(entity, InnerShadow, { color: innerShadowColor });
+    safeAddComponent(entity, InnerShadow, {
+      color: resolveDesignVariableValue(
+        innerShadowColor,
+        designVariables,
+        themeMode,
+      ),
+    });
   }
   if ('innerShadowBlurRadius' in updates) {
     safeAddComponent(entity, InnerShadow, {
@@ -858,7 +1293,13 @@ export const mutateElement = <TElement extends Mutable<SerializedNode>>(
     }
   }
   if ('decorationColor' in updates) {
-    safeAddComponent(entity, TextDecoration, { color: decorationColor });
+    safeAddComponent(entity, TextDecoration, {
+      color: resolveDesignVariableValue(
+        decorationColor,
+        designVariables,
+        themeMode,
+      ),
+    });
   }
   if ('decorationLine' in updates) {
     safeAddComponent(entity, TextDecoration, { line: decorationLine });
@@ -952,7 +1393,15 @@ export const mutateElement = <TElement extends Mutable<SerializedNode>>(
     entity.write(Text).anchorY = anchorY;
   }
   if ('fontSize' in updates) {
-    entity.write(Text).fontSize = fontSize;
+    const fs = resolveDesignVariableValue(
+      fontSize,
+      designVariables,
+      themeMode,
+    );
+    entity.write(Text).fontSize =
+      typeof fs === 'number' ? fs : Number(fs);
+    entity.write(Text).fontSizeVariableRef =
+      designVariableRefKeyFromWire(fontSize);
   }
   if ('wordWrapWidth' in updates) {
     const w = (updates as { wordWrapWidth?: number }).wordWrapWidth;
@@ -960,14 +1409,68 @@ export const mutateElement = <TElement extends Mutable<SerializedNode>>(
       entity.write(Text).wordWrapWidth = w;
     }
   }
+  if ('fontFamily' in updates) {
+    const raw = (updates as { fontFamily?: string }).fontFamily;
+    const resolved = resolveDesignVariableValue(
+      raw,
+      designVariables,
+      themeMode,
+    );
+    const s =
+      resolved != null && String(resolved).trim() !== ''
+        ? String(resolved)
+        : 'sans-serif';
+    entity.write(Text).fontFamily = s;
+  }
   if ('fontWeight' in updates) {
     entity.write(Text).fontWeight = fontWeight;
   }
   if ('fontStyle' in updates) {
     entity.write(Text).fontStyle = fontStyle;
   }
+  if ('fontVariant' in updates) {
+    const raw = (updates as { fontVariant?: string }).fontVariant;
+    const resolved = resolveDesignVariableValue(
+      raw,
+      designVariables,
+      themeMode,
+    );
+    if (resolved != null) {
+      entity.write(Text).fontVariant = String(resolved);
+    }
+  }
   if ('fontKerning' in updates) {
     entity.write(Text).fontKerning = fontKerning;
+  }
+  if ('letterSpacing' in updates) {
+    const raw = (updates as { letterSpacing?: number | string }).letterSpacing;
+    const resolved = resolveDesignVariableValue(
+      raw,
+      designVariables,
+      themeMode,
+    );
+    const n =
+      typeof resolved === 'number'
+        ? resolved
+        : parseFloat(String(resolved ?? ''));
+    if (Number.isFinite(n)) {
+      entity.write(Text).letterSpacing = n;
+    }
+  }
+  if ('lineHeight' in updates) {
+    const raw = (updates as { lineHeight?: number | string }).lineHeight;
+    const resolved = resolveDesignVariableValue(
+      raw,
+      designVariables,
+      themeMode,
+    );
+    const n =
+      typeof resolved === 'number'
+        ? resolved
+        : parseFloat(String(resolved ?? ''));
+    if (Number.isFinite(n) && n >= 0) {
+      entity.write(Text).lineHeight = n;
+    }
   }
   if ('textAlign' in updates) {
     entity.write(Text).textAlign = textAlign;
@@ -978,7 +1481,6 @@ export const mutateElement = <TElement extends Mutable<SerializedNode>>(
   if ('content' in updates) {
     entity.write(Text).content = content;
   }
-  // TODO: Other text properties e.g. fontFamily
 
   if ('x' in updates) {
     if (x !== undefined && !isString(x)) {
@@ -1035,6 +1537,20 @@ export const mutateElement = <TElement extends Mutable<SerializedNode>>(
       } else if (entity.has(Embed)) {
         entity.write(Embed).height = height;
       }
+    }
+  }
+  if ('cornerRadius' in updates && cornerRadius !== undefined && entity.has(Rect)) {
+    const resolved = resolveDesignVariableValue(
+      cornerRadius,
+      designVariables,
+      themeMode,
+    );
+    const n =
+      typeof resolved === 'number'
+        ? resolved
+        : parseFloat(String(resolved ?? ''));
+    if (Number.isFinite(n)) {
+      entity.write(Rect).cornerRadius = Math.max(0, n);
     }
   }
   if ('points' in updates) {
@@ -1110,6 +1626,49 @@ export const mutateElement = <TElement extends Mutable<SerializedNode>>(
 
   if ('filter' in updates) {
     safeAddComponent(entity, Filter, { value: filter });
+    safeAddComponent(entity, MaterialDirty);
+  }
+
+  if ('display' in updates) {
+    const d = (updates as { display?: string }).display;
+    if (d === 'flex') {
+      safeAddComponent(entity, Flex);
+    } else {
+      safeRemoveComponent(entity, Flex);
+      safeRemoveComponent(entity, FlexLayoutDirty);
+    }
+  }
+
+  if (
+    shouldMarkFlexContainerForLayout(
+      entity,
+      updates,
+      element,
+      skipOverrideKeys,
+      preFlexLayout,
+    )
+  ) {
+    markFlexLayoutDirty(entity);
+  }
+
+  if (
+    updatesAffectFlexItemInParentTree(
+      updates,
+      element,
+      skipOverrideKeys,
+      preFlexItemParent,
+    )
+  ) {
+    const pid = element.parentId;
+    if (pid) {
+      const parentNode = api.getNodeById(pid);
+      if (parentNode && (parentNode as { display?: string }).display === 'flex') {
+        const parentEntity = api.getEntity(parentNode);
+        if (parentEntity?.has(Flex)) {
+          markFlexLayoutDirty(parentEntity);
+        }
+      }
+    }
   }
 
   if ('version' in updates) {
@@ -1134,6 +1693,58 @@ export const mutateElement = <TElement extends Mutable<SerializedNode>>(
     (entity.has(Polyline) || entity.has(Line) || entity.has(Path))
   ) {
     syncEdgeBindingForEntity(api, entity, element);
+  }
+
+  {
+    const nodeType = (element as SerializedNode).type;
+    const isIconFontNode =
+      nodeType === 'iconfont' ||
+      (nodeType as string) === 'icon_font';
+    if (
+      isIconFontNode &&
+      (('fill' in updates) ||
+        ('stroke' in updates) ||
+        ('strokeWidth' in updates) ||
+        ('strokeLinecap' in updates) ||
+        ('strokeLinejoin' in updates) ||
+        ('strokeAlignment' in updates) ||
+        ('width' in updates) ||
+        ('height' in updates) ||
+        ('iconFontName' in updates) ||
+        ('iconFontFamily' in updates))
+    ) {
+      syncIconFontChildrenFromUpdatedNode(
+        entity,
+        element as IconFontSerializedNode,
+        api,
+      );
+    }
+  }
+
+  {
+    const gType = (element as SerializedNode).type;
+    if (
+      gType === 'g' &&
+      (('fill' in updates) ||
+        ('stroke' in updates) ||
+        ('strokeWidth' in updates) ||
+        ('fillRule' in updates) ||
+        ('opacity' in updates) ||
+        ('fillOpacity' in updates) ||
+        ('strokeOpacity' in updates) ||
+        ('strokeLinecap' in updates) ||
+        ('strokeLinejoin' in updates))
+    ) {
+      safeAddComponent(
+        entity,
+        Group,
+        buildGroupWirePresentation(
+          withInheritPaint as GSerializedNode,
+          designVariables,
+          themeMode,
+        ),
+      );
+    }
   }
 
   // Object.assign(element, updates);

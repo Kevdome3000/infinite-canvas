@@ -6,18 +6,19 @@ import {
   API,
   StateManagement,
   Commands,
-  ThemeMode,
+  ThemePreference,
+  resolveThemeModeFromPreference,
   DOMAdapter,
   deserializePoints,
   RectSerializedNode,
   AppState,
+  type Adapter,
 } from '@infinite-canvas-tutorial/ecs';
 import { type LitElement } from 'lit';
 import { Event } from './event';
-import { ImageLoader } from '@loaders.gl/images';
-import { load } from '@loaders.gl/core';
 import { getDataURL, updateAndSelectNodes } from './utils';
 import { isString, path2Absolute } from '@antv/util';
+import { persistThemePreference } from './theme-preference-storage';
 
 export interface Comment {
   type: 'comment';
@@ -67,16 +68,59 @@ export const pendingCanvases: {
 //   },
 // };
 
+export type MermaidPasteStyleFn = (nodes: SerializedNode[]) => void;
+
 /**
  * Emit CustomEvents for the canvas.
  */
 export class ExtendedAPI extends API {
+  #mermaidPasteStyler?: MermaidPasteStyleFn;
+
+  #colorSchemeMql?: MediaQueryList;
+
+  #onColorSchemeChange = () => {
+    const s = this.getAppState();
+    if (s.themePreference !== 'system') {
+      return;
+    }
+    const next = resolveThemeModeFromPreference('system');
+    if (next === s.themeMode) {
+      return;
+    }
+    this.setAppState({ themeMode: next });
+  };
+
   constructor(
     stateManagement: StateManagement,
     commands: Commands,
     public element: LitElement,
   ) {
     super(stateManagement, commands);
+    if (typeof window !== 'undefined') {
+      this.#colorSchemeMql = window.matchMedia(
+        '(prefers-color-scheme: dark)',
+      );
+      this.#colorSchemeMql.addEventListener(
+        'change',
+        this.#onColorSchemeChange,
+      );
+    }
+  }
+
+  registerMermaidPasteStyler(fn: MermaidPasteStyleFn): void {
+    this.#mermaidPasteStyler = fn;
+  }
+
+  unregisterMermaidPasteStyler(): void {
+    this.#mermaidPasteStyler = undefined;
+  }
+
+  /**
+   * Invokes the styler from {@link registerMermaidPasteStyler}, if any.
+   * Used by the Mermaid paste handler (`tryPasteMermaid` in mermaid-paste).
+   */
+  applyMermaidPasteStyler(nodes: SerializedNode[]): void {
+    this.#mermaidPasteStyler?.(nodes);
   }
 
   resizeCanvas(width: number, height: number) {
@@ -133,6 +177,11 @@ export class ExtendedAPI extends API {
    * Delete Canvas component
    */
   destroy() {
+    this.#colorSchemeMql?.removeEventListener(
+      'change',
+      this.#onColorSchemeChange,
+    );
+    this.#colorSchemeMql = undefined;
     super.destroy();
     this.element.dispatchEvent(new CustomEvent(Event.DESTROY));
   }
@@ -160,13 +209,30 @@ export class ExtendedAPI extends API {
     throw new Error('Method not implemented.');
   }
 
-  setAppState(appState: Partial<AppState>) {
-    super.setAppState(appState);
-    if ('themeMode' in appState) {
+  setAppState(
+    appState: Partial<AppState>,
+    options?: {
+      recordDesignVariableUndo?: boolean;
+      /** 透传 ECS：为 true 时整表替换 `variables` */
+      replaceVariables?: boolean;
+    },
+  ) {
+    super.setAppState(appState, options);
+    if (
+      Object.prototype.hasOwnProperty.call(appState, 'themePreference') &&
+      appState.themePreference !== undefined
+    ) {
+      persistThemePreference(appState.themePreference as ThemePreference);
+    }
+    if (
+      Object.prototype.hasOwnProperty.call(appState, 'themeMode') ||
+      Object.prototype.hasOwnProperty.call(appState, 'themePreference')
+    ) {
+      const { themeMode } = this.getAppState();
       this.element.dispatchEvent(
         new CustomEvent('theme-change', {
           detail: {
-            themeMode: appState.themeMode as ThemeMode,
+            themeMode,
           },
           bubbles: true,
           composed: true,
@@ -189,7 +255,9 @@ export class ExtendedAPI extends API {
     };
 
     const [image, dataURL] = await Promise.all([
-      load(file, ImageLoader),
+      DOMAdapter.get().createImage(
+        file as Parameters<Adapter['createImage']>[0],
+      ) as Promise<ImageBitmap>,
       isString(file) ? Promise.resolve(file) : getDataURL(file),
     ]);
 
