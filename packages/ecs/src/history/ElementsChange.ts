@@ -15,6 +15,7 @@ import {
   loadImage,
   deserializeBrushPoints,
 } from '../utils';
+import { hasRasterPostEffects } from '../utils/filter';
 import {
   resolveDesignVariableValue,
   designVariableRefKeyFromWire,
@@ -32,6 +33,7 @@ import {
   FillSolid,
   FillGradient,
   Stroke,
+  StrokeGradient,
   Visibility,
   Ellipse,
   Rect,
@@ -186,7 +188,9 @@ const FLEX_ITEM_PARENT_RELAYOUT_KEYS: readonly string[] = [
 ];
 
 /**
- * 见 {@link flexLayoutKeysChanged} 与 `previous` 比较。整表自同步（updates===element）不标父级，免变量表式全量 `updateNode` 误伤。
+ * 与 {@link shouldMarkFlexContainerForLayout} 对称：部分 patch 用 `previous` 与 `updates` 比是否真变；
+ * 整表自同步（`updates === element`）时若按 `flexLayoutKeysChanged` 且入参已先被就地改过，会漏标父级（如只改 `content` 后 `updateNode(node)`）。
+ * 此时按「键在」即可标父级 flex 重算，与容器侧对 `FLEX_LAYOUT_MUTATION_KEYS` 的处理一致。
  */
 function updatesAffectFlexItemInParentTree(
   updates: object,
@@ -195,7 +199,9 @@ function updatesAffectFlexItemInParentTree(
   previous: Record<string, unknown>,
 ): boolean {
   if (Object.is(updates, element)) {
-    return false;
+    return FLEX_ITEM_PARENT_RELAYOUT_KEYS.some(
+      (k) => k in updates && !skipOverrideKeys.includes(k),
+    );
   }
   return flexLayoutKeysChanged(
     updates,
@@ -349,6 +355,24 @@ function syncIconFontChildrenFromUpdatedNode(
   );
   const initialChildren = rootEntity.read(Parent).children;
 
+  const filterWire = (nodeInherit as { filter?: string }).filter;
+  let strokeAsPlaceholderFillForRasterFilter = false;
+  if (filterWire != null && `${filterWire}`.trim() !== '') {
+    const rv = resolveDesignVariableValue(
+      filterWire,
+      designVariables,
+      themeMode,
+    );
+    if (typeof rv === 'string' && hasRasterPostEffects(rv)) {
+      strokeAsPlaceholderFillForRasterFilter = true;
+    }
+  } else if (rootEntity.has(Filter)) {
+    const v = rootEntity.read(Filter).value;
+    if (hasRasterPostEffects(v)) {
+      strokeAsPlaceholderFillForRasterFilter = true;
+    }
+  }
+
   const hideIconFontChild = (child: Entity) => {
     safeAddComponent(child, Visibility, { value: 'hidden' });
     safeAddComponent(child, MaterialDirty);
@@ -368,6 +392,7 @@ function syncIconFontChildrenFromUpdatedNode(
     safeRemoveComponent(rootEntity, FillGradient);
     safeRemoveComponent(rootEntity, FillImage);
     safeRemoveComponent(rootEntity, FillPattern);
+    safeRemoveComponent(rootEntity, StrokeGradient);
     safeRemoveComponent(rootEntity, Stroke);
     safeAddComponent(rootEntity, MaterialDirty);
     return;
@@ -393,6 +418,7 @@ function syncIconFontChildrenFromUpdatedNode(
         zIndex: zForChild,
         visibility: childVisibility,
         name: `${node.id}__i${i}`,
+        strokeAsPlaceholderFillForRasterFilter,
       });
       api.appendEntityChild(rootEntity, ch);
       child = ch.id();
@@ -413,6 +439,8 @@ function syncIconFontChildrenFromUpdatedNode(
       prim.style,
       userColorFill,
       userColorStroke,
+      prim.kind,
+      strokeAsPlaceholderFillForRasterFilter,
     );
     if (fillPart && fillPart !== 'none') {
       safeAddComponent(child, FillSolid, {
@@ -437,6 +465,7 @@ function syncIconFontChildrenFromUpdatedNode(
   safeRemoveComponent(rootEntity, FillGradient);
   safeRemoveComponent(rootEntity, FillImage);
   safeRemoveComponent(rootEntity, FillPattern);
+  safeRemoveComponent(rootEntity, StrokeGradient);
   safeRemoveComponent(rootEntity, Stroke);
   safeAddComponent(rootEntity, MaterialDirty);
 }
@@ -1178,12 +1207,66 @@ export const mutateElement = <TElement extends Mutable<SerializedNode>>(
     });
   }
   if ('stroke' in updates && !isIconFontWireNode) {
-    safeAddComponent(entity, Stroke, {
-      color: resolveDesignVariableValue(stroke, designVariables, themeMode),
-      colorVariableRef: designVariableRefKeyFromWire(
-        typeof stroke === 'string' ? stroke : undefined,
-      ),
-    });
+    const resolvedStroke = resolveDesignVariableValue(
+      stroke,
+      designVariables,
+      themeMode,
+    );
+    const strokeRef = designVariableRefKeyFromWire(
+      typeof stroke === 'string' ? stroke : undefined,
+    );
+    if (isGradient(resolvedStroke as string)) {
+      if (entity.has(Stroke)) {
+        const s = entity.read(Stroke);
+        safeAddComponent(entity, Stroke, {
+          color: 'none',
+          colorVariableRef: strokeRef,
+          width: s.width,
+          linecap: s.linecap,
+          linejoin: s.linejoin,
+          miterlimit: s.miterlimit,
+          dasharray: s.dasharray,
+          dashoffset: s.dashoffset,
+          alignment: s.alignment,
+          widthVariableRef: s.widthVariableRef,
+        });
+      } else {
+        safeAddComponent(entity, Stroke, {
+          color: 'none',
+          colorVariableRef: strokeRef,
+        });
+      }
+      safeRemoveComponent(entity, StrokeGradient);
+      safeAddComponent(entity, StrokeGradient, {
+        value: resolvedStroke as string,
+      });
+      safeAddComponent(entity, MaterialDirty);
+    } else {
+      if (entity.has(StrokeGradient)) {
+        safeRemoveComponent(entity, StrokeGradient);
+        safeAddComponent(entity, MaterialDirty);
+      }
+      if (entity.has(Stroke)) {
+        const s = entity.read(Stroke);
+        safeAddComponent(entity, Stroke, {
+          color: resolvedStroke as string,
+          colorVariableRef: strokeRef,
+          width: s.width,
+          linecap: s.linecap,
+          linejoin: s.linejoin,
+          miterlimit: s.miterlimit,
+          dasharray: s.dasharray,
+          dashoffset: s.dashoffset,
+          alignment: s.alignment,
+          widthVariableRef: s.widthVariableRef,
+        });
+      } else {
+        safeAddComponent(entity, Stroke, {
+          color: resolvedStroke as string,
+          colorVariableRef: strokeRef,
+        });
+      }
+    }
   }
   if ('strokeWidth' in updates && !isIconFontWireNode) {
     const w = resolveDesignVariableValue(
@@ -1539,6 +1622,14 @@ export const mutateElement = <TElement extends Mutable<SerializedNode>>(
       }
     }
   }
+  if (
+    ('width' in updates || 'height' in updates) &&
+    entity.has(Filter)
+  ) {
+    api.runAtNextTick(() => {
+      safeAddComponent(entity, MaterialDirty);
+    });
+  }
   if ('cornerRadius' in updates && cornerRadius !== undefined && entity.has(Rect)) {
     const resolved = resolveDesignVariableValue(
       cornerRadius,
@@ -1627,6 +1718,11 @@ export const mutateElement = <TElement extends Mutable<SerializedNode>>(
   if ('filter' in updates) {
     safeAddComponent(entity, Filter, { value: filter });
     safeAddComponent(entity, MaterialDirty);
+    if (entity.has(IconFont)) {
+      getDescendants(entity).forEach((child) => {
+        safeAddComponent(child, MaterialDirty);
+      });
+    }
   }
 
   if ('display' in updates) {

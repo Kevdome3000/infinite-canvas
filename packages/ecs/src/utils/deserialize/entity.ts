@@ -14,6 +14,7 @@ import {
   Rect,
   Renderable,
   Stroke,
+  StrokeGradient,
   Text,
   Transform,
   Visibility,
@@ -123,6 +124,8 @@ import { pointAndNormalAlongPolylineByT } from '../polyline-arclength';
 import simplify from 'simplify-js';
 import { expandRefSerializedNodes, mergeSerializedNodesForRefLookup } from './expand-ref-nodes';
 import { insertIconFontChildFromPrimitive } from '../insert-icon-font-child-entity';
+import { resetFillImageSvgRerasterSchedule } from '../fillImageSvgReraster';
+import { hasRasterPostEffects } from '../filter';
 
 export function inferXYWidthHeight(node: SerializedNode) {
   if (node.type === 'g') {
@@ -897,6 +900,7 @@ function layoutSerializedEdgeLabelChildren(
 
 export async function loadImage(url: string, entity: Entity) {
   const image = await DOMAdapter.get().createImage(url);
+  resetFillImageSvgRerasterSchedule(entity);
   safeAddComponent(entity, FillImage, {
     src: image as ImageBitmap,
     url,
@@ -1056,6 +1060,11 @@ export function serializedNodesToEntities(
 
     /** `iconfont` 拆成子 path/circle/line 时，父级不挂 Fill/Stroke。 */
     let skipParentFillStroke = false;
+    /**
+     * 子 path/ellipse/line 的 `EntityCommands`；`execute` 前用 `hold()`+`getDescendants` 不可靠，带
+     * `filter` 时直接 `insert(MaterialDirty)`。
+     */
+    const iconfontChildCommands: EntityCommands[] = [];
 
     const entityCommands = commands.spawn();
     idEntityMap.set(id, entityCommands);
@@ -1491,6 +1500,18 @@ export function serializedNodesToEntities(
         entityCommands.insert(new Group(groupPres));
         skipParentFillStroke = true;
         const v = (attributes as VisibilityAttributes).visibility;
+        const filterWire = (wireMergedAttrs as FilterAttributes).filter;
+        const resolvedFilterForPrim =
+          filterWire != null && `${filterWire}`.trim() !== ''
+            ? resolveDesignVariableValue(
+                filterWire,
+                designVariables,
+                themeMode,
+              )
+            : undefined;
+        const strokeAsPlaceholderFillForRasterFilter =
+          typeof resolvedFilterForPrim === 'string' &&
+          hasRasterPostEffects(resolvedFilterForPrim);
 
         for (let i = 0; i < prims.length; i++) {
           const prim = prims[i]!;
@@ -1502,8 +1523,10 @@ export function serializedNodesToEntities(
             zIndex: attributes.zIndex != null ? attributes.zIndex! : 0,
             visibility: (v as 'inherited' | 'hidden' | 'visible' | undefined) ?? 'inherited',
             name: `${id}__i${i}`,
+            strokeAsPlaceholderFillForRasterFilter,
           });
           entityCommands.appendChild(ch);
+          iconfontChildCommands.push(ch);
         }
       } else {
         entityCommands.insert(
@@ -1596,27 +1619,42 @@ export function serializedNodesToEntities(
             width: typeof rawW === 'number' ? rawW : Number(rawW),
           }
           : {};
-      entityCommands.insert(
-        new Stroke({
-          color: resolvedStroke,
-          ...widthInit,
-          colorVariableRef: designVariableRefKeyFromWire(stroke),
-          widthVariableRef: designVariableRefKeyFromWire(strokeWidth),
-          // comma and/or white space separated
-          dasharray:
-            strokeDasharray === 'none'
-              ? [0, 0]
-              : ((strokeDasharray?.includes(',')
-                ? strokeDasharray?.split(',')
-                : strokeDasharray?.split(' ')
-              )?.map(Number) as [number, number]),
-          linecap: strokeLinecap,
-          linejoin: strokeLinejoin,
-          miterlimit: strokeMiterlimit,
-          dashoffset: strokeDashoffset,
-          alignment: strokeAlignment,
-        }),
-      );
+      const dashPair =
+        strokeDasharray === 'none'
+          ? ([0, 0] as [number, number])
+          : (((strokeDasharray?.includes(',')
+            ? strokeDasharray?.split(',')
+            : strokeDasharray?.split(' ')
+          )?.map(Number) ?? [0, 0]) as [number, number]);
+      const strokeCommon = {
+        ...widthInit,
+        colorVariableRef: designVariableRefKeyFromWire(stroke),
+        widthVariableRef: designVariableRefKeyFromWire(strokeWidth),
+        dasharray: dashPair,
+        linecap: strokeLinecap,
+        linejoin: strokeLinejoin,
+        miterlimit: strokeMiterlimit,
+        dashoffset: strokeDashoffset,
+        alignment: strokeAlignment,
+      };
+      if (isGradient(resolvedStroke as string)) {
+        entityCommands.insert(
+          new Stroke({
+            color: 'none',
+            ...strokeCommon,
+          }),
+        );
+        entityCommands.insert(
+          new StrokeGradient(resolvedStroke as string),
+        );
+      } else {
+        entityCommands.insert(
+          new Stroke({
+            color: resolvedStroke,
+            ...strokeCommon,
+          }),
+        );
+      }
     }
 
     const { markerStart, markerEnd, markerFactor } =
@@ -1737,6 +1775,11 @@ export function serializedNodesToEntities(
     if (filter) {
       entityCommands.insert(new Filter({ value: filter }));
       entityCommands.insert(new MaterialDirty());
+      if (type === 'iconfont' || (type as string) === 'icon_font') {
+        for (const ch of iconfontChildCommands) {
+          ch.insert(new MaterialDirty());
+        }
+      }
     }
 
     const { display } = attributes as FlexboxLayoutAttributes;

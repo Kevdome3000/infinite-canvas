@@ -5,21 +5,30 @@ import { consume } from '@lit/context';
 import * as d3 from 'd3-color';
 import {
   AppState,
+  type AsciiEffect,
+  type BurnEffect,
+  createDefaultEffect,
+  type CrtEffect,
+  type DefaultEffectKind,
+  type Effect,
+  type FlutedGlassEffect,
+  formatFilter,
+  GEM_SMOKE_DEFAULTS,
+  type GemSmokeEffect,
+  type GlitchEffect,
+  GPUResource,
+  type HalftoneDotsEffect,
+  HEATMAP_DEFAULTS,
+  type HeatmapEffect,
+  isSaturateOnlyAdjustment,
+  type LiquidGlassEffect,
+  type LiquidMetalEffect,
+  listRegisteredCubeLutKeys,
   parseColor,
   parseEffect,
-  ADJUSTMENT_DEFAULTS,
-  formatFilter,
-  isSaturateOnlyAdjustment,
-  BURN_DEFAULTS,
-  HEATMAP_DEFAULTS,
-  GEM_SMOKE_DEFAULTS,
-  LIQUID_METAL_DEFAULTS,
-  type Effect,
   type SerializedNode,
-  type BurnEffect,
-  type LiquidMetalEffect,
-  type HeatmapEffect,
-  type GemSmokeEffect,
+  type TsunamiEffect,
+  type VignetteEffect,
 } from '@infinite-canvas-tutorial/ecs';
 import { apiContext, appStateContext } from '../context';
 import { ExtendedAPI } from '../API';
@@ -27,21 +36,12 @@ import { localized, msg, str } from '@lit/localize';
 import '@spectrum-web-components/action-button/sp-action-button.js';
 import '@spectrum-web-components/switch/sp-switch.js';
 import '@spectrum-web-components/textfield/sp-textfield.js';
+import '@spectrum-web-components/picker/sp-picker.js';
+import '@spectrum-web-components/menu/sp-menu-item.js';
 import '@spectrum-web-components/field-label/sp-field-label.js';
 import '@spectrum-web-components/overlay/sp-overlay.js';
 import '@spectrum-web-components/popover/sp-popover.js';
 import './input-solid';
-
-/** Matches ecs `HalftoneDotsEffect` (filter `halftone-dots`). */
-interface HalftoneDotsEffectRow {
-  type: 'halftoneDots';
-  size: number;
-  radius: number;
-  contrast: number;
-  grid: number;
-  dotStyle: number;
-  originalColors?: boolean;
-}
 
 function isHalftoneDotsEffect(e: Effect): boolean {
   return (e as { type?: string }).type === 'halftoneDots';
@@ -91,6 +91,10 @@ function isGemSmokeEffect(e: Effect): boolean {
   return (e as { type?: string }).type === 'gemSmoke';
 }
 
+function isLutEffect(e: Effect): boolean {
+  return (e as { type?: string }).type === 'lut';
+}
+
 type SolidColorChangeDetail = { type: string; value: string };
 
 function solidColorToPatch(
@@ -107,144 +111,12 @@ function solidHexForPicker(raw: string): string {
   return d3.rgb(p.r, p.g, p.b, 1).formatHex();
 }
 
-/** Mirrors ecs `CRT_DEFAULTS`. */
-const CRT_PANEL_DEFAULTS = {
-  curvature: 1,
-  lineWidth: 1,
-  lineContrast: 0.25,
-  verticalLine: 0,
-  time: 0,
-  useEngineTime: false,
-} as const;
-
-type CrtEffectRow = { type: 'crt' } & typeof CRT_PANEL_DEFAULTS;
-
-/** Matches ecs `VIGNETTE_DEFAULTS`. */
-const VIGNETTE_PANEL_DEFAULTS = {
-  type: 'vignette' as const,
-  size: 0.5,
-  amount: 0.5,
-};
-
-type VignetteEffectRow = typeof VIGNETTE_PANEL_DEFAULTS;
-
-/** Matches ecs `ASCII_DEFAULTS` / Pixi ASCIIFilter. */
-const ASCII_PANEL_DEFAULTS = {
-  type: 'ascii' as const,
-  size: 8,
-  replaceColor: false,
-  color: '#ffffff',
-};
-
-type AsciiEffectRow = typeof ASCII_PANEL_DEFAULTS;
-
-/** Mirrors ecs `GLITCH_DEFAULTS`; `useEngineTime` defaults on so the effect animates. */
-const GLITCH_PANEL_DEFAULTS = {
-  type: 'glitch' as const,
-  jitter: 0.45,
-  blocks: 0,
-  rgbSplit: 0.004,
-  time: 0,
-  useEngineTime: true,
-} as const;
-
-type GlitchEffectRow = typeof GLITCH_PANEL_DEFAULTS;
-
-/** Mirrors ecs `LIQUID_GLASS_DEFAULTS` / `LiquidGlassEffect`. */
-const LIQUID_GLASS_PANEL_DEFAULTS = {
-  type: 'liquidGlass' as const,
-  powerFactor: 4,
-  fPower: 3,
-  noise: 0.1,
-  glowWeight: 0.3,
-  glowBias: 0,
-  glowEdge0: 0.06,
-  glowEdge1: 0,
-  a: 0.7,
-  b: 2.3,
-  c: 5.2,
-  d: 6.9,
-  centerX: 0.5,
-  centerY: 0.5,
-  scaleX: 1,
-  scaleY: 1,
-  ellipseSizeX: 1,
-  ellipseSizeY: 1,
-};
-
-type LiquidGlassEffectRow = typeof LIQUID_GLASS_PANEL_DEFAULTS;
-
-/** Mirrors ecs `FlutedGlassEffect` / {@link FLUTED_GLASS_DEFAULTS} for panel defaults. */
-const FLUTED_GLASS_PANEL_DEFAULTS = {
-  size: 0.5,
-  shadows: 0.6,
-  angle: 45,
-  stretch: 0.2,
-  shape: 1,
-  distortion: 0.5,
-  highlights: 0.4,
-  distortionShape: 1,
-  shift: 0,
-  blur: 0.15,
-  edges: 0.3,
-  marginLeft: 0,
-  marginRight: 0,
-  marginTop: 0,
-  marginBottom: 0,
-  grainMixer: 0,
-  grainOverlay: 0,
-} as const;
-
-type FlutedGlassEffectRow = { type: 'flutedGlass' } & typeof FLUTED_GLASS_PANEL_DEFAULTS;
-
-/** Mirrors ecs `TSUNAMI_DEFAULTS` / `TsunamiEffect`. */
-const TSUNAMI_PANEL_DEFAULTS = {
-  stripeCount: 32,
-  stripeAngle: 0,
-  distortion: 1,
-  reflection: 0.2,
-  disturbance: 0.15,
-  contortion: 0.1,
-  blend: 0,
-  dispersion: 0.15,
-  drift: 0,
-  shadowIntensity: 0.5,
-  offset: 0,
-} as const;
-
-type TsunamiEffectRow = { type: 'tsunami' } & typeof TSUNAMI_PANEL_DEFAULTS;
-
 /** Picker / menu value for an effect row (maps `adjustment` from saturate to `saturate`). */
-type EffectKind =
-  | 'brightness'
-  | 'contrast'
-  | 'saturate'
-  | 'noise'
-  | 'fxaa'
-  | 'blur'
-  | 'pixelate'
-  | 'dot'
-  | 'colorHalftone'
-  | 'halftoneDots'
-  | 'flutedGlass'
-  | 'crt'
-  | 'vignette'
-  | 'ascii'
-  | 'glitch'
-  | 'liquidGlass'
-  | 'liquidMetal'
-  | 'heatmap'
-  | 'gemSmoke'
-  | 'tsunami'
-  | 'burn';
+type EffectKind = DefaultEffectKind;
 
 function effectKind(
   effect: Effect,
-):
-  | EffectKind
-  | 'drop-shadow'
-  | 'adjustment-full'
-  | 'unknown' {
+): EffectKind | 'drop-shadow' | 'adjustment-full' | 'unknown' {
   if (effect.type === 'adjustment') {
     return isSaturateOnlyAdjustment(effect) ? 'saturate' : 'adjustment-full';
   }
@@ -284,6 +156,9 @@ function effectKind(
   if (isGemSmokeEffect(effect)) {
     return 'gemSmoke';
   }
+  if (isLutEffect(effect)) {
+    return 'lut';
+  }
   if (
     effect.type === 'brightness' ||
     effect.type === 'contrast' ||
@@ -300,90 +175,6 @@ function effectKind(
     return 'drop-shadow';
   }
   return 'unknown';
-}
-
-function createDefaultEffect(kind: EffectKind): Effect {
-  switch (kind) {
-    case 'brightness':
-      return { type: 'brightness', value: 0 };
-    case 'contrast':
-      return { type: 'contrast', value: 0 };
-    case 'noise':
-      return { type: 'noise', value: 0.1 };
-    case 'fxaa':
-      return { type: 'fxaa' };
-    case 'blur':
-      return { type: 'blur', value: 4 };
-    case 'pixelate':
-      return { type: 'pixelate', size: 8 };
-    case 'dot':
-      return { type: 'dot', scale: 1, angle: 5, grayscale: 1 };
-    case 'colorHalftone':
-      return { type: 'colorHalftone', angle: 0, size: 5 };
-    case 'halftoneDots':
-      return {
-        type: 'halftoneDots',
-        size: 0.5,
-        radius: 0.5,
-        contrast: 0.5,
-        grid: 0,
-        dotStyle: 0,
-        originalColors: true,
-      } as unknown as Effect;
-    case 'flutedGlass':
-      return {
-        type: 'flutedGlass',
-        ...FLUTED_GLASS_PANEL_DEFAULTS,
-      } as unknown as Effect;
-    case 'crt':
-      return {
-        type: 'crt',
-        ...CRT_PANEL_DEFAULTS,
-      } as unknown as Effect;
-    case 'vignette':
-      return { ...VIGNETTE_PANEL_DEFAULTS } as unknown as Effect;
-    case 'ascii':
-      return { ...ASCII_PANEL_DEFAULTS } as unknown as Effect;
-    case 'glitch':
-      return { ...GLITCH_PANEL_DEFAULTS } as unknown as Effect;
-    case 'liquidGlass':
-      return { ...LIQUID_GLASS_PANEL_DEFAULTS } as unknown as Effect;
-    case 'tsunami':
-      return {
-        type: 'tsunami',
-        ...TSUNAMI_PANEL_DEFAULTS,
-      } as unknown as Effect;
-    case 'burn':
-      return {
-        type: 'burn',
-        ...BURN_DEFAULTS,
-      } as unknown as Effect;
-    case 'liquidMetal':
-      return {
-        type: 'liquidMetal',
-        ...LIQUID_METAL_DEFAULTS,
-      } as unknown as Effect;
-    case 'heatmap':
-      return {
-        type: 'heatmap',
-        ...HEATMAP_DEFAULTS,
-        useEngineTime: true,
-      } as unknown as Effect;
-    case 'gemSmoke':
-      return {
-        type: 'gemSmoke',
-        ...GEM_SMOKE_DEFAULTS,
-        useEngineTime: true,
-      } as unknown as Effect;
-    case 'saturate':
-      return {
-        type: 'adjustment',
-        ...ADJUSTMENT_DEFAULTS,
-        saturation: 1.25,
-      };
-    default:
-      return { type: 'brightness', value: 0 };
-  }
 }
 
 @customElement('ic-spectrum-effects-panel')
@@ -511,8 +302,37 @@ export class EffectsPanel extends LitElement {
   @property({ type: Boolean, attribute: false })
   filtersMixed = false;
 
+  /**
+   * 额外 LUT 逻辑名（在 `custom` 与 {@link listRegisteredCubeLutKeys} 结果之后合并去重）。
+   * 与 `registerCubeLutFromText(device, key, …)` 的 `key` 一致；画布 GPU 上已注册的 key 会自动出现在下拉中。
+   */
+  @property({ type: Array, attribute: false })
+  lutKeys: string[] = ['custom'];
+
   @state()
   private effects: Effect[] = [];
+
+  private lutKeyPickerOptions(currentKey: string): string[] {
+    const fromProp =
+      Array.isArray(this.lutKeys) && this.lutKeys.length > 0
+        ? this.lutKeys
+        : ['custom'];
+    let fromGpu: string[] = [];
+    try {
+      const device = this.api?.getCanvas?.()?.read(GPUResource)?.device;
+      if (device) {
+        fromGpu = listRegisteredCubeLutKeys(device);
+      }
+    } catch {
+      // 画布 / GPU 尚未就绪
+    }
+    const base = [...new Set(['custom', ...fromGpu, ...fromProp])];
+    const k = (currentKey && currentKey.trim()) || 'custom';
+    if (base.includes(k)) {
+      return base;
+    }
+    return [...base, k];
+  }
 
   protected willUpdate(changed: PropertyValues<this>): void {
     if (changed.has('filtersMixed') || (changed.has('node') && this.node)) {
@@ -532,8 +352,8 @@ export class EffectsPanel extends LitElement {
       this.targetNodeIds && this.targetNodeIds.length > 0
         ? this.targetNodeIds
         : this.node
-          ? [this.node.id]
-          : [];
+        ? [this.node.id]
+        : [];
     for (const id of ids) {
       const n = this.api.getNodeById(id);
       if (n) {
@@ -553,12 +373,7 @@ export class EffectsPanel extends LitElement {
     );
     return html`
       <div class="effect-color-popover-wrap">
-        <sp-action-button
-          class="color-trigger"
-          quiet
-          size="s"
-          id=${triggerId}
-        >
+        <sp-action-button class="color-trigger" quiet size="s" id=${triggerId}>
           <span
             class="swatch"
             style=${`background-color: ${swatchHex}`}
@@ -584,7 +399,9 @@ export class EffectsPanel extends LitElement {
   }
 
   private handleAddFilter(e: CustomEvent) {
-    const value = (e.target as { value?: string }).value as EffectKind | undefined;
+    const value = (e.target as { value?: string }).value as
+      | EffectKind
+      | undefined;
     if (!value) return;
     this.commit([...this.effects, createDefaultEffect(value)]);
   }
@@ -602,7 +419,10 @@ export class EffectsPanel extends LitElement {
     this.commit(next);
   }
 
-  private handleKindChanged(index: number, e: Event & { target: HTMLInputElement }) {
+  private handleKindChanged(
+    index: number,
+    e: Event & { target: HTMLInputElement },
+  ) {
     const kind = e.target.value as EffectKind;
     const next = [...this.effects];
     next[index] = createDefaultEffect(kind);
@@ -622,13 +442,13 @@ export class EffectsPanel extends LitElement {
       <div class="effect-row">
         <div class="row-head">
           ${canEditKind
-        ? html`
+            ? html`
                 <sp-picker
                   size="s"
                   label=${msg(str`Filter type`)}
                   .value=${kind}
                   @change=${(e: Event & { target: HTMLInputElement }) =>
-            this.handleKindChanged(index, e)}
+                    this.handleKindChanged(index, e)}
                 >
                   <sp-menu-item value="brightness"
                     >${msg(str`Brightness`)}</sp-menu-item
@@ -643,7 +463,9 @@ export class EffectsPanel extends LitElement {
                   <sp-menu-item value="pixelate"
                     >${msg(str`Pixelate`)}</sp-menu-item
                   >
-                  <sp-menu-item value="dot">${msg(str`Dot screen`)}</sp-menu-item>
+                  <sp-menu-item value="dot"
+                    >${msg(str`Dot screen`)}</sp-menu-item
+                  >
                   <sp-menu-item value="colorHalftone"
                     >${msg(str`Color halftone`)}</sp-menu-item
                   >
@@ -653,23 +475,21 @@ export class EffectsPanel extends LitElement {
                   <sp-menu-item value="flutedGlass"
                     >${msg(str`Fluted glass`)}</sp-menu-item
                   >
-                  <sp-menu-item value="crt"
-                    >${msg(str`CRT`)}</sp-menu-item
-                  >
+                  <sp-menu-item value="crt">${msg(str`CRT`)}</sp-menu-item>
                   <sp-menu-item value="vignette"
                     >${msg(str`Vignette`)}</sp-menu-item
                   >
                   <sp-menu-item value="ascii">${msg(str`ASCII`)}</sp-menu-item>
-                  <sp-menu-item value="glitch">${msg(str`Glitch`)}</sp-menu-item>
+                  <sp-menu-item value="glitch"
+                    >${msg(str`Glitch`)}</sp-menu-item
+                  >
                   <sp-menu-item value="liquidGlass"
                     >${msg(str`Liquid glass`)}</sp-menu-item
                   >
                   <sp-menu-item value="tsunami"
                     >${msg(str`Tsunami`)}</sp-menu-item
                   >
-                  <sp-menu-item value="burn"
-                    >${msg(str`Burn`)}</sp-menu-item
-                  >
+                  <sp-menu-item value="burn">${msg(str`Burn`)}</sp-menu-item>
                   <sp-menu-item value="liquidMetal"
                     >${msg(str`Liquid metal`)}</sp-menu-item
                   >
@@ -679,17 +499,18 @@ export class EffectsPanel extends LitElement {
                   <sp-menu-item value="gemSmoke"
                     >${msg(str`Gem smoke`)}</sp-menu-item
                   >
+                  <sp-menu-item value="lut">${msg(str`LUT`)}</sp-menu-item>
                 </sp-picker>
               `
-        : html`
+            : html`
                 <span class="hint"
                   >${kind === 'drop-shadow'
-            ? msg(str`Drop shadow (view only — remove or edit in code)`)
-            : kind === 'adjustment-full'
-              ? msg(
-                str`Color adjustment (view only — remove or edit in code)`,
-              )
-              : msg(str`Unsupported effect`)}</span
+                    ? msg(str`Drop shadow (view only — remove or edit in code)`)
+                    : kind === 'adjustment-full'
+                    ? msg(
+                        str`Color adjustment (view only — remove or edit in code)`,
+                      )
+                    : msg(str`Unsupported effect`)}</span
                 >
               `}
           <div class="row-actions">
@@ -743,14 +564,14 @@ export class EffectsPanel extends LitElement {
           .value=${effect.value}
           editable
           @change=${(e: Event & { target: HTMLInputElement }) => {
-          const v = parseFloat(e.target.value);
-          const next = [...this.effects];
-          (next[index] as typeof effect) = {
-            ...effect,
-            value: v,
-          };
-          this.commit(next);
-        }}
+            const v = parseFloat(e.target.value);
+            const next = [...this.effects];
+            (next[index] as typeof effect) = {
+              ...effect,
+              value: v,
+            };
+            this.commit(next);
+          }}
         ></sp-slider>
       `;
     }
@@ -766,11 +587,11 @@ export class EffectsPanel extends LitElement {
           .value=${effect.value}
           editable
           @change=${(e: Event & { target: HTMLInputElement }) => {
-          const v = parseFloat(e.target.value);
-          const next = [...this.effects];
-          (next[index] as typeof effect) = { ...effect, value: v };
-          this.commit(next);
-        }}
+            const v = parseFloat(e.target.value);
+            const next = [...this.effects];
+            (next[index] as typeof effect) = { ...effect, value: v };
+            this.commit(next);
+          }}
         ></sp-slider>
       `;
     }
@@ -785,11 +606,11 @@ export class EffectsPanel extends LitElement {
           .value=${effect.value}
           editable
           @change=${(e: Event & { target: HTMLInputElement }) => {
-          const v = parseFloat(e.target.value);
-          const next = [...this.effects];
-          (next[index] as typeof effect) = { ...effect, value: v };
-          this.commit(next);
-        }}
+            const v = parseFloat(e.target.value);
+            const next = [...this.effects];
+            (next[index] as typeof effect) = { ...effect, value: v };
+            this.commit(next);
+          }}
         ></sp-slider>
       `;
     }
@@ -804,11 +625,11 @@ export class EffectsPanel extends LitElement {
           .value=${effect.size}
           editable
           @change=${(e: Event & { target: HTMLInputElement }) => {
-          const v = parseFloat(e.target.value);
-          const next = [...this.effects];
-          (next[index] as typeof effect) = { ...effect, size: v };
-          this.commit(next);
-        }}
+            const v = parseFloat(e.target.value);
+            const next = [...this.effects];
+            (next[index] as typeof effect) = { ...effect, size: v };
+            this.commit(next);
+          }}
         ></sp-slider>
       `;
     }
@@ -823,11 +644,11 @@ export class EffectsPanel extends LitElement {
           .value=${effect.scale}
           editable
           @change=${(e: Event & { target: HTMLInputElement }) => {
-          const v = parseFloat(e.target.value);
-          const next = [...this.effects];
-          (next[index] as typeof effect) = { ...effect, scale: v };
-          this.commit(next);
-        }}
+            const v = parseFloat(e.target.value);
+            const next = [...this.effects];
+            (next[index] as typeof effect) = { ...effect, scale: v };
+            this.commit(next);
+          }}
         ></sp-slider>
         <sp-slider
           size="s"
@@ -838,11 +659,11 @@ export class EffectsPanel extends LitElement {
           .value=${effect.angle}
           editable
           @change=${(e: Event & { target: HTMLInputElement }) => {
-          const v = parseFloat(e.target.value);
-          const next = [...this.effects];
-          (next[index] as typeof effect) = { ...effect, angle: v };
-          this.commit(next);
-        }}
+            const v = parseFloat(e.target.value);
+            const next = [...this.effects];
+            (next[index] as typeof effect) = { ...effect, angle: v };
+            this.commit(next);
+          }}
         ></sp-slider>
         <sp-slider
           size="s"
@@ -853,14 +674,14 @@ export class EffectsPanel extends LitElement {
           .value=${effect.grayscale}
           editable
           @change=${(e: Event & { target: HTMLInputElement }) => {
-          const v = parseFloat(e.target.value);
-          const next = [...this.effects];
-          (next[index] as typeof effect) = {
-            ...effect,
-            grayscale: v > 0.5 ? 1 : 0,
-          };
-          this.commit(next);
-        }}
+            const v = parseFloat(e.target.value);
+            const next = [...this.effects];
+            (next[index] as typeof effect) = {
+              ...effect,
+              grayscale: v > 0.5 ? 1 : 0,
+            };
+            this.commit(next);
+          }}
         ></sp-slider>
       `;
     }
@@ -875,11 +696,11 @@ export class EffectsPanel extends LitElement {
           .value=${effect.size}
           editable
           @change=${(e: Event & { target: HTMLInputElement }) => {
-          const v = parseFloat(e.target.value);
-          const next = [...this.effects];
-          (next[index] as typeof effect) = { ...effect, size: v };
-          this.commit(next);
-        }}
+            const v = parseFloat(e.target.value);
+            const next = [...this.effects];
+            (next[index] as typeof effect) = { ...effect, size: v };
+            this.commit(next);
+          }}
         ></sp-slider>
         <sp-slider
           size="s"
@@ -890,16 +711,16 @@ export class EffectsPanel extends LitElement {
           .value=${effect.angle}
           editable
           @change=${(e: Event & { target: HTMLInputElement }) => {
-          const v = parseFloat(e.target.value);
-          const next = [...this.effects];
-          (next[index] as typeof effect) = { ...effect, angle: v };
-          this.commit(next);
-        }}
+            const v = parseFloat(e.target.value);
+            const next = [...this.effects];
+            (next[index] as typeof effect) = { ...effect, angle: v };
+            this.commit(next);
+          }}
         ></sp-slider>
       `;
     }
     if (isHalftoneDotsEffect(effect)) {
-      const h = effect as unknown as HalftoneDotsEffectRow;
+      const h = effect as unknown as HalftoneDotsEffect;
       return html`
         <sp-slider
           size="s"
@@ -910,14 +731,14 @@ export class EffectsPanel extends LitElement {
           .value=${h.size}
           editable
           @change=${(e: Event & { target: HTMLInputElement }) => {
-          const v = parseFloat(e.target.value);
-          const next = [...this.effects];
-          next[index] = {
-            ...h,
-            size: Number.isFinite(v) ? v : h.size,
-          } as unknown as Effect;
-          this.commit(next);
-        }}
+            const v = parseFloat(e.target.value);
+            const next = [...this.effects];
+            next[index] = {
+              ...h,
+              size: Number.isFinite(v) ? v : h.size,
+            } as unknown as Effect;
+            this.commit(next);
+          }}
         ></sp-slider>
         <sp-slider
           size="s"
@@ -928,14 +749,14 @@ export class EffectsPanel extends LitElement {
           .value=${h.radius}
           editable
           @change=${(e: Event & { target: HTMLInputElement }) => {
-          const v = parseFloat(e.target.value);
-          const next = [...this.effects];
-          next[index] = {
-            ...h,
-            radius: Number.isFinite(v) ? v : h.radius,
-          } as unknown as Effect;
-          this.commit(next);
-        }}
+            const v = parseFloat(e.target.value);
+            const next = [...this.effects];
+            next[index] = {
+              ...h,
+              radius: Number.isFinite(v) ? v : h.radius,
+            } as unknown as Effect;
+            this.commit(next);
+          }}
         ></sp-slider>
         <sp-slider
           size="s"
@@ -946,28 +767,28 @@ export class EffectsPanel extends LitElement {
           .value=${h.contrast}
           editable
           @change=${(e: Event & { target: HTMLInputElement }) => {
-          const v = parseFloat(e.target.value);
-          const next = [...this.effects];
-          next[index] = {
-            ...h,
-            contrast: Number.isFinite(v) ? v : h.contrast,
-          } as unknown as Effect;
-          this.commit(next);
-        }}
+            const v = parseFloat(e.target.value);
+            const next = [...this.effects];
+            next[index] = {
+              ...h,
+              contrast: Number.isFinite(v) ? v : h.contrast,
+            } as unknown as Effect;
+            this.commit(next);
+          }}
         ></sp-slider>
         <sp-picker
           size="s"
           label=${msg(str`Grid`)}
           .value=${String(h.grid)}
           @change=${(e: Event & { target: HTMLInputElement }) => {
-          const v = parseInt(e.target.value, 10);
-          const next = [...this.effects];
-          next[index] = {
-            ...h,
-            grid: v === 1 ? 1 : 0,
-          } as unknown as Effect;
-          this.commit(next);
-        }}
+            const v = parseInt(e.target.value, 10);
+            const next = [...this.effects];
+            next[index] = {
+              ...h,
+              grid: v === 1 ? 1 : 0,
+            } as unknown as Effect;
+            this.commit(next);
+          }}
         >
           <sp-menu-item value="0">${msg(str`Square`)}</sp-menu-item>
           <sp-menu-item value="1">${msg(str`Hex`)}</sp-menu-item>
@@ -977,14 +798,14 @@ export class EffectsPanel extends LitElement {
           label=${msg(str`Dot style`)}
           .value=${String(h.dotStyle)}
           @change=${(e: Event & { target: HTMLInputElement }) => {
-          const v = parseInt(e.target.value, 10);
-          const next = [...this.effects];
-          next[index] = {
-            ...h,
-            dotStyle: Math.max(0, Math.min(3, v)),
-          } as unknown as Effect;
-          this.commit(next);
-        }}
+            const v = parseInt(e.target.value, 10);
+            const next = [...this.effects];
+            next[index] = {
+              ...h,
+              dotStyle: Math.max(0, Math.min(3, v)),
+            } as unknown as Effect;
+            this.commit(next);
+          }}
         >
           <sp-menu-item value="0">${msg(str`Classic`)}</sp-menu-item>
           <sp-menu-item value="1">${msg(str`Gooey`)}</sp-menu-item>
@@ -995,19 +816,21 @@ export class EffectsPanel extends LitElement {
           size="s"
           ?checked=${h.originalColors !== false}
           @change=${(e: Event & { target: HTMLInputElement }) => {
-          const checked = (e.target as { checked?: boolean }).checked === true;
-          const next = [...this.effects];
-          next[index] = {
-            ...h,
-            originalColors: checked,
-          } as unknown as Effect;
-          this.commit(next);
-        }}
-        >${msg(str`Original colors`)}</sp-switch>
+            const checked =
+              (e.target as { checked?: boolean }).checked === true;
+            const next = [...this.effects];
+            next[index] = {
+              ...h,
+              originalColors: checked,
+            } as unknown as Effect;
+            this.commit(next);
+          }}
+          >${msg(str`Original colors`)}</sp-switch
+        >
       `;
     }
     if (isFlutedGlassEffect(effect)) {
-      const h = effect as unknown as FlutedGlassEffectRow;
+      const h = effect as unknown as FlutedGlassEffect;
       return html`
         <sp-slider
           size="s"
@@ -1018,14 +841,14 @@ export class EffectsPanel extends LitElement {
           .value=${h.size}
           editable
           @change=${(e: Event & { target: HTMLInputElement }) => {
-          const v = parseFloat(e.target.value);
-          const next = [...this.effects];
-          next[index] = {
-            ...h,
-            size: Number.isFinite(v) ? v : h.size,
-          } as unknown as Effect;
-          this.commit(next);
-        }}
+            const v = parseFloat(e.target.value);
+            const next = [...this.effects];
+            next[index] = {
+              ...h,
+              size: Number.isFinite(v) ? v : h.size,
+            } as unknown as Effect;
+            this.commit(next);
+          }}
         ></sp-slider>
         <sp-slider
           size="s"
@@ -1036,14 +859,14 @@ export class EffectsPanel extends LitElement {
           .value=${h.angle}
           editable
           @change=${(e: Event & { target: HTMLInputElement }) => {
-          const v = parseFloat(e.target.value);
-          const next = [...this.effects];
-          next[index] = {
-            ...h,
-            angle: Number.isFinite(v) ? v : h.angle,
-          } as unknown as Effect;
-          this.commit(next);
-        }}
+            const v = parseFloat(e.target.value);
+            const next = [...this.effects];
+            next[index] = {
+              ...h,
+              angle: Number.isFinite(v) ? v : h.angle,
+            } as unknown as Effect;
+            this.commit(next);
+          }}
         ></sp-slider>
         <sp-slider
           size="s"
@@ -1054,14 +877,14 @@ export class EffectsPanel extends LitElement {
           .value=${h.distortion}
           editable
           @change=${(e: Event & { target: HTMLInputElement }) => {
-          const v = parseFloat(e.target.value);
-          const next = [...this.effects];
-          next[index] = {
-            ...h,
-            distortion: Number.isFinite(v) ? v : h.distortion,
-          } as unknown as Effect;
-          this.commit(next);
-        }}
+            const v = parseFloat(e.target.value);
+            const next = [...this.effects];
+            next[index] = {
+              ...h,
+              distortion: Number.isFinite(v) ? v : h.distortion,
+            } as unknown as Effect;
+            this.commit(next);
+          }}
         ></sp-slider>
         <sp-slider
           size="s"
@@ -1072,14 +895,14 @@ export class EffectsPanel extends LitElement {
           .value=${h.blur}
           editable
           @change=${(e: Event & { target: HTMLInputElement }) => {
-          const v = parseFloat(e.target.value);
-          const next = [...this.effects];
-          next[index] = {
-            ...h,
-            blur: Number.isFinite(v) ? v : h.blur,
-          } as unknown as Effect;
-          this.commit(next);
-        }}
+            const v = parseFloat(e.target.value);
+            const next = [...this.effects];
+            next[index] = {
+              ...h,
+              blur: Number.isFinite(v) ? v : h.blur,
+            } as unknown as Effect;
+            this.commit(next);
+          }}
         ></sp-slider>
         <sp-slider
           size="s"
@@ -1090,23 +913,20 @@ export class EffectsPanel extends LitElement {
           .value=${h.edges}
           editable
           @change=${(e: Event & { target: HTMLInputElement }) => {
-          const v = parseFloat(e.target.value);
-          const next = [...this.effects];
-          next[index] = {
-            ...h,
-            edges: Number.isFinite(v) ? v : h.edges,
-          } as unknown as Effect;
-          this.commit(next);
-        }}
+            const v = parseFloat(e.target.value);
+            const next = [...this.effects];
+            next[index] = {
+              ...h,
+              edges: Number.isFinite(v) ? v : h.edges,
+            } as unknown as Effect;
+            this.commit(next);
+          }}
         ></sp-slider>
       `;
     }
     if (isTsunamiEffect(effect)) {
-      const h = effect as unknown as TsunamiEffectRow;
-      const num = (
-        key: keyof Omit<TsunamiEffectRow, 'type'>,
-        v: number,
-      ) => {
+      const h = effect as unknown as TsunamiEffect;
+      const num = (key: keyof Omit<TsunamiEffect, 'type'>, v: number) => {
         const next = [...this.effects];
         next[index] = {
           ...h,
@@ -1124,9 +944,9 @@ export class EffectsPanel extends LitElement {
           .value=${h.stripeCount}
           editable
           @change=${(e: Event & { target: HTMLInputElement }) => {
-          const v = parseFloat(e.target.value);
-          num('stripeCount', Number.isFinite(v) ? v : h.stripeCount);
-        }}
+            const v = parseFloat(e.target.value);
+            num('stripeCount', Number.isFinite(v) ? v : h.stripeCount);
+          }}
         ></sp-slider>
         <sp-slider
           size="s"
@@ -1137,9 +957,9 @@ export class EffectsPanel extends LitElement {
           .value=${h.stripeAngle}
           editable
           @change=${(e: Event & { target: HTMLInputElement }) => {
-          const v = parseFloat(e.target.value);
-          num('stripeAngle', Number.isFinite(v) ? v : h.stripeAngle);
-        }}
+            const v = parseFloat(e.target.value);
+            num('stripeAngle', Number.isFinite(v) ? v : h.stripeAngle);
+          }}
         ></sp-slider>
         <sp-slider
           size="s"
@@ -1150,9 +970,9 @@ export class EffectsPanel extends LitElement {
           .value=${h.distortion}
           editable
           @change=${(e: Event & { target: HTMLInputElement }) => {
-          const v = parseFloat(e.target.value);
-          num('distortion', Number.isFinite(v) ? v : h.distortion);
-        }}
+            const v = parseFloat(e.target.value);
+            num('distortion', Number.isFinite(v) ? v : h.distortion);
+          }}
         ></sp-slider>
         <sp-slider
           size="s"
@@ -1163,9 +983,9 @@ export class EffectsPanel extends LitElement {
           .value=${h.reflection}
           editable
           @change=${(e: Event & { target: HTMLInputElement }) => {
-          const v = parseFloat(e.target.value);
-          num('reflection', Number.isFinite(v) ? v : h.reflection);
-        }}
+            const v = parseFloat(e.target.value);
+            num('reflection', Number.isFinite(v) ? v : h.reflection);
+          }}
         ></sp-slider>
         <sp-slider
           size="s"
@@ -1176,9 +996,9 @@ export class EffectsPanel extends LitElement {
           .value=${h.disturbance}
           editable
           @change=${(e: Event & { target: HTMLInputElement }) => {
-          const v = parseFloat(e.target.value);
-          num('disturbance', Number.isFinite(v) ? v : h.disturbance);
-        }}
+            const v = parseFloat(e.target.value);
+            num('disturbance', Number.isFinite(v) ? v : h.disturbance);
+          }}
         ></sp-slider>
         <sp-slider
           size="s"
@@ -1189,9 +1009,9 @@ export class EffectsPanel extends LitElement {
           .value=${h.contortion}
           editable
           @change=${(e: Event & { target: HTMLInputElement }) => {
-          const v = parseFloat(e.target.value);
-          num('contortion', Number.isFinite(v) ? v : h.contortion);
-        }}
+            const v = parseFloat(e.target.value);
+            num('contortion', Number.isFinite(v) ? v : h.contortion);
+          }}
         ></sp-slider>
         <sp-slider
           size="s"
@@ -1202,9 +1022,9 @@ export class EffectsPanel extends LitElement {
           .value=${h.dispersion}
           editable
           @change=${(e: Event & { target: HTMLInputElement }) => {
-          const v = parseFloat(e.target.value);
-          num('dispersion', Number.isFinite(v) ? v : h.dispersion);
-        }}
+            const v = parseFloat(e.target.value);
+            num('dispersion', Number.isFinite(v) ? v : h.dispersion);
+          }}
         ></sp-slider>
         <sp-slider
           size="s"
@@ -1215,9 +1035,9 @@ export class EffectsPanel extends LitElement {
           .value=${h.drift}
           editable
           @change=${(e: Event & { target: HTMLInputElement }) => {
-          const v = parseFloat(e.target.value);
-          num('drift', Number.isFinite(v) ? v : h.drift);
-        }}
+            const v = parseFloat(e.target.value);
+            num('drift', Number.isFinite(v) ? v : h.drift);
+          }}
         ></sp-slider>
         <sp-slider
           size="s"
@@ -1228,9 +1048,9 @@ export class EffectsPanel extends LitElement {
           .value=${h.shadowIntensity}
           editable
           @change=${(e: Event & { target: HTMLInputElement }) => {
-          const v = parseFloat(e.target.value);
-          num('shadowIntensity', Number.isFinite(v) ? v : h.shadowIntensity);
-        }}
+            const v = parseFloat(e.target.value);
+            num('shadowIntensity', Number.isFinite(v) ? v : h.shadowIntensity);
+          }}
         ></sp-slider>
         <sp-slider
           size="s"
@@ -1241,23 +1061,24 @@ export class EffectsPanel extends LitElement {
           .value=${h.offset}
           editable
           @change=${(e: Event & { target: HTMLInputElement }) => {
-          const v = parseFloat(e.target.value);
-          num('offset', Number.isFinite(v) ? v : h.offset);
-        }}
+            const v = parseFloat(e.target.value);
+            num('offset', Number.isFinite(v) ? v : h.offset);
+          }}
         ></sp-slider>
         <sp-switch
           size="s"
           ?checked=${h.blend > 0.5}
           @change=${(e: Event & { target: HTMLInputElement }) => {
-          const checked = (e.target as { checked?: boolean }).checked === true;
-          const next = [...this.effects];
-          next[index] = {
-            ...h,
-            blend: checked ? 1 : 0,
-          } as unknown as Effect;
-          this.commit(next);
-        }}
-        >${msg(str`Luminance blend (reflection)`)}
+            const checked =
+              (e.target as { checked?: boolean }).checked === true;
+            const next = [...this.effects];
+            next[index] = {
+              ...h,
+              blend: checked ? 1 : 0,
+            } as unknown as Effect;
+            this.commit(next);
+          }}
+          >${msg(str`Luminance blend (reflection)`)}
         </sp-switch>
       `;
     }
@@ -1278,9 +1099,9 @@ export class EffectsPanel extends LitElement {
           .value=${h.burn}
           editable
           @change=${(e: Event & { target: HTMLInputElement }) => {
-          const v = parseFloat(e.target.value);
-          patch({ burn: Number.isFinite(v) ? v : h.burn });
-        }}
+            const v = parseFloat(e.target.value);
+            patch({ burn: Number.isFinite(v) ? v : h.burn });
+          }}
         ></sp-slider>
         <sp-slider
           size="s"
@@ -1291,9 +1112,9 @@ export class EffectsPanel extends LitElement {
           .value=${h.density}
           editable
           @change=${(e: Event & { target: HTMLInputElement }) => {
-          const v = parseFloat(e.target.value);
-          patch({ density: Number.isFinite(v) ? v : h.density });
-        }}
+            const v = parseFloat(e.target.value);
+            patch({ density: Number.isFinite(v) ? v : h.density });
+          }}
         ></sp-slider>
         <sp-slider
           size="s"
@@ -1304,9 +1125,9 @@ export class EffectsPanel extends LitElement {
           .value=${h.softness}
           editable
           @change=${(e: Event & { target: HTMLInputElement }) => {
-          const v = parseFloat(e.target.value);
-          patch({ softness: Number.isFinite(v) ? v : h.softness });
-        }}
+            const v = parseFloat(e.target.value);
+            patch({ softness: Number.isFinite(v) ? v : h.softness });
+          }}
         ></sp-slider>
         <sp-slider
           size="s"
@@ -1317,9 +1138,9 @@ export class EffectsPanel extends LitElement {
           .value=${h.dispersion}
           editable
           @change=${(e: Event & { target: HTMLInputElement }) => {
-          const v = parseFloat(e.target.value);
-          patch({ dispersion: Number.isFinite(v) ? v : h.dispersion });
-        }}
+            const v = parseFloat(e.target.value);
+            patch({ dispersion: Number.isFinite(v) ? v : h.dispersion });
+          }}
         ></sp-slider>
         <sp-slider
           size="s"
@@ -1330,45 +1151,59 @@ export class EffectsPanel extends LitElement {
           .value=${h.distortion}
           editable
           @change=${(e: Event & { target: HTMLInputElement }) => {
-          const v = parseFloat(e.target.value);
-          patch({ distortion: Number.isFinite(v) ? v : h.distortion });
-        }}
+            const v = parseFloat(e.target.value);
+            patch({ distortion: Number.isFinite(v) ? v : h.distortion });
+          }}
         ></sp-slider>
-        <sp-textfield
-          size="s"
-          label=${msg(str`Edge color`)}
-          .value=${h.edgeColor}
-          @change=${(e: Event & { target: HTMLInputElement }) => {
-          const v = e.target.value.trim();
-          patch({ edgeColor: v || h.edgeColor });
-        }}
-        ></sp-textfield>
-        <sp-textfield
-          size="s"
-          label=${msg(str`Mask color`)}
-          .value=${h.maskColor}
-          @change=${(e: Event & { target: HTMLInputElement }) => {
-          const v = e.target.value.trim();
-          patch({ maskColor: v || h.maskColor });
-        }}
-        ></sp-textfield>
+        <div class="effect-color-field-row">
+          <sp-field-label
+            size="s"
+            for="ic-ef-burn-edge-${index}"
+            side-aligned="start"
+            >${msg(str`Edge color`)}</sp-field-label
+          >
+          ${this.renderEffectSolidPopover(
+            `ic-ef-burn-edge-${index}`,
+            h.edgeColor,
+            (e) => {
+              solidColorToPatch(e, (v) => patch({ edgeColor: v }));
+            },
+          )}
+        </div>
+        <div class="effect-color-field-row">
+          <sp-field-label
+            size="s"
+            for="ic-ef-burn-mask-${index}"
+            side-aligned="start"
+            >${msg(str`Mask color`)}</sp-field-label
+          >
+          ${this.renderEffectSolidPopover(
+            `ic-ef-burn-mask-${index}`,
+            h.maskColor,
+            (e) => {
+              solidColorToPatch(e, (v) => patch({ maskColor: v }));
+            },
+          )}
+        </div>
         <sp-switch
           size="s"
           ?checked=${h.invertMask}
           @change=${(e: Event & { target: HTMLInputElement }) => {
-          const checked = (e.target as { checked?: boolean }).checked === true;
-          patch({ invertMask: checked });
-        }}
-        >${msg(str`Invert mask`)}</sp-switch
+            const checked =
+              (e.target as { checked?: boolean }).checked === true;
+            patch({ invertMask: checked });
+          }}
+          >${msg(str`Invert mask`)}</sp-switch
         >
         <sp-switch
           size="s"
           ?checked=${h.transparent}
           @change=${(e: Event & { target: HTMLInputElement }) => {
-          const checked = (e.target as { checked?: boolean }).checked === true;
-          patch({ transparent: checked });
-        }}
-        >${msg(str`Transparent blend`)}</sp-switch
+            const checked =
+              (e.target as { checked?: boolean }).checked === true;
+            patch({ transparent: checked });
+          }}
+          >${msg(str`Transparent blend`)}</sp-switch
         >
       `;
     }
@@ -1378,7 +1213,11 @@ export class EffectsPanel extends LitElement {
       const h = effect as unknown as Lm;
       const patch = (partial: Partial<Lm>) => {
         const next = [...this.effects];
-        next[index] = { ...h, ...partial, type: 'liquidMetal' } as unknown as Effect;
+        next[index] = {
+          ...h,
+          ...partial,
+          type: 'liquidMetal',
+        } as unknown as Effect;
         this.commit(next);
       };
       return html`
@@ -1391,11 +1230,11 @@ export class EffectsPanel extends LitElement {
           .value=${h.repetition}
           editable
           @change=${(e: Event & { target: HTMLInputElement }) => {
-          const v = parseFloat(e.target.value);
-          patch({
-            repetition: Number.isFinite(v) ? v : h.repetition,
-          });
-        }}
+            const v = parseFloat(e.target.value);
+            patch({
+              repetition: Number.isFinite(v) ? v : h.repetition,
+            });
+          }}
         ></sp-slider>
         <sp-slider
           size="s"
@@ -1406,9 +1245,9 @@ export class EffectsPanel extends LitElement {
           .value=${h.softness}
           editable
           @change=${(e: Event & { target: HTMLInputElement }) => {
-          const v = parseFloat(e.target.value);
-          patch({ softness: Number.isFinite(v) ? v : h.softness });
-        }}
+            const v = parseFloat(e.target.value);
+            patch({ softness: Number.isFinite(v) ? v : h.softness });
+          }}
         ></sp-slider>
         <sp-slider
           size="s"
@@ -1419,9 +1258,9 @@ export class EffectsPanel extends LitElement {
           .value=${h.shiftRed}
           editable
           @change=${(e: Event & { target: HTMLInputElement }) => {
-          const v = parseFloat(e.target.value);
-          patch({ shiftRed: Number.isFinite(v) ? v : h.shiftRed });
-        }}
+            const v = parseFloat(e.target.value);
+            patch({ shiftRed: Number.isFinite(v) ? v : h.shiftRed });
+          }}
         ></sp-slider>
         <sp-slider
           size="s"
@@ -1432,9 +1271,9 @@ export class EffectsPanel extends LitElement {
           .value=${h.shiftBlue}
           editable
           @change=${(e: Event & { target: HTMLInputElement }) => {
-          const v = parseFloat(e.target.value);
-          patch({ shiftBlue: Number.isFinite(v) ? v : h.shiftBlue });
-        }}
+            const v = parseFloat(e.target.value);
+            patch({ shiftBlue: Number.isFinite(v) ? v : h.shiftBlue });
+          }}
         ></sp-slider>
         <sp-slider
           size="s"
@@ -1445,9 +1284,9 @@ export class EffectsPanel extends LitElement {
           .value=${h.distortion}
           editable
           @change=${(e: Event & { target: HTMLInputElement }) => {
-          const v = parseFloat(e.target.value);
-          patch({ distortion: Number.isFinite(v) ? v : h.distortion });
-        }}
+            const v = parseFloat(e.target.value);
+            patch({ distortion: Number.isFinite(v) ? v : h.distortion });
+          }}
         ></sp-slider>
         <sp-slider
           size="s"
@@ -1458,9 +1297,9 @@ export class EffectsPanel extends LitElement {
           .value=${h.contour}
           editable
           @change=${(e: Event & { target: HTMLInputElement }) => {
-          const v = parseFloat(e.target.value);
-          patch({ contour: Number.isFinite(v) ? v : h.contour });
-        }}
+            const v = parseFloat(e.target.value);
+            patch({ contour: Number.isFinite(v) ? v : h.contour });
+          }}
         ></sp-slider>
         <sp-slider
           size="s"
@@ -1471,18 +1310,20 @@ export class EffectsPanel extends LitElement {
           .value=${h.angle}
           editable
           @change=${(e: Event & { target: HTMLInputElement }) => {
-          const v = parseFloat(e.target.value);
-          patch({ angle: Number.isFinite(v) ? v : h.angle });
-        }}
+            const v = parseFloat(e.target.value);
+            patch({ angle: Number.isFinite(v) ? v : h.angle });
+          }}
         ></sp-slider>
         <sp-picker
           size="s"
           label=${msg(str`Shape (no image)`)}
           .value=${String(h.shape)}
           @change=${(e: Event & { target: HTMLInputElement }) => {
-          const v = parseInt(e.target.value, 10);
-          patch({ shape: Math.max(0, Math.min(4, Number.isFinite(v) ? v : h.shape)) });
-        }}
+            const v = parseInt(e.target.value, 10);
+            patch({
+              shape: Math.max(0, Math.min(4, Number.isFinite(v) ? v : h.shape)),
+            });
+          }}
         >
           <sp-menu-item value="0"
             >${msg(str`None (canvas border)`)}</sp-menu-item
@@ -1496,20 +1337,22 @@ export class EffectsPanel extends LitElement {
           size="s"
           ?checked=${h.useImage}
           @change=${(e: Event & { target: HTMLInputElement }) => {
-          const checked = (e.target as { checked?: boolean }).checked === true;
-          patch({ useImage: checked });
-        }}
-        >${msg(str`Use layer as mask`)}</sp-switch
+            const checked =
+              (e.target as { checked?: boolean }).checked === true;
+            patch({ useImage: checked });
+          }}
+          >${msg(str`Use layer as mask`)}</sp-switch
         >
         ${h.useImage
           ? html`<sp-switch
-            size="s"
-            ?checked=${h.usePoisson !== false}
-            @change=${(e: Event & { target: HTMLInputElement }) => {
-              const checked = (e.target as { checked?: boolean }).checked === true;
-              patch({ usePoisson: checked });
-            }}
-            >${msg(str`CPU Poisson edge (WebGL; Paper-style R/G)`)}</sp-switch
+              size="s"
+              ?checked=${h.usePoisson !== false}
+              @change=${(e: Event & { target: HTMLInputElement }) => {
+                const checked =
+                  (e.target as { checked?: boolean }).checked === true;
+                patch({ usePoisson: checked });
+              }}
+              >${msg(str`CPU Poisson edge (WebGL; Paper-style R/G)`)}</sp-switch
             >`
           : ''}
         <div class="effect-color-field-row">
@@ -1528,7 +1371,10 @@ export class EffectsPanel extends LitElement {
           )}
         </div>
         <div class="effect-color-field-row">
-          <sp-field-label size="s" for="ic-ef-lm-t-${index}" side-aligned="start"
+          <sp-field-label
+            size="s"
+            for="ic-ef-lm-t-${index}"
+            side-aligned="start"
             >${msg(str`Tint`)}</sp-field-label
           >
           ${this.renderEffectSolidPopover(
@@ -1544,33 +1390,33 @@ export class EffectsPanel extends LitElement {
             size="s"
             ?checked=${!!h.useEngineTime}
             @change=${(e: Event & { target: HTMLInputElement }) => {
-          const checked = (e.target as HTMLInputElement).checked;
-          patch({ useEngineTime: checked });
-        }}
+              const checked = (e.target as HTMLInputElement).checked;
+              patch({ useEngineTime: checked });
+            }}
             >${msg(str`Engine time (animate)`)}</sp-switch
           >
         </div>
         ${h.useEngineTime
           ? html`<span class="hint"
               >${msg(
-            str`Time uniform follows the app clock each frame (liquid metal).`,
-          )}</span
+                str`Time uniform follows the app clock each frame (liquid metal).`,
+              )}</span
             >`
           : html`
-        <sp-slider
-          size="s"
-          label=${msg(str`Time`)}
-          min="0"
-          max="100"
-          step="0.1"
-          .value=${h.time}
-          editable
-          @change=${(e: Event & { target: HTMLInputElement }) => {
-              const v = parseFloat(e.target.value);
-              patch({ time: Number.isFinite(v) ? v : h.time });
-            }}
-        ></sp-slider>
-      `}
+              <sp-slider
+                size="s"
+                label=${msg(str`Time`)}
+                min="0"
+                max="100"
+                step="0.1"
+                .value=${h.time}
+                editable
+                @change=${(e: Event & { target: HTMLInputElement }) => {
+                  const v = parseFloat(e.target.value);
+                  patch({ time: Number.isFinite(v) ? v : h.time });
+                }}
+              ></sp-slider>
+            `}
       `;
     }
     if (isHeatmapEffect(effect)) {
@@ -1584,7 +1430,9 @@ export class EffectsPanel extends LitElement {
         } as unknown as Effect;
         this.commit(next);
       };
-      const palette = h.colors?.length ? h.colors : [...HEATMAP_DEFAULTS.colors];
+      const palette = h.colors?.length
+        ? h.colors
+        : [...HEATMAP_DEFAULTS.colors];
       return html`
         <sp-slider
           size="s"
@@ -1595,9 +1443,9 @@ export class EffectsPanel extends LitElement {
           .value=${h.contour}
           editable
           @change=${(e: Event & { target: HTMLInputElement }) => {
-          const v = parseFloat(e.target.value);
-          patch({ contour: Number.isFinite(v) ? v : h.contour });
-        }}
+            const v = parseFloat(e.target.value);
+            patch({ contour: Number.isFinite(v) ? v : h.contour });
+          }}
         ></sp-slider>
         <sp-slider
           size="s"
@@ -1608,9 +1456,9 @@ export class EffectsPanel extends LitElement {
           .value=${h.angle}
           editable
           @change=${(e: Event & { target: HTMLInputElement }) => {
-          const v = parseFloat(e.target.value);
-          patch({ angle: Number.isFinite(v) ? v : h.angle });
-        }}
+            const v = parseFloat(e.target.value);
+            patch({ angle: Number.isFinite(v) ? v : h.angle });
+          }}
         ></sp-slider>
         <sp-slider
           size="s"
@@ -1621,9 +1469,9 @@ export class EffectsPanel extends LitElement {
           .value=${h.noise}
           editable
           @change=${(e: Event & { target: HTMLInputElement }) => {
-          const v = parseFloat(e.target.value);
-          patch({ noise: Number.isFinite(v) ? v : h.noise });
-        }}
+            const v = parseFloat(e.target.value);
+            patch({ noise: Number.isFinite(v) ? v : h.noise });
+          }}
         ></sp-slider>
         <sp-slider
           size="s"
@@ -1634,9 +1482,9 @@ export class EffectsPanel extends LitElement {
           .value=${h.innerGlow}
           editable
           @change=${(e: Event & { target: HTMLInputElement }) => {
-          const v = parseFloat(e.target.value);
-          patch({ innerGlow: Number.isFinite(v) ? v : h.innerGlow });
-        }}
+            const v = parseFloat(e.target.value);
+            patch({ innerGlow: Number.isFinite(v) ? v : h.innerGlow });
+          }}
         ></sp-slider>
         <sp-slider
           size="s"
@@ -1647,28 +1495,30 @@ export class EffectsPanel extends LitElement {
           .value=${h.outerGlow}
           editable
           @change=${(e: Event & { target: HTMLInputElement }) => {
-          const v = parseFloat(e.target.value);
-          patch({ outerGlow: Number.isFinite(v) ? v : h.outerGlow });
-        }}
+            const v = parseFloat(e.target.value);
+            patch({ outerGlow: Number.isFinite(v) ? v : h.outerGlow });
+          }}
         ></sp-slider>
         <sp-switch
           size="s"
           ?checked=${h.useImage}
           @change=${(e: Event & { target: HTMLInputElement }) => {
-          const checked = (e.target as { checked?: boolean }).checked === true;
-          patch({ useImage: checked });
-        }}
-        >${msg(str`Use layer as mask`)}</sp-switch
+            const checked =
+              (e.target as { checked?: boolean }).checked === true;
+            patch({ useImage: checked });
+          }}
+          >${msg(str`Use layer as mask`)}</sp-switch
         >
         ${h.useImage
           ? html`<sp-switch
-            size="s"
-            ?checked=${h.usePreprocess !== false}
-            @change=${(e: Event & { target: HTMLInputElement }) => {
-              const checked = (e.target as { checked?: boolean }).checked === true;
-              patch({ usePreprocess: checked });
-            }}
-            >${msg(str`CPU preprocess (WebGL; RGB blur)`)}</sp-switch
+              size="s"
+              ?checked=${h.usePreprocess !== false}
+              @change=${(e: Event & { target: HTMLInputElement }) => {
+                const checked =
+                  (e.target as { checked?: boolean }).checked === true;
+                patch({ usePreprocess: checked });
+              }}
+              >${msg(str`CPU preprocess (WebGL; RGB blur)`)}</sp-switch
             >`
           : ''}
         <div class="effect-color-field-row">
@@ -1690,46 +1540,47 @@ export class EffectsPanel extends LitElement {
           >${msg(str`Gradient (max 10)`)}</sp-field-label
         >
         ${palette.map(
-            (c, ci) => html`
+          (c, ci) => html`
             <div class="color-ctrl-row">
               ${this.renderEffectSolidPopover(
-              `ic-ef-hm-g-${index}-${ci}`,
-              c,
-              (e) => {
-                solidColorToPatch(e, (v) => {
-                  const list = [...palette];
-                  list[ci] = v;
-                  patch({ colors: list });
-                });
-              },
-            )}
+                `ic-ef-hm-g-${index}-${ci}`,
+                c,
+                (e) => {
+                  solidColorToPatch(e, (v) => {
+                    const list = [...palette];
+                    list[ci] = v;
+                    patch({ colors: list });
+                  });
+                },
+              )}
               <sp-action-button
                 quiet
                 size="s"
                 label=${msg(str`Remove`)}
                 ?disabled=${palette.length <= 1}
                 @click=${() => {
-                const list = palette.filter((_, j) => j !== ci);
-                patch({
-                  colors: list.length > 0 ? list : [...HEATMAP_DEFAULTS.colors],
-                });
-              }}
+                  const list = palette.filter((_, j) => j !== ci);
+                  patch({
+                    colors:
+                      list.length > 0 ? list : [...HEATMAP_DEFAULTS.colors],
+                  });
+                }}
               >
                 <sp-icon-delete slot="icon"></sp-icon-delete>
               </sp-action-button>
             </div>
           `,
-          )}
+        )}
         <sp-action-button
           quiet
           size="m"
           label=${msg(str`Add gradient stop`)}
           @click=${() => {
-          const list = [...palette];
-          if (list.length >= 10) return;
-          list.push('#888888');
-          patch({ colors: list });
-        }}
+            const list = [...palette];
+            if (list.length >= 10) return;
+            list.push('#888888');
+            patch({ colors: list });
+          }}
           ?disabled=${palette.length >= 10}
         >
           <sp-icon-add slot="icon"></sp-icon-add>
@@ -1740,33 +1591,33 @@ export class EffectsPanel extends LitElement {
             size="s"
             ?checked=${!!h.useEngineTime}
             @change=${(e: Event & { target: HTMLInputElement }) => {
-          const checked = (e.target as HTMLInputElement).checked;
-          patch({ useEngineTime: checked });
-        }}
+              const checked = (e.target as HTMLInputElement).checked;
+              patch({ useEngineTime: checked });
+            }}
             >${msg(str`Engine time (animate)`)}</sp-switch
           >
         </div>
         ${h.useEngineTime
           ? html`<span class="hint"
               >${msg(
-            str`Time uniform follows the app clock each frame (heat map).`,
-          )}</span
+                str`Time uniform follows the app clock each frame (heat map).`,
+              )}</span
             >`
           : html`
-        <sp-slider
-          size="s"
-          label=${msg(str`Time`)}
-          min="0"
-          max="100"
-          step="0.1"
-          .value=${h.time}
-          editable
-          @change=${(e: Event & { target: HTMLInputElement }) => {
-              const v = parseFloat(e.target.value);
-              patch({ time: Number.isFinite(v) ? v : h.time });
-            }}
-        ></sp-slider>
-      `}
+              <sp-slider
+                size="s"
+                label=${msg(str`Time`)}
+                min="0"
+                max="100"
+                step="0.1"
+                .value=${h.time}
+                editable
+                @change=${(e: Event & { target: HTMLInputElement }) => {
+                  const v = parseFloat(e.target.value);
+                  patch({ time: Number.isFinite(v) ? v : h.time });
+                }}
+              ></sp-slider>
+            `}
       `;
     }
     if (isGemSmokeEffect(effect)) {
@@ -1793,11 +1644,11 @@ export class EffectsPanel extends LitElement {
           .value=${h.innerDistortion}
           editable
           @change=${(e: Event & { target: HTMLInputElement }) => {
-          const v = parseFloat(e.target.value);
-          patch({
-            innerDistortion: Number.isFinite(v) ? v : h.innerDistortion,
-          });
-        }}
+            const v = parseFloat(e.target.value);
+            patch({
+              innerDistortion: Number.isFinite(v) ? v : h.innerDistortion,
+            });
+          }}
         ></sp-slider>
         <sp-slider
           size="s"
@@ -1808,11 +1659,11 @@ export class EffectsPanel extends LitElement {
           .value=${h.outerDistortion}
           editable
           @change=${(e: Event & { target: HTMLInputElement }) => {
-          const v = parseFloat(e.target.value);
-          patch({
-            outerDistortion: Number.isFinite(v) ? v : h.outerDistortion,
-          });
-        }}
+            const v = parseFloat(e.target.value);
+            patch({
+              outerDistortion: Number.isFinite(v) ? v : h.outerDistortion,
+            });
+          }}
         ></sp-slider>
         <sp-slider
           size="s"
@@ -1823,9 +1674,9 @@ export class EffectsPanel extends LitElement {
           .value=${h.outerGlow}
           editable
           @change=${(e: Event & { target: HTMLInputElement }) => {
-          const v = parseFloat(e.target.value);
-          patch({ outerGlow: Number.isFinite(v) ? v : h.outerGlow });
-        }}
+            const v = parseFloat(e.target.value);
+            patch({ outerGlow: Number.isFinite(v) ? v : h.outerGlow });
+          }}
         ></sp-slider>
         <sp-slider
           size="s"
@@ -1836,9 +1687,9 @@ export class EffectsPanel extends LitElement {
           .value=${h.innerGlow}
           editable
           @change=${(e: Event & { target: HTMLInputElement }) => {
-          const v = parseFloat(e.target.value);
-          patch({ innerGlow: Number.isFinite(v) ? v : h.innerGlow });
-        }}
+            const v = parseFloat(e.target.value);
+            patch({ innerGlow: Number.isFinite(v) ? v : h.innerGlow });
+          }}
         ></sp-slider>
         <sp-slider
           size="s"
@@ -1849,9 +1700,9 @@ export class EffectsPanel extends LitElement {
           .value=${h.offset}
           editable
           @change=${(e: Event & { target: HTMLInputElement }) => {
-          const v = parseFloat(e.target.value);
-          patch({ offset: Number.isFinite(v) ? v : h.offset });
-        }}
+            const v = parseFloat(e.target.value);
+            patch({ offset: Number.isFinite(v) ? v : h.offset });
+          }}
         ></sp-slider>
         <sp-slider
           size="s"
@@ -1862,9 +1713,9 @@ export class EffectsPanel extends LitElement {
           .value=${h.angle}
           editable
           @change=${(e: Event & { target: HTMLInputElement }) => {
-          const v = parseFloat(e.target.value);
-          patch({ angle: Number.isFinite(v) ? v : h.angle });
-        }}
+            const v = parseFloat(e.target.value);
+            patch({ angle: Number.isFinite(v) ? v : h.angle });
+          }}
         ></sp-slider>
         <sp-slider
           size="s"
@@ -1875,24 +1726,22 @@ export class EffectsPanel extends LitElement {
           .value=${h.size}
           editable
           @change=${(e: Event & { target: HTMLInputElement }) => {
-          const v = parseFloat(e.target.value);
-          patch({ size: Number.isFinite(v) ? v : h.size });
-        }}
+            const v = parseFloat(e.target.value);
+            patch({ size: Number.isFinite(v) ? v : h.size });
+          }}
         ></sp-slider>
         <sp-picker
           size="s"
           label=${msg(str`Shape (no image)`)}
           .value=${String(h.shape)}
           @change=${(e: Event & { target: HTMLInputElement }) => {
-          const v = parseInt(e.target.value, 10);
-          patch({
-            shape: Math.max(0, Math.min(4, Number.isFinite(v) ? v : h.shape)),
-          });
-        }}
+            const v = parseInt(e.target.value, 10);
+            patch({
+              shape: Math.max(0, Math.min(4, Number.isFinite(v) ? v : h.shape)),
+            });
+          }}
         >
-          <sp-menu-item value="0"
-            >${msg(str`Full canvas`)}</sp-menu-item
-          >
+          <sp-menu-item value="0">${msg(str`Full canvas`)}</sp-menu-item>
           <sp-menu-item value="1">${msg(str`Circle`)}</sp-menu-item>
           <sp-menu-item value="2">${msg(str`Daisy`)}</sp-menu-item>
           <sp-menu-item value="3">${msg(str`Diamond`)}</sp-menu-item>
@@ -1902,20 +1751,24 @@ export class EffectsPanel extends LitElement {
           size="s"
           ?checked=${h.useImage}
           @change=${(e: Event & { target: HTMLInputElement }) => {
-          const checked = (e.target as { checked?: boolean }).checked === true;
-          patch({ useImage: checked });
-        }}
-        >${msg(str`Use layer as mask`)}</sp-switch
+            const checked =
+              (e.target as { checked?: boolean }).checked === true;
+            patch({ useImage: checked });
+          }}
+          >${msg(str`Use layer as mask`)}</sp-switch
         >
         ${h.useImage
           ? html`<sp-switch
-            size="s"
-            ?checked=${h.usePoisson !== false}
-            @change=${(e: Event & { target: HTMLInputElement }) => {
-              const checked = (e.target as { checked?: boolean }).checked === true;
-              patch({ usePoisson: checked });
-            }}
-            >${msg(str`CPU Poisson (WebGL; R/G like liquid metal)`)}</sp-switch
+              size="s"
+              ?checked=${h.usePoisson !== false}
+              @change=${(e: Event & { target: HTMLInputElement }) => {
+                const checked =
+                  (e.target as { checked?: boolean }).checked === true;
+                patch({ usePoisson: checked });
+              }}
+              >${msg(
+                str`CPU Poisson (WebGL; R/G like liquid metal)`,
+              )}</sp-switch
             >`
           : ''}
         <div class="effect-color-field-row">
@@ -1952,46 +1805,47 @@ export class EffectsPanel extends LitElement {
           >${msg(str`Smoke colors (max 6)`)}</sp-field-label
         >
         ${smPalette.map(
-            (c, ci) => html`
+          (c, ci) => html`
             <div class="color-ctrl-row">
               ${this.renderEffectSolidPopover(
-              `ic-ef-gs-s-${index}-${ci}`,
-              c,
-              (e) => {
-                solidColorToPatch(e, (v) => {
-                  const list = [...smPalette];
-                  list[ci] = v;
-                  patch({ colors: list });
-                });
-              },
-            )}
+                `ic-ef-gs-s-${index}-${ci}`,
+                c,
+                (e) => {
+                  solidColorToPatch(e, (v) => {
+                    const list = [...smPalette];
+                    list[ci] = v;
+                    patch({ colors: list });
+                  });
+                },
+              )}
               <sp-action-button
                 quiet
                 size="s"
                 label=${msg(str`Remove`)}
                 ?disabled=${smPalette.length <= 1}
                 @click=${() => {
-                const list = smPalette.filter((_, j) => j !== ci);
-                patch({
-                  colors: list.length > 0 ? list : [...GEM_SMOKE_DEFAULTS.colors],
-                });
-              }}
+                  const list = smPalette.filter((_, j) => j !== ci);
+                  patch({
+                    colors:
+                      list.length > 0 ? list : [...GEM_SMOKE_DEFAULTS.colors],
+                  });
+                }}
               >
                 <sp-icon-delete slot="icon"></sp-icon-delete>
               </sp-action-button>
             </div>
           `,
-          )}
+        )}
         <sp-action-button
           quiet
           size="m"
           label=${msg(str`Add smoke color`)}
           @click=${() => {
-          const list = [...smPalette];
-          if (list.length >= 6) return;
-          list.push('#888888');
-          patch({ colors: list });
-        }}
+            const list = [...smPalette];
+            if (list.length >= 6) return;
+            list.push('#888888');
+            patch({ colors: list });
+          }}
           ?disabled=${smPalette.length >= 6}
         >
           <sp-icon-add slot="icon"></sp-icon-add>
@@ -2002,37 +1856,37 @@ export class EffectsPanel extends LitElement {
             size="s"
             ?checked=${!!h.useEngineTime}
             @change=${(e: Event & { target: HTMLInputElement }) => {
-          const checked = (e.target as HTMLInputElement).checked;
-          patch({ useEngineTime: checked });
-        }}
+              const checked = (e.target as HTMLInputElement).checked;
+              patch({ useEngineTime: checked });
+            }}
             >${msg(str`Engine time (animate)`)}</sp-switch
           >
         </div>
         ${h.useEngineTime
           ? html`<span class="hint"
               >${msg(
-            str`Time uniform follows the app clock each frame (gem smoke).`,
-          )}</span
+                str`Time uniform follows the app clock each frame (gem smoke).`,
+              )}</span
             >`
           : html`
-        <sp-slider
-          size="s"
-          label=${msg(str`Time`)}
-          min="0"
-          max="100"
-          step="0.1"
-          .value=${h.time}
-          editable
-          @change=${(e: Event & { target: HTMLInputElement }) => {
-              const v = parseFloat(e.target.value);
-              patch({ time: Number.isFinite(v) ? v : h.time });
-            }}
-        ></sp-slider>
-      `}
+              <sp-slider
+                size="s"
+                label=${msg(str`Time`)}
+                min="0"
+                max="100"
+                step="0.1"
+                .value=${h.time}
+                editable
+                @change=${(e: Event & { target: HTMLInputElement }) => {
+                  const v = parseFloat(e.target.value);
+                  patch({ time: Number.isFinite(v) ? v : h.time });
+                }}
+              ></sp-slider>
+            `}
       `;
     }
     if (isCrtEffect(effect)) {
-      const h = effect as unknown as CrtEffectRow;
+      const h = effect as unknown as CrtEffect;
       return html`
         <sp-slider
           size="s"
@@ -2043,14 +1897,14 @@ export class EffectsPanel extends LitElement {
           .value=${h.curvature}
           editable
           @change=${(e: Event & { target: HTMLInputElement }) => {
-          const v = parseFloat(e.target.value);
-          const next = [...this.effects];
-          next[index] = {
-            ...h,
-            curvature: Number.isFinite(v) ? v : h.curvature,
-          } as unknown as Effect;
-          this.commit(next);
-        }}
+            const v = parseFloat(e.target.value);
+            const next = [...this.effects];
+            next[index] = {
+              ...h,
+              curvature: Number.isFinite(v) ? v : h.curvature,
+            } as unknown as Effect;
+            this.commit(next);
+          }}
         ></sp-slider>
         <sp-slider
           size="s"
@@ -2061,14 +1915,14 @@ export class EffectsPanel extends LitElement {
           .value=${h.lineWidth}
           editable
           @change=${(e: Event & { target: HTMLInputElement }) => {
-          const v = parseFloat(e.target.value);
-          const next = [...this.effects];
-          next[index] = {
-            ...h,
-            lineWidth: Number.isFinite(v) ? v : h.lineWidth,
-          } as unknown as Effect;
-          this.commit(next);
-        }}
+            const v = parseFloat(e.target.value);
+            const next = [...this.effects];
+            next[index] = {
+              ...h,
+              lineWidth: Number.isFinite(v) ? v : h.lineWidth,
+            } as unknown as Effect;
+            this.commit(next);
+          }}
         ></sp-slider>
         <sp-slider
           size="s"
@@ -2079,14 +1933,14 @@ export class EffectsPanel extends LitElement {
           .value=${h.lineContrast}
           editable
           @change=${(e: Event & { target: HTMLInputElement }) => {
-          const v = parseFloat(e.target.value);
-          const next = [...this.effects];
-          next[index] = {
-            ...h,
-            lineContrast: Number.isFinite(v) ? v : h.lineContrast,
-          } as unknown as Effect;
-          this.commit(next);
-        }}
+            const v = parseFloat(e.target.value);
+            const next = [...this.effects];
+            next[index] = {
+              ...h,
+              lineContrast: Number.isFinite(v) ? v : h.lineContrast,
+            } as unknown as Effect;
+            this.commit(next);
+          }}
         ></sp-slider>
         <sp-slider
           size="s"
@@ -2097,57 +1951,57 @@ export class EffectsPanel extends LitElement {
           .value=${h.verticalLine}
           editable
           @change=${(e: Event & { target: HTMLInputElement }) => {
-          const v = parseFloat(e.target.value);
-          const next = [...this.effects];
-          next[index] = {
-            ...h,
-            verticalLine: Number.isFinite(v) ? v : h.verticalLine,
-          } as unknown as Effect;
-          this.commit(next);
-        }}
+            const v = parseFloat(e.target.value);
+            const next = [...this.effects];
+            next[index] = {
+              ...h,
+              verticalLine: Number.isFinite(v) ? v : h.verticalLine,
+            } as unknown as Effect;
+            this.commit(next);
+          }}
         ></sp-slider>
         <div class="row-head">
           <sp-switch
             size="s"
             ?checked=${!!h.useEngineTime}
             @change=${(e: Event & { target: HTMLInputElement }) => {
-          const checked = (e.target as HTMLInputElement).checked;
-          const next = [...this.effects];
-          next[index] = {
-            ...h,
-            useEngineTime: checked,
-          } as unknown as Effect;
-          this.commit(next);
-        }}
+              const checked = (e.target as HTMLInputElement).checked;
+              const next = [...this.effects];
+              next[index] = {
+                ...h,
+                useEngineTime: checked,
+              } as unknown as Effect;
+              this.commit(next);
+            }}
             >${msg(str`Engine time (animate)`)}</sp-switch
           >
         </div>
         ${h.useEngineTime
           ? html``
           : html`
-        <sp-slider
-          size="s"
-          label=${msg(str`Time`)}
-          min="0"
-          max="100"
-          step="0.1"
-          .value=${h.time}
-          editable
-          @change=${(e: Event & { target: HTMLInputElement }) => {
-              const v = parseFloat(e.target.value);
-              const next = [...this.effects];
-              next[index] = {
-                ...h,
-                time: Number.isFinite(v) ? v : h.time,
-              } as unknown as Effect;
-              this.commit(next);
-            }}
-        ></sp-slider>
-      `}
+              <sp-slider
+                size="s"
+                label=${msg(str`Time`)}
+                min="0"
+                max="100"
+                step="0.1"
+                .value=${h.time}
+                editable
+                @change=${(e: Event & { target: HTMLInputElement }) => {
+                  const v = parseFloat(e.target.value);
+                  const next = [...this.effects];
+                  next[index] = {
+                    ...h,
+                    time: Number.isFinite(v) ? v : h.time,
+                  } as unknown as Effect;
+                  this.commit(next);
+                }}
+              ></sp-slider>
+            `}
       `;
     }
     if (isGlitchEffect(effect)) {
-      const h = effect as unknown as GlitchEffectRow;
+      const h = effect as unknown as GlitchEffect;
       return html`
         <sp-slider
           size="s"
@@ -2158,14 +2012,14 @@ export class EffectsPanel extends LitElement {
           .value=${h.jitter}
           editable
           @change=${(e: Event & { target: HTMLInputElement }) => {
-          const v = parseFloat(e.target.value);
-          const next = [...this.effects];
-          next[index] = {
-            ...h,
-            jitter: Number.isFinite(v) ? v : h.jitter,
-          } as unknown as Effect;
-          this.commit(next);
-        }}
+            const v = parseFloat(e.target.value);
+            const next = [...this.effects];
+            next[index] = {
+              ...h,
+              jitter: Number.isFinite(v) ? v : h.jitter,
+            } as unknown as Effect;
+            this.commit(next);
+          }}
         ></sp-slider>
         <sp-slider
           size="s"
@@ -2176,14 +2030,14 @@ export class EffectsPanel extends LitElement {
           .value=${h.blocks}
           editable
           @change=${(e: Event & { target: HTMLInputElement }) => {
-          const v = parseFloat(e.target.value);
-          const next = [...this.effects];
-          next[index] = {
-            ...h,
-            blocks: Number.isFinite(v) ? v : h.blocks,
-          } as unknown as Effect;
-          this.commit(next);
-        }}
+            const v = parseFloat(e.target.value);
+            const next = [...this.effects];
+            next[index] = {
+              ...h,
+              blocks: Number.isFinite(v) ? v : h.blocks,
+            } as unknown as Effect;
+            this.commit(next);
+          }}
         ></sp-slider>
         <sp-slider
           size="s"
@@ -2194,58 +2048,58 @@ export class EffectsPanel extends LitElement {
           .value=${h.rgbSplit}
           editable
           @change=${(e: Event & { target: HTMLInputElement }) => {
-          const v = parseFloat(e.target.value);
-          const next = [...this.effects];
-          next[index] = {
-            ...h,
-            rgbSplit: Number.isFinite(v) ? v : h.rgbSplit,
-          } as unknown as Effect;
-          this.commit(next);
-        }}
+            const v = parseFloat(e.target.value);
+            const next = [...this.effects];
+            next[index] = {
+              ...h,
+              rgbSplit: Number.isFinite(v) ? v : h.rgbSplit,
+            } as unknown as Effect;
+            this.commit(next);
+          }}
         ></sp-slider>
         <div class="row-head">
           <sp-switch
             size="s"
             ?checked=${!!h.useEngineTime}
             @change=${(e: Event & { target: HTMLInputElement }) => {
-          const checked = (e.target as HTMLInputElement).checked;
-          const next = [...this.effects];
-          next[index] = {
-            ...h,
-            useEngineTime: checked,
-          } as unknown as Effect;
-          this.commit(next);
-        }}
+              const checked = (e.target as HTMLInputElement).checked;
+              const next = [...this.effects];
+              next[index] = {
+                ...h,
+                useEngineTime: checked,
+              } as unknown as Effect;
+              this.commit(next);
+            }}
             >${msg(str`Engine time (animate)`)}</sp-switch
           >
         </div>
         ${h.useEngineTime
           ? html``
           : html`
-        <sp-slider
-          size="s"
-          label=${msg(str`Time`)}
-          min="0"
-          max="100"
-          step="0.1"
-          .value=${h.time}
-          editable
-          @change=${(e: Event & { target: HTMLInputElement }) => {
-              const v = parseFloat(e.target.value);
-              const next = [...this.effects];
-              next[index] = {
-                ...h,
-                time: Number.isFinite(v) ? v : h.time,
-              } as unknown as Effect;
-              this.commit(next);
-            }}
-        ></sp-slider>
-      `}
+              <sp-slider
+                size="s"
+                label=${msg(str`Time`)}
+                min="0"
+                max="100"
+                step="0.1"
+                .value=${h.time}
+                editable
+                @change=${(e: Event & { target: HTMLInputElement }) => {
+                  const v = parseFloat(e.target.value);
+                  const next = [...this.effects];
+                  next[index] = {
+                    ...h,
+                    time: Number.isFinite(v) ? v : h.time,
+                  } as unknown as Effect;
+                  this.commit(next);
+                }}
+              ></sp-slider>
+            `}
       `;
     }
     if (isLiquidGlassEffect(effect)) {
-      const h = effect as unknown as LiquidGlassEffectRow;
-      const patch = (partial: Partial<LiquidGlassEffectRow>) => {
+      const h = effect as unknown as LiquidGlassEffect;
+      const patch = (partial: Partial<LiquidGlassEffect>) => {
         const next = [...this.effects];
         next[index] = { ...h, ...partial } as unknown as Effect;
         this.commit(next);
@@ -2253,7 +2107,7 @@ export class EffectsPanel extends LitElement {
       const num = (
         e: Event & { target: HTMLInputElement },
         cur: number,
-        fn: (v: number) => Partial<LiquidGlassEffectRow>,
+        fn: (v: number) => Partial<LiquidGlassEffect>,
       ) => {
         const v = parseFloat(e.target.value);
         patch(Number.isFinite(v) ? fn(v) : fn(cur));
@@ -2268,7 +2122,7 @@ export class EffectsPanel extends LitElement {
           .value=${h.powerFactor}
           editable
           @change=${(e: Event & { target: HTMLInputElement }) =>
-          num(e, h.powerFactor, (v) => ({ powerFactor: v }))}
+            num(e, h.powerFactor, (v) => ({ powerFactor: v }))}
         ></sp-slider>
         <sp-slider
           size="s"
@@ -2279,7 +2133,7 @@ export class EffectsPanel extends LitElement {
           .value=${h.ellipseSizeX ?? 1}
           editable
           @change=${(e: Event & { target: HTMLInputElement }) =>
-          num(e, h.ellipseSizeX ?? 1, (v) => ({ ellipseSizeX: v }))}
+            num(e, h.ellipseSizeX ?? 1, (v) => ({ ellipseSizeX: v }))}
         ></sp-slider>
         <sp-slider
           size="s"
@@ -2290,7 +2144,7 @@ export class EffectsPanel extends LitElement {
           .value=${h.ellipseSizeY ?? 1}
           editable
           @change=${(e: Event & { target: HTMLInputElement }) =>
-          num(e, h.ellipseSizeY ?? 1, (v) => ({ ellipseSizeY: v }))}
+            num(e, h.ellipseSizeY ?? 1, (v) => ({ ellipseSizeY: v }))}
         ></sp-slider>
         <sp-slider
           size="s"
@@ -2301,7 +2155,7 @@ export class EffectsPanel extends LitElement {
           .value=${h.fPower}
           editable
           @change=${(e: Event & { target: HTMLInputElement }) =>
-          num(e, h.fPower, (v) => ({ fPower: v }))}
+            num(e, h.fPower, (v) => ({ fPower: v }))}
         ></sp-slider>
         <sp-slider
           size="s"
@@ -2312,7 +2166,7 @@ export class EffectsPanel extends LitElement {
           .value=${h.noise}
           editable
           @change=${(e: Event & { target: HTMLInputElement }) =>
-          num(e, h.noise, (v) => ({ noise: v }))}
+            num(e, h.noise, (v) => ({ noise: v }))}
         ></sp-slider>
         <sp-slider
           size="s"
@@ -2323,7 +2177,7 @@ export class EffectsPanel extends LitElement {
           .value=${h.glowWeight}
           editable
           @change=${(e: Event & { target: HTMLInputElement }) =>
-          num(e, h.glowWeight, (v) => ({ glowWeight: v }))}
+            num(e, h.glowWeight, (v) => ({ glowWeight: v }))}
         ></sp-slider>
         <sp-slider
           size="s"
@@ -2334,7 +2188,7 @@ export class EffectsPanel extends LitElement {
           .value=${h.glowBias}
           editable
           @change=${(e: Event & { target: HTMLInputElement }) =>
-          num(e, h.glowBias, (v) => ({ glowBias: v }))}
+            num(e, h.glowBias, (v) => ({ glowBias: v }))}
         ></sp-slider>
         <sp-slider
           size="s"
@@ -2345,7 +2199,7 @@ export class EffectsPanel extends LitElement {
           .value=${h.glowEdge0}
           editable
           @change=${(e: Event & { target: HTMLInputElement }) =>
-          num(e, h.glowEdge0, (v) => ({ glowEdge0: v }))}
+            num(e, h.glowEdge0, (v) => ({ glowEdge0: v }))}
         ></sp-slider>
         <sp-slider
           size="s"
@@ -2356,7 +2210,7 @@ export class EffectsPanel extends LitElement {
           .value=${h.glowEdge1}
           editable
           @change=${(e: Event & { target: HTMLInputElement }) =>
-          num(e, h.glowEdge1, (v) => ({ glowEdge1: v }))}
+            num(e, h.glowEdge1, (v) => ({ glowEdge1: v }))}
         ></sp-slider>
         <sp-slider
           size="s"
@@ -2367,7 +2221,7 @@ export class EffectsPanel extends LitElement {
           .value=${h.centerX}
           editable
           @change=${(e: Event & { target: HTMLInputElement }) =>
-          num(e, h.centerX, (v) => ({ centerX: v }))}
+            num(e, h.centerX, (v) => ({ centerX: v }))}
         ></sp-slider>
         <sp-slider
           size="s"
@@ -2378,7 +2232,7 @@ export class EffectsPanel extends LitElement {
           .value=${h.centerY}
           editable
           @change=${(e: Event & { target: HTMLInputElement }) =>
-          num(e, h.centerY, (v) => ({ centerY: v }))}
+            num(e, h.centerY, (v) => ({ centerY: v }))}
         ></sp-slider>
         <sp-slider
           size="s"
@@ -2389,7 +2243,7 @@ export class EffectsPanel extends LitElement {
           .value=${h.scaleX}
           editable
           @change=${(e: Event & { target: HTMLInputElement }) =>
-          num(e, h.scaleX, (v) => ({ scaleX: v }))}
+            num(e, h.scaleX, (v) => ({ scaleX: v }))}
         ></sp-slider>
         <sp-slider
           size="s"
@@ -2400,7 +2254,7 @@ export class EffectsPanel extends LitElement {
           .value=${h.scaleY}
           editable
           @change=${(e: Event & { target: HTMLInputElement }) =>
-          num(e, h.scaleY, (v) => ({ scaleY: v }))}
+            num(e, h.scaleY, (v) => ({ scaleY: v }))}
         ></sp-slider>
         <span class="hint"
           >${msg(
@@ -2410,7 +2264,7 @@ export class EffectsPanel extends LitElement {
       `;
     }
     if (isVignetteEffect(effect)) {
-      const h = effect as unknown as VignetteEffectRow;
+      const h = effect as unknown as VignetteEffect;
       return html`
         <sp-slider
           size="s"
@@ -2421,14 +2275,14 @@ export class EffectsPanel extends LitElement {
           .value=${h.size}
           editable
           @change=${(e: Event & { target: HTMLInputElement }) => {
-          const v = parseFloat(e.target.value);
-          const next = [...this.effects];
-          next[index] = {
-            ...h,
-            size: Number.isFinite(v) ? v : h.size,
-          } as unknown as Effect;
-          this.commit(next);
-        }}
+            const v = parseFloat(e.target.value);
+            const next = [...this.effects];
+            next[index] = {
+              ...h,
+              size: Number.isFinite(v) ? v : h.size,
+            } as unknown as Effect;
+            this.commit(next);
+          }}
         ></sp-slider>
         <sp-slider
           size="s"
@@ -2439,19 +2293,19 @@ export class EffectsPanel extends LitElement {
           .value=${h.amount}
           editable
           @change=${(e: Event & { target: HTMLInputElement }) => {
-          const v = parseFloat(e.target.value);
-          const next = [...this.effects];
-          next[index] = {
-            ...h,
-            amount: Number.isFinite(v) ? v : h.amount,
-          } as unknown as Effect;
-          this.commit(next);
-        }}
+            const v = parseFloat(e.target.value);
+            const next = [...this.effects];
+            next[index] = {
+              ...h,
+              amount: Number.isFinite(v) ? v : h.amount,
+            } as unknown as Effect;
+            this.commit(next);
+          }}
         ></sp-slider>
       `;
     }
     if (isAsciiEffect(effect)) {
-      const h = effect as unknown as AsciiEffectRow;
+      const h = effect as unknown as AsciiEffect;
       return html`
         <sp-slider
           size="s"
@@ -2462,28 +2316,28 @@ export class EffectsPanel extends LitElement {
           .value=${h.size}
           editable
           @change=${(e: Event & { target: HTMLInputElement }) => {
-          const v = parseFloat(e.target.value);
-          const next = [...this.effects];
-          next[index] = {
-            ...h,
-            size: Number.isFinite(v) ? Math.round(v) : h.size,
-          } as unknown as Effect;
-          this.commit(next);
-        }}
+            const v = parseFloat(e.target.value);
+            const next = [...this.effects];
+            next[index] = {
+              ...h,
+              size: Number.isFinite(v) ? Math.round(v) : h.size,
+            } as unknown as Effect;
+            this.commit(next);
+          }}
         ></sp-slider>
         <div class="row-head">
           <sp-switch
             size="s"
             ?checked=${h.replaceColor}
             @change=${(e: Event & { target: HTMLInputElement }) => {
-          const checked = (e.target as HTMLInputElement).checked;
-          const next = [...this.effects];
-          next[index] = {
-            ...h,
-            replaceColor: checked,
-          } as unknown as Effect;
-          this.commit(next);
-        }}
+              const checked = (e.target as HTMLInputElement).checked;
+              const next = [...this.effects];
+              next[index] = {
+                ...h,
+                replaceColor: checked,
+              } as unknown as Effect;
+              this.commit(next);
+            }}
             >${msg(str`Solid glyph color`)}</sp-switch
           >
         </div>
@@ -2493,13 +2347,70 @@ export class EffectsPanel extends LitElement {
               label=${msg(str`Color`)}
               .value=${h.color}
               @change=${(e: Event & { target: HTMLInputElement }) => {
-              const v = e.target.value.trim();
-              const next = [...this.effects];
-              next[index] = { ...h, color: v || h.color } as unknown as Effect;
-              this.commit(next);
-            }}
+                const v = e.target.value.trim();
+                const next = [...this.effects];
+                next[index] = {
+                  ...h,
+                  color: v || h.color,
+                } as unknown as Effect;
+                this.commit(next);
+              }}
             ></sp-textfield>`
           : null}
+      `;
+    }
+    if (isLutEffect(effect)) {
+      const h = effect as unknown as {
+        type: 'lut';
+        lutKey: string;
+        strength: number;
+      };
+      const patch = (
+        partial: Partial<{ lutKey: string; strength: number }>,
+      ) => {
+        const next = [...this.effects];
+        next[index] = { ...h, ...partial, type: 'lut' } as unknown as Effect;
+        this.commit(next);
+      };
+      const keyOptions = this.lutKeyPickerOptions(h.lutKey);
+      const pickerValue = keyOptions.includes(h.lutKey)
+        ? h.lutKey
+        : keyOptions[0]!;
+      return html`
+        <sp-picker
+          size="s"
+          label=${msg(str`LUT key`)}
+          .value=${pickerValue}
+          @change=${(e: Event & { target: HTMLInputElement }) => {
+            const v = e.target.value.trim();
+            if (v.length) {
+              patch({ lutKey: v });
+            }
+          }}
+        >
+          ${map(
+            keyOptions,
+            (key) => html`<sp-menu-item value=${key}>${key}</sp-menu-item>`,
+          )}
+        </sp-picker>
+        <sp-slider
+          size="s"
+          label=${msg(str`Strength`)}
+          label-visibility="none"
+          min="0"
+          max="1"
+          step="0.01"
+          .value=${h.strength}
+          editable
+          @change=${(e: Event & { target: HTMLInputElement }) => {
+            const v = parseFloat(e.target.value);
+            patch({
+              strength: Number.isFinite(v)
+                ? Math.max(0, Math.min(1, v))
+                : h.strength,
+            });
+          }}
+        ></sp-slider>
       `;
     }
     if (effect.type === 'adjustment') {
@@ -2514,13 +2425,13 @@ export class EffectsPanel extends LitElement {
           .value=${effect.saturation}
           editable
           @change=${(e: Event & { target: HTMLInputElement }) => {
-          const v = parseFloat(e.target.value);
-          const next = [...this.effects];
-          const cur = next[index];
-          if (cur.type !== 'adjustment') return;
-          next[index] = { ...cur, saturation: v };
-          this.commit(next);
-        }}
+            const v = parseFloat(e.target.value);
+            const next = [...this.effects];
+            const cur = next[index];
+            if (cur.type !== 'adjustment') return;
+            next[index] = { ...cur, saturation: v };
+            this.commit(next);
+          }}
         ></sp-slider>
       `;
     }
@@ -2537,8 +2448,8 @@ export class EffectsPanel extends LitElement {
 
     return html`
       ${map(this.effects, (effect, index) =>
-      this.renderEffectRow(effect, index),
-    )}
+        this.renderEffectRow(effect, index),
+      )}
       <div class="add-row">
         <sp-action-menu
           size="s"
@@ -2550,17 +2461,13 @@ export class EffectsPanel extends LitElement {
             >${msg(str`Brightness`)}</sp-menu-item
           >
           <sp-menu-item value="contrast">${msg(str`Contrast`)}</sp-menu-item>
-          <sp-menu-item value="saturate"
-            >${msg(str`Saturation`)}</sp-menu-item
-          >
+          <sp-menu-item value="saturate">${msg(str`Saturation`)}</sp-menu-item>
           <sp-menu-item value="noise">${msg(str`Noise`)}</sp-menu-item>
           <sp-menu-item value="fxaa"
             >${msg(str`Smoothing (FXAA)`)}</sp-menu-item
           >
           <sp-menu-item value="blur">${msg(str`Blur`)}</sp-menu-item>
-          <sp-menu-item value="pixelate"
-            >${msg(str`Pixelate`)}</sp-menu-item
-          >
+          <sp-menu-item value="pixelate">${msg(str`Pixelate`)}</sp-menu-item>
           <sp-menu-item value="dot">${msg(str`Dot screen`)}</sp-menu-item>
           <sp-menu-item value="colorHalftone"
             >${msg(str`Color halftone`)}</sp-menu-item
@@ -2585,6 +2492,7 @@ export class EffectsPanel extends LitElement {
           >
           <sp-menu-item value="heatmap">${msg(str`Heat map`)}</sp-menu-item>
           <sp-menu-item value="gemSmoke">${msg(str`Gem smoke`)}</sp-menu-item>
+          <sp-menu-item value="lut">${msg(str`LUT`)}</sp-menu-item>
         </sp-action-menu>
       </div>
     `;

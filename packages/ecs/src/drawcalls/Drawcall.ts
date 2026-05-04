@@ -49,6 +49,10 @@ import {
   liquidMetalUniformValues,
   imageDataToLiquidMetalPoissonMap,
 } from '../utils';
+import {
+  getCubeLutGpu,
+  warnMissingCubeLutOnce,
+} from '../utils/cube-lut-cache';
 import { Location } from '../shaders/wireframe';
 import { TexturePool } from '../resources';
 import {
@@ -58,12 +62,12 @@ import {
   FillPattern,
   FillSolid,
   FillTexture,
-  Filter,
   ClipMode,
   Wireframe,
 } from '../components';
 import {
   filterStringUsesEngineTimePost,
+  getRasterFilterValueForShape,
   hasRasterPostEffects,
 } from '../utils/filter';
 import { API } from '../API';
@@ -90,6 +94,7 @@ import { frag as liquidGlassFrag } from '../shaders/post-processing/liquidGlass'
 import { frag as liquidMetalFrag } from '../shaders/post-processing/liquidMetal';
 import { frag as heatmapFrag } from '../shaders/post-processing/heatmap';
 import { frag as gemSmokeFrag } from '../shaders/post-processing/gemSmoke';
+import { frag as lutFrag } from '../shaders/post-processing/lut';
 import type { RGGraphBuilder } from '../render-graph/interface';
 
 const FRAG_MAP: Record<
@@ -153,6 +158,9 @@ const FRAG_MAP: Record<
   gemSmoke: {
     shader: gemSmokeFrag,
   },
+  lut: {
+    shader: lutFrag,
+  },
 };
 
 function postEffectUniformFloatCount(effect: Effect): number {
@@ -189,6 +197,8 @@ function postEffectUniformFloatCount(effect: Effect): number {
       return 56;
     case 'gemSmoke':
       return 48;
+    case 'lut':
+      return 4;
     case 'drop-shadow':
       return 2;
     case 'fxaa':
@@ -246,6 +256,7 @@ function setPostEffectUniformData(
   buffer: Buffer,
   textureWidth?: number,
   textureHeight?: number,
+  device?: Device,
 ): void {
   const count = postEffectUniformFloatCount(effect);
   const data = new Float32Array(count);
@@ -453,6 +464,24 @@ function setPostEffectUniformData(
       }
       break;
     }
+    case 'lut': {
+      if (!device) {
+        break;
+      }
+      const g = getCubeLutGpu(device, effect.lutKey);
+      if (!g) {
+        break;
+      }
+      const str = Math.max(
+        0,
+        Math.min(1, Number.isFinite(effect.strength) ? effect.strength : 1),
+      );
+      data[i++] = g.size;
+      data[i++] = str;
+      data[i++] = 0;
+      data[i++] = 0;
+      break;
+    }
     case 'drop-shadow':
       data[i++] = effect.x;
       data[i++] = effect.y;
@@ -559,6 +588,8 @@ export abstract class Drawcall {
     heatmapPreprocessAttempt?: boolean;
     /** Same R/G CPU map as liquid metal ({@link imageDataToLiquidMetalPoissonMap}). */
     gemSmokePoissonAttempt?: boolean;
+    /** Second sampler for `lut` pass (atlas texture). */
+    lutAtlasTexture?: Texture;
   }[] = [];
 
   /** GPU upload target for Poisson R/G; same size as the post chain. */
@@ -660,6 +691,7 @@ export abstract class Drawcall {
       if (this.useStencil) {
         defines += '#define USE_STENCIL\n';
       }
+      defines += this.extraShaderDefines;
       this.createMaterial(defines, uniformBuffer);
       // Nested texture-space filter passes set the viewport to the texture size; restore the
       // main pass viewport so subsequent draws use the full backbuffer (WebGL may not restore).
@@ -671,10 +703,8 @@ export abstract class Drawcall {
       this.#filterChainReady
     ) {
       const shape = this.shapes[0];
-      if (
-        shape.has(Filter) &&
-        filterStringUsesEngineTimePost(shape.read(Filter).value)
-      ) {
+      const fv = getRasterFilterValueForShape(shape);
+      if (fv && filterStringUsesEngineTimePost(fv)) {
         this.renderPostProcessingTextureSpace(this.#filterWidth, this.#filterHeight);
         const { width, height } = this.swapChain.getCanvas();
         renderPass.setViewport(0, 0, width, height);
@@ -791,9 +821,13 @@ export abstract class Drawcall {
     }
     return (
       s.has(FillSolid) &&
-      s.has(Filter) &&
-      hasRasterPostEffects(s.read(Filter).value)
+      hasRasterPostEffects(getRasterFilterValueForShape(s))
     );
+  }
+
+  /** Subclasses (e.g. {@link SmoothPolyline}) append shader `#define`s beyond {@link useFillImage}. */
+  protected get extraShaderDefines(): string {
+    return '';
   }
 
   protected createProgram(vert: string, frag: string, defines: string) {
@@ -932,20 +966,42 @@ export abstract class Drawcall {
     const t0 = this.#filterTexture;
     const t1 = this.#pingPongTexture;
     for (const pass of this.#postEffectPasses) {
-      pass.bindings = this.renderCache.createBindings({
-        pipeline: pass.pipeline,
-        samplerBindings: [
-          {
-            texture: pass.srcIsT0 ? t0 : t1,
-            sampler: this.createSampler(),
-          },
-        ],
-        uniformBufferBindings: [
-          {
-            buffer: pass.uniformBuffer,
-          },
-        ],
-      });
+      const sceneTex = pass.srcIsT0 ? t0 : t1;
+      if (pass.effect.type === 'lut' && pass.lutAtlasTexture) {
+        pass.bindings = this.renderCache.createBindings({
+          pipeline: pass.pipeline,
+          samplerBindings: [
+            {
+              texture: sceneTex,
+              sampler: this.createLutPassInputSampler(),
+            },
+            {
+              texture: pass.lutAtlasTexture,
+              sampler: this.createLutSampler(),
+            },
+          ],
+          uniformBufferBindings: [
+            {
+              buffer: pass.uniformBuffer,
+            },
+          ],
+        });
+      } else {
+        pass.bindings = this.renderCache.createBindings({
+          pipeline: pass.pipeline,
+          samplerBindings: [
+            {
+              texture: sceneTex,
+              sampler: this.createSampler(),
+            },
+          ],
+          uniformBufferBindings: [
+            {
+              buffer: pass.uniformBuffer,
+            },
+          ],
+        });
+      }
     }
   }
 
@@ -1340,8 +1396,21 @@ export abstract class Drawcall {
     const t0 = this.#filterTexture;
     const t1 = this.#pingPongTexture;
 
-    for (let ei = 0; ei < effects.length; ei++) {
-      const effect = effects[ei];
+    const usableEffects: Effect[] = [];
+    for (const e of effects) {
+      if (e.type !== 'lut') {
+        usableEffects.push(e);
+        continue;
+      }
+      if (getCubeLutGpu(this.device, e.lutKey)) {
+        usableEffects.push(e);
+      } else {
+        warnMissingCubeLutOnce(e.lutKey);
+      }
+    }
+
+    for (let ei = 0; ei < usableEffects.length; ei++) {
+      const effect = usableEffects[ei]!;
       const entry = FRAG_MAP[effect.type];
       if (!entry) {
         console.warn(
@@ -1358,7 +1427,13 @@ export abstract class Drawcall {
         usage: BufferUsage.UNIFORM,
         hint: BufferFrequencyHint.DYNAMIC,
       });
-      setPostEffectUniformData(effect, uniformBuffer, width, height);
+      setPostEffectUniformData(
+        effect,
+        uniformBuffer,
+        width,
+        height,
+        this.device,
+      );
 
       const program = this.renderCache.createProgram({
         vertex: {
@@ -1415,20 +1490,43 @@ export abstract class Drawcall {
         effect.type === 'gemSmoke' &&
         effect.useImage &&
         effect.usePoisson !== false;
-      const bindings = this.renderCache.createBindings({
-        pipeline,
-        samplerBindings: [
-          {
-            texture: srcTexture,
-            sampler: this.createSampler(),
-          },
-        ],
-        uniformBufferBindings: [
-          {
-            buffer: uniformBuffer,
-          },
-        ],
-      });
+      const lutGpu =
+        effect.type === 'lut' ? getCubeLutGpu(this.device, effect.lutKey) : undefined;
+      const lutAtlasTexture = lutGpu?.texture;
+      const bindings =
+        effect.type === 'lut' && lutAtlasTexture
+          ? this.renderCache.createBindings({
+              pipeline,
+              samplerBindings: [
+                {
+                  texture: srcTexture,
+                  sampler: this.createLutPassInputSampler(),
+                },
+                {
+                  texture: lutAtlasTexture,
+                  sampler: this.createLutSampler(),
+                },
+              ],
+              uniformBufferBindings: [
+                {
+                  buffer: uniformBuffer,
+                },
+              ],
+            })
+          : this.renderCache.createBindings({
+              pipeline,
+              samplerBindings: [
+                {
+                  texture: srcTexture,
+                  sampler: this.createSampler(),
+                },
+              ],
+              uniformBufferBindings: [
+                {
+                  buffer: uniformBuffer,
+                },
+              ],
+            });
 
       this.#postEffectPasses.push({
         program,
@@ -1442,6 +1540,7 @@ export abstract class Drawcall {
         liquidMetalPoissonAttempt,
         heatmapPreprocessAttempt,
         gemSmokePoissonAttempt,
+        lutAtlasTexture,
       });
     }
 
@@ -1589,6 +1688,7 @@ export abstract class Drawcall {
         pass.uniformBuffer,
         width,
         height,
+        this.device,
       );
     }
 
@@ -1662,45 +1762,42 @@ export abstract class Drawcall {
     return { resized, texture: outTexture };
   }
 
-  protected renderPostProcessing(
-    x: number,
-    y: number,
-    width: number,
-    height: number,
-    widthInCanvasCoords: number,
-    heightInCanvasCoords: number,
-    zoomScale: number,
-  ) {
-    const { width: canvasWidth, height: canvasHeight } =
-      this.swapChain.getCanvas();
-
-    return this.#runPostProcessingWithUniforms(width, height, () => {
-      const inputSize: number[] = [];
-      const outputFrame: number[] = [];
-      const outputTexture: number[] = [];
-      inputSize[0] = canvasWidth / 2;
-      inputSize[1] = canvasHeight / 2;
-      inputSize[2] = 1 / inputSize[0];
-      inputSize[3] = 1 / inputSize[1];
-
-      outputFrame[0] = x;
-      outputFrame[1] = y;
-      outputFrame[2] = width;
-      outputFrame[3] = height;
-
-      outputTexture[0] = widthInCanvasCoords;
-      outputTexture[1] = heightInCanvasCoords;
-      outputTexture[2] = zoomScale;
-      outputTexture[3] = 1;
-      return { inputSize, outputFrame, outputTexture };
-    });
-  }
-
   protected createSampler() {
     return this.renderCache.createSampler({
       addressModeU: AddressMode.CLAMP_TO_EDGE,
       addressModeV: AddressMode.CLAMP_TO_EDGE,
       minFilter: FilterMode.POINT,
+      magFilter: FilterMode.BILINEAR,
+      mipmapFilter: MipmapFilterMode.LINEAR,
+      lodMinClamp: 0,
+      lodMaxClamp: 0,
+    });
+  }
+
+  /** LINEAR clamp for 3D LUT (`sampler3D`); W clamp matches three.js `ClampToEdgeWrapping`. */
+  protected createLutSampler() {
+    return this.renderCache.createSampler({
+      addressModeU: AddressMode.CLAMP_TO_EDGE,
+      addressModeV: AddressMode.CLAMP_TO_EDGE,
+      addressModeW: AddressMode.CLAMP_TO_EDGE,
+      minFilter: FilterMode.BILINEAR,
+      magFilter: FilterMode.BILINEAR,
+      mipmapFilter: MipmapFilterMode.LINEAR,
+      lodMinClamp: 0,
+      lodMaxClamp: 0,
+    });
+  }
+
+  /**
+   * LUT pass samples the ping-pong scene with bilinear min+mag.
+   * {@link createSampler} uses POINT min (pixel-crisp for other filters); LUT grading
+   * amplifies that blockiness — this sampler avoids visible grain/banding on the input.
+   */
+  protected createLutPassInputSampler() {
+    return this.renderCache.createSampler({
+      addressModeU: AddressMode.CLAMP_TO_EDGE,
+      addressModeV: AddressMode.CLAMP_TO_EDGE,
+      minFilter: FilterMode.BILINEAR,
       magFilter: FilterMode.BILINEAR,
       mipmapFilter: MipmapFilterMode.LINEAR,
       lodMinClamp: 0,

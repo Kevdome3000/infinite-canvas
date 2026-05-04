@@ -42,6 +42,8 @@ import {
   TRANSFORMER_MASK_FILL_COLOR,
   TesselationMethod,
   SerializedNode,
+  registerCubeLutFromText,
+  GPUResource,
 } from '../../ecs';
 import { Event, UIPlugin } from '../src';
 import '../src/spectrum';
@@ -338,6 +340,7 @@ async function openCanvas(id?: string) {
     // themeMode: ThemeMode.DARK,
       // filter: 'noise(0.5)',
     // layersLassoing: ['parent'],
+    // filter: 'fxaa() brightness(0.8) noise(0.1)',
     });
 
   const path = {
@@ -367,37 +370,6 @@ async function openCanvas(id?: string) {
     fill: "/soundboard.heic",
     // fill: 'black',
     zIndex: 2,
-  } as const;
-
-  const button = {
-    "id": "cj03l",
-    type: 'rect',
-    display: 'flex',
-    "x": 100,
-    "y": 100,
-    "name": "Button/Default",
-    "height": 40,
-    "fill": "$--primary",
-    "cornerRadius": "$--radius-pill",
-    "gap": 6,
-    "padding": [10, 16],
-    "justifyContent": "center",
-    "alignItems": "center",
-    zIndex: 0,
-  } as const;
-
-  const text = {
-    id: 'cj03l-text',
-    parentId: 'cj03l',
-    type: 'text',
-    content: 'Button',
-    fontFamily: 'sans-serif',
-    fontSize: 14,
-    lineHeight: 20,
-    "fill": "$--primary-foreground",
-    textAlign: 'center',
-    textBaseline: 'middle',
-    zIndex: 1,
   } as const;
 
   const BlenderIcon = {
@@ -446,34 +418,197 @@ async function openCanvas(id?: string) {
     registerIconifyIconSet('material-icon-theme', m);
   }
 
+  const button1 = {
+    id: 'icon-button',
+    type: 'rect',
+    name: 'Button/Default',
+    x: 100,
+    y: 100,
+    fill: 'grey',
+    display: 'flex',
+    padding: [16, 16],
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexDirection: 'row',
+    cornerRadius: 30,
+    gap: 4,
+    zIndex: 0,
+    reusable: true,
+  } as const;
+
+  const SearchIcon = {
+    id: 'icon-button-icon',
+    parentId: 'icon-button',
+    type: 'iconfont' as const,
+    zIndex: 1,
+    iconFontName: 'search',
+    iconFontFamily: 'lucide',
+    stroke: 'white',
+    strokeWidth: 2,
+    width: 32,
+    height: 32,
+    lockAspectRatio: true,
+  };
+
+  const text1 = {
+    id: 'icon-button-text',
+    parentId: 'icon-button',
+    type: 'text',
+    content: 'Button',
+    fontFamily: 'system-ui',
+    fontSize: 24,
+    lineHeight: 32,
+    fill: 'white',
+    zIndex: 1,
+    textAlign: 'center',
+    textBaseline: 'middle',
+    // wordWrap: true,
+    // wordWrapWidth: 100,
+    // maxLines: 1,
+    // textOverflow: 'ellipsis',
+  };
+
+  const button2 = {
+    id: 'icon-button-variant-destructive',
+    type: 'ref',
+    ref: 'icon-button',
+    name: 'Button/Destructive',
+    x: 100,
+    y: 250,
+    fill: 'red',
+    zIndex: 0,
+    descendants: {
+      'icon-button-icon': {
+        iconFontName: 'circle-alert',
+      },
+      'icon-button-text': {
+        content: 'Destructive',
+      },
+    },
+  };
+
+  const button3 = {
+    id: 'icon-button-variant-liquid-metal',
+    type: 'ref',
+    ref: 'icon-button',
+    name: 'Button/LiquidMetal',
+    x: 100,
+    y: 350,
+    fill: 'black',
+    zIndex: 0,
+    descendants: {
+      'icon-button-icon': {
+        iconFontName: 'sparkles',
+      },
+      'icon-button-text': {
+        fill: 'white',
+        content: 'Liquid Metal',
+      },
+    },
+    filter: 'liquid-metal(2, 0.1, 0.3, 0.3, 0.07, 0.4, 70, 3, 1, transparent, #ffffff, auto, 1)',
+  };
+
+  const button4 = {
+    id: 'icon-button-variant-liquid-heatmap',
+    type: 'ref',
+    ref: 'icon-button',
+    name: 'Button/Heatmap',
+    x: 100,
+    y: 450,
+    fill: 'black',
+    zIndex: 0,
+    descendants: {
+      'icon-button-icon': {
+        iconFontName: 'sparkles',
+      },
+      'icon-button-text': {
+        fill: 'white',
+        content: 'Heatmap',
+        wordWrap: false,
+      },
+    },
+    filter: 'heat-map(0.5, 0, 0, 0.5, 0.5, 1, 1, auto, #000000, #112069, #1f3ca3, #3265e7, #6bd8ff, #ffe77a, #ff9a1f, #ff4d00)',
+  };
+
+  const logo = {
+    id: 'logo',
+    type: 'rect',
+    fill: '/youmind.svg',
+    width: 990,
+    height: 140,
+    x: 100,
+    y: 100,
+    zIndex: 0,
+    lockAspectRatio: true,
+    filter: 'liquid-metal(2, 0.1, 0.3, 0.3, 0.07, 0.4, 70, 3, 1, transparent, #ffffff, auto, 1)',
+  }
+
+  const icon = {
+    id: 'icon',
+    type: 'iconfont',
+    iconFontName: 'search',
+    iconFontFamily: 'lucide',
+    width: 320,
+    height: 320,
+    x: 100,
+    y: 100,
+    zIndex: 1,
+    strokeWidth: 10,
+    stroke: 'red',
+    lockAspectRatio: true,
+    // filter: 'liquid-metal(2, 0.1, 0.3, 0.3, 0.07, 0.4, 70, 3, 1, transparent, #ffffff, auto, 1)',
+  }
+
+  const rect = {
+    id: 'rect',
+    type: 'ellipse',
+    fill: 'red',
+    // fill: 'https://v3b.fal.media/files/b/tiger/v1lf1EcPP1X1pw_YOKM4o.jpg',
+    width: 400,
+    height: 400,
+    stroke: 'linear-gradient(90deg, red, blue)',
+    strokeWidth: 20,
+    x: 100,
+    y: 100,
+    zIndex: 1,
+    // 逻辑名需在下方 `registerCubeLutFromText` 中注册；省略强度时默认为 1
+    // filter: 'lut(fuji-classic-neg)',
+  }
+
+  const device = api.getCanvas().read(GPUResource).device;
+  {
+    // 街拍神级色彩，高对比，红橘色偏暖，强调硬调
+    const lutFileUrl = './classic neg_sRGB.cube';
+    const text = await (await fetch(lutFileUrl)).text()
+    registerCubeLutFromText(device, 'fuji-classic-neg', text, {
+      atlasFormat: 'f32',
+    });
+  }
+  {
+    // 低饱和度，强对比度，模仿老式纪实杂志风格
+    const lutFileUrl = './classic chrome_sRGB.cube';
+    const text = await (await fetch(lutFileUrl)).text()
+    registerCubeLutFromText(device, 'fuji-classic-chrome', text, {
+      atlasFormat: 'f32',
+    });
+  }
+  {
+    const lutFileUrl = './velvia_sRGB.cube';
+    const text = await (await fetch(lutFileUrl)).text()
+    registerCubeLutFromText(device, 'fuji-velvia', text, {
+      atlasFormat: 'f32',
+    });
+  }
+
   api.runAtNextTick(() => {
     api.updateNodes([
-      // AndroidIcon,
-      // BlenderIcon,
-      {
-        id: 'foo',
-        type: 'rect',
-        name: 'foo',
-        reusable: true,
-        x: 0,
-        y: 0,
-        width: 100,
-        height: 100,
-        zIndex: 0,
-        fill: '#FF0000',
-      } as SerializedNode,
-      {
-        id: 'bar',
-        type: 'ref',
-        name: 'bar',
-        ref: 'foo',
-        x: 120,
-        y: 0,
-        zIndex: 1,
-      } as SerializedNode,
-      image,
-      // button,
-      // text,
+      rect,
+      // logo,
+      // icon
+      // button1, SearchIcon, text1,
+      // button2,
+      // button3,
+      // button4
     ]);
   });
 

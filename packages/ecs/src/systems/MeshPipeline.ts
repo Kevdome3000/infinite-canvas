@@ -47,6 +47,7 @@ import {
   SizeAttenuation,
   StrokeAttenuation,
   Stroke,
+  StrokeGradient,
   Text,
   Theme,
   ToBeDeleted,
@@ -66,6 +67,7 @@ import {
   Locked,
   ClipMode,
   Flex,
+  IconFont,
 } from '../components';
 import {
   Effect,
@@ -118,6 +120,43 @@ export type MeshRenderCameraOptions = {
     scale: number;
   };
 };
+
+/**
+ * 与 {@link BatchManager} / `getDrawcallCtors` 中参与批次的图元类型一致；用于判断实体是否本帧应加入局部导出批次。
+ * iconfont 等组合节点在父级无 Path/Rect 等，图元在子实体上，仅 add 根节点时不会生成任何 drawcall。
+ */
+function entityHasPartialExportGeometry(e: Entity): boolean {
+  return (
+    e.has(Circle) ||
+    e.has(Ellipse) ||
+    e.has(Rect) ||
+    e.has(Line) ||
+    e.has(Polyline) ||
+    e.has(Path) ||
+    e.has(Text) ||
+    e.has(Brush) ||
+    e.has(VectorNetwork)
+  );
+}
+
+/**
+ * 自根节点 DFS，收集子树中所有带可栅格化几何的实体（含根自身若具备几何）。
+ */
+function collectDescendantsWithPartialExportGeometry(root: Entity): Entity[] {
+  const out: Entity[] = [];
+  const visit = (e: Entity) => {
+    if (entityHasPartialExportGeometry(e)) {
+      out.push(e);
+    }
+    if (e.has(Parent)) {
+      for (const c of e.read(Parent).children) {
+        visit(c);
+      }
+    }
+  };
+  visit(root);
+  return out;
+}
 
 export class MeshPipeline extends System {
   private setupDevice = this.attach(SetupDevice);
@@ -194,6 +233,9 @@ export class MeshPipeline extends System {
   private strokes = this.query(
     (q) => q.addedChangedOrRemoved.with(Stroke).trackWrites,
   );
+  private strokeGradients = this.query(
+    (q) => q.addedChangedOrRemoved.with(StrokeGradient).trackWrites,
+  );
   private opacities = this.query(
     (q) => q.addedChangedOrRemoved.with(Opacity).trackWrites,
   );
@@ -267,6 +309,7 @@ export class MeshPipeline extends System {
             GlobalTransform,
             Opacity,
             Stroke,
+            StrokeGradient,
             InnerShadow,
             DropShadow,
             Wireframe,
@@ -290,6 +333,7 @@ export class MeshPipeline extends System {
             Locked,
             ClipMode,
             Flex,
+            IconFont
           )
           .read.and.using(
             RasterScreenshotRequest,
@@ -528,8 +572,15 @@ export class MeshPipeline extends System {
               batchManager.add(parentEntity);
             }
 
-            const entity = api.getEntity(node);
-            batchManager.add(entity);
+            const rootEntity = api.getEntity(node);
+            const withGeometry = collectDescendantsWithPartialExportGeometry(
+              rootEntity,
+            );
+            const toBatch =
+              withGeometry.length > 0 ? withGeometry : [rootEntity];
+            for (const e of toBatch) {
+              batchManager.add(e);
+            }
           });
         } else {
           if (this.pendingRenderables.has(camera)) {
@@ -716,7 +767,7 @@ export class MeshPipeline extends System {
         }
       }
 
-      if (entity.has(FillGradient)) {
+      if (entity.has(FillGradient) || entity.has(StrokeGradient)) {
         safeAddComponent(entity, MaterialDirty);
       }
 
@@ -811,6 +862,7 @@ export class MeshPipeline extends System {
           !toRender &&
           (!!this.fillSolids.addedChangedOrRemoved.length ||
             !!this.fillGradients.addedChangedOrRemoved.length ||
+            !!this.strokeGradients.addedChangedOrRemoved.length ||
             !!this.fillPatterns.addedChangedOrRemoved.length ||
             !!this.fillTextures.addedChangedOrRemoved.length ||
             !!this.fillImages.addedChangedOrRemoved.length ||

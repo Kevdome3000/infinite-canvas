@@ -27,6 +27,7 @@ import {
   Renderable,
   Selected,
   Stroke,
+  StrokeGradient,
   StrokeAttenuation,
   Text,
   Transform,
@@ -66,6 +67,7 @@ import {
   Flex,
   FlexLayoutDirty,
   IconFont,
+  Filter,
   DEFAULT_THEME_COLORS,
 } from '../components';
 import { Commands } from '../commands';
@@ -259,6 +261,7 @@ export class Select extends System {
             Locked,
             FillSolid,
             FillGradient,
+            StrokeGradient,
             FillImage,
             FillPattern,
             Stroke,
@@ -312,6 +315,7 @@ export class Select extends System {
             Marker,
             Theme,
             IconFont,
+            Filter,
           ).write,
     );
     this.query((q) => q.using(ComputedCamera, FractionalIndex, RBush).read);
