@@ -14,16 +14,26 @@ import type {
   FillAttributes,
   StrokeAttributes,
 } from '../types/serialized-node';
+import { getPrimaryFillValue } from './normalize-fill-wire';
 
-/** 与 Iconify `icons[name]` 一项对齐：可有 `body`，以及**该项**的 `width` / `height` 作为该图视口。 */
+/**
+ * 与 Iconify `icons[name]` 一项对齐：可有 `body`，以及该项的视口。
+ * `left` / `top` 与 `width` / `height` 同 SVG `viewBox="left top width height"`（缺省为 0）。
+ */
 export type IconifyIconEntry = {
   body?: string;
   width?: number;
   height?: number;
+  left?: number;
+  top?: number;
 };
 
 export type IconifyIconCollection = {
-  icons?: Record<string, IconifyIconEntry | { body?: string; width?: number; height?: number }>;
+  icons?: Record<
+    string,
+    | IconifyIconEntry
+    | { body?: string; width?: number; height?: number; left?: number; top?: number }
+  >;
   /** 集合级默认视口，与 `viewBox` 同语义（Iconify JSON 根字段，如 24 / 32） */
   width?: number;
   height?: number;
@@ -36,10 +46,29 @@ type RegisteredIconifySet = {
   viewHeight: number;
 };
 
+type ResolvedIconifyViewport = {
+  viewW: number;
+  viewH: number;
+  viewLeft: number;
+  viewTop: number;
+};
+
 function resolveIconifyViewBoxForIcon(
   setEntry: RegisteredIconifySet,
   icon: IconifyIconEntry | undefined,
-): { viewW: number; viewH: number } {
+): ResolvedIconifyViewport {
+  const viewLeft =
+    icon != null &&
+    typeof icon.left === 'number' &&
+    Number.isFinite(icon.left)
+      ? icon.left
+      : 0;
+  const viewTop =
+    icon != null &&
+    typeof icon.top === 'number' &&
+    Number.isFinite(icon.top)
+      ? icon.top
+      : 0;
   const iw = icon?.width;
   const ih = icon?.height;
   if (
@@ -50,7 +79,7 @@ function resolveIconifyViewBoxForIcon(
     Number.isFinite(ih) &&
     ih > 0
   ) {
-    return { viewW: iw, viewH: ih };
+    return { viewW: iw, viewH: ih, viewLeft, viewTop };
   }
   if (
     setEntry.viewWidth > 0 &&
@@ -58,9 +87,14 @@ function resolveIconifyViewBoxForIcon(
     Number.isFinite(setEntry.viewWidth) &&
     Number.isFinite(setEntry.viewHeight)
   ) {
-    return { viewW: setEntry.viewWidth, viewH: setEntry.viewHeight };
+    return {
+      viewW: setEntry.viewWidth,
+      viewH: setEntry.viewHeight,
+      viewLeft,
+      viewTop,
+    };
   }
-  return { viewW: 0, viewH: 0 };
+  return { viewW: 0, viewH: 0, viewLeft, viewTop };
 }
 
 /** 传给 {@link registerIconifyIconSet} 的值：完整 iconify 包 JSON、或 `import('*.json')` 的模块（含 `default`）。 */
@@ -85,7 +119,7 @@ export function resolveIconFontWireStyle(
   rSw: unknown;
 } {
   const wireStroke = (attributes as StrokeAttributes).stroke;
-  const wireFill = (attributes as FillAttributes).fill;
+  const wireFill = getPrimaryFillValue(attributes as FillAttributes);
   const wireSw = (attributes as StrokeAttributes).strokeWidth;
   const rStrokeS =
     wireStroke != null
@@ -509,8 +543,10 @@ export function resolveIconFontTargetDimensions(
  * 将 Iconify 的 `body`（可含一层或多层 \<g>、`fill="currentColor"` 等）解析为带合并样式后的可缩放子图元。
  * 与 SVG 一致：祖先 `g` 的展示属性与子 path/ellipse/line 自身属性合并，后者优先。
  *
- * @param viewBoxWidth 注册集合 JSON 根上 `width`；>0 时按视口 (0,0)–(vw,vh) 映射到目标框，与官方 viewBox 一致，不按 path 并集平移。
+ * @param viewBoxWidth 图标项或集合上的 `width`；>0 时按视口映射到目标框，与 Iconify `viewBox` 的宽高一致。
  * @param viewBoxHeight 同上 `height`。
+ * @param viewBoxMinX 图标项 `left`（viewBox min-x），缺省 0。
+ * @param viewBoxMinY 图标项 `top`（viewBox min-y），缺省 0。
  */
 export function resolveIconifyBodyToScalablePrimitives(
   body: string,
@@ -518,6 +554,8 @@ export function resolveIconifyBodyToScalablePrimitives(
   targetHeight: unknown,
   viewBoxWidth = 0,
   viewBoxHeight = 0,
+  viewBoxMinX = 0,
+  viewBoxMinY = 0,
 ): ScaledIconPrimitive[] | null {
   const { w, h } = resolveIconFontTargetDimensions(targetWidth, targetHeight);
   const inner0 = body.trim();
@@ -760,6 +798,10 @@ export function resolveIconifyBodyToScalablePrimitives(
 
   const useViewBox =
     viewBoxWidth > 0 && viewBoxHeight > 0 && Number.isFinite(viewBoxWidth) && Number.isFinite(viewBoxHeight);
+  const vl =
+    typeof viewBoxMinX === 'number' && Number.isFinite(viewBoxMinX) ? viewBoxMinX : 0;
+  const vt =
+    typeof viewBoxMinY === 'number' && Number.isFinite(viewBoxMinY) ? viewBoxMinY : 0;
   if (useViewBox) {
     const vw = viewBoxWidth;
     const vh = viewBoxHeight;
@@ -771,7 +813,10 @@ export function resolveIconifyBodyToScalablePrimitives(
         return {
           kind: 'path' as const,
           d: shiftPath(
-            transformPath(prim.d, mat3.fromScaling(mat3.create(), [s, s])),
+            transformPath(
+              shiftPath(prim.d, -vl, -vt),
+              mat3.fromScaling(mat3.create(), [s, s]),
+            ),
             tx,
             ty,
           ),
@@ -781,8 +826,8 @@ export function resolveIconifyBodyToScalablePrimitives(
       if (prim.kind === 'ellipse') {
         return {
           kind: 'ellipse' as const,
-          cx: prim.cx * s + tx,
-          cy: prim.cy * s + ty,
+          cx: (prim.cx - vl) * s + tx,
+          cy: (prim.cy - vt) * s + ty,
           rx: prim.rx * s,
           ry: prim.ry * s,
           style: prim.style,
@@ -790,10 +835,10 @@ export function resolveIconifyBodyToScalablePrimitives(
       }
       return {
         kind: 'line' as const,
-        x1: prim.x1 * s + tx,
-        y1: prim.y1 * s + ty,
-        x2: prim.x2 * s + tx,
-        y2: prim.y2 * s + ty,
+        x1: (prim.x1 - vl) * s + tx,
+        y1: (prim.y1 - vt) * s + ty,
+        x2: (prim.x2 - vl) * s + tx,
+        y2: (prim.y2 - vt) * s + ty,
         style: prim.style,
       };
     });
@@ -872,7 +917,10 @@ export function buildIconFontScalablePrimitives(
   );
   const setEntry = sets.get(setId)!;
   const iconEntry = setEntry.icons[normalized];
-  const { viewW, viewH } = resolveIconifyViewBoxForIcon(setEntry, iconEntry);
+  const { viewW, viewH, viewLeft, viewTop } = resolveIconifyViewBoxForIcon(
+    setEntry,
+    iconEntry,
+  );
   const k = `body:${setId}:${normalized}`;
   if (bodyCache.has(k)) {
     const b = bodyCache.get(k);
@@ -885,6 +933,8 @@ export function buildIconFontScalablePrimitives(
       targetHeight,
       viewW,
       viewH,
+      viewLeft,
+      viewTop,
     );
   }
   const b = iconEntry?.body ?? null;
@@ -898,6 +948,8 @@ export function buildIconFontScalablePrimitives(
     targetHeight,
     viewW,
     viewH,
+    viewLeft,
+    viewTop,
   );
 }
 
@@ -906,7 +958,17 @@ export function strokeWidthFromIconStyle(
   userResolvedStrokeWidth: unknown,
   options?: { primKind: ScaledIconPrimitive['kind'] },
 ): number {
-  if (userResolvedStrokeWidth != null) {
+  const primKind = options?.primKind;
+  const strokeHint = elStyle.stroke?.trim();
+  const svgHasStroke =
+    strokeHint != null && strokeHint !== '' && strokeHint !== 'none';
+  const f = (elStyle.fill ?? 'none').trim();
+  const fillIsNoneOrTransparent = f === 'none' || f === 'transparent';
+  /** 根节点 strokeWidth 只应作用在「描边型」子图元上，避免 material-icon-theme 等仅 fill 的 rect 被强行描边 */
+  const nodeWireStrokeApplies =
+    primKind === 'line' || fillIsNoneOrTransparent || svgHasStroke;
+
+  if (userResolvedStrokeWidth != null && nodeWireStrokeApplies) {
     const n = typeof userResolvedStrokeWidth === 'number'
       ? userResolvedStrokeWidth
       : parseFloat(String(userResolvedStrokeWidth));
@@ -945,6 +1007,30 @@ export function pickStrokeColorForChild(
     return userStroke ?? userFill ?? '#000';
   }
   return s;
+}
+
+/** SVG 上椭圆是否为「仅描边」语义（无实填），与 {@link pickChildFill} 中占位 `FillSolid` 一致。 */
+export function iconFontSvgFillIsNoneOrTransparent(style: IconSvgStyle): boolean {
+  const f = (style.fill ?? 'none').trim();
+  return f === 'none' || f === 'transparent';
+}
+
+/**
+ * 是否应对子实体打 {@link IconFontEllipseStrokeRasterPlaceholder}：
+ * 椭圆 + 根上栅格滤镜占位 fill + 源 SVG 无实填。
+ */
+export function shouldUseIconFontEllipseStrokeRasterPlaceholder(
+  prim: ScaledIconPrimitive,
+  strokeAsPlaceholderFillForRasterFilter: boolean | undefined,
+  fillPart: string | null | undefined,
+): boolean {
+  return (
+    strokeAsPlaceholderFillForRasterFilter === true &&
+    prim.kind === 'ellipse' &&
+    iconFontSvgFillIsNoneOrTransparent(prim.style) &&
+    !!fillPart &&
+    fillPart !== 'none'
+  );
 }
 
 export function pickChildFill(

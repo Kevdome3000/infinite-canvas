@@ -121,7 +121,7 @@ function createText(
       content: text,
       fontSize: 16,
       fontFamily: 'system-ui',
-      fill: 'black',
+      fills: [{ type: 'solid', value: 'black', opacity: 1 }],
       zIndex: getMaxZIndex(api) + 1,
     },
   ]);
@@ -484,6 +484,16 @@ export class ContextMenu extends LitElement {
                   value=${ExportFormat.JPEG}
                   ?disabled=${isSelectedEmpty}
                   >JPEG</sp-menu-item
+                >
+                <sp-menu-item
+                  value=${ExportFormat.WEBM}
+                  ?disabled=${isSelectedEmpty}
+                  >WebM</sp-menu-item
+                >
+                <sp-menu-item
+                  value=${ExportFormat.GIF}
+                  ?disabled=${isSelectedEmpty}
+                  >GIF</sp-menu-item
                 >
               </sp-menu>
             </sp-menu-item>

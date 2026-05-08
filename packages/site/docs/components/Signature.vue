@@ -12,6 +12,10 @@ import opentype from 'opentype.js';
 import { svgPathProperties } from 'svg-path-properties';
 import ClipperLib from 'clipper-lib';
 import { Pane } from 'tweakpane';
+import { LaserPointerPlugin } from '@infinite-canvas-tutorial/laser-pointer';
+import { LassoPlugin } from '@infinite-canvas-tutorial/lasso';
+import { EraserPlugin } from '@infinite-canvas-tutorial/eraser';
+import { YogaPlugin } from '@infinite-canvas-tutorial/yoga';
 
 const wrapper = ref<HTMLElement | null>(null);
 let api: ExtendedAPI | undefined;
@@ -143,7 +147,7 @@ onMounted(async () => {
           rotation: 0,
           scaleX: 1,
           scaleY: 1,
-          fill: 'none',
+          fills: [{ type: 'solid', value: 'none', opacity: 1 }],
           stroke: `rgb(${Math.round(PARAMS[`color${index + 1}`].r)}, ${Math.round(PARAMS[`color${index + 1}`].g)}, ${Math.round(PARAMS[`color${index + 1}`].b)})`,
           strokeWidth: 6,
         };
@@ -156,7 +160,7 @@ onMounted(async () => {
         id: `path-${index}`,
         type: 'path',
         d,
-        fill: `rgb(${Math.round(PARAMS.intersect.r)}, ${Math.round(PARAMS.intersect.g)}, ${Math.round(PARAMS.intersect.b)})`,
+        fills: [{ type: 'solid', value: `rgb(${Math.round(PARAMS.intersect.r)}, ${Math.round(PARAMS.intersect.g)}, ${Math.round(PARAMS.intersect.b)})`, opacity: 1 }],
         stroke: `rgb(${Math.round(PARAMS.intersect.r)}, ${Math.round(PARAMS.intersect.g)}, ${Math.round(PARAMS.intersect.b)})`,
         strokeWidth: 6,
         strokeLinecap: 'round',
@@ -253,7 +257,7 @@ onMounted(async () => {
       api?.updateNode({
         id: polygon.id,
         stroke: `rgb(${Math.round(ev.value.r)}, ${Math.round(ev.value.g)}, ${Math.round(ev.value.b)})`,
-        fill: `rgb(${Math.round(ev.value.r)}, ${Math.round(ev.value.g)}, ${Math.round(ev.value.b)})`,
+        fills: [{ type: 'solid', value: `rgb(${Math.round(ev.value.r)}, ${Math.round(ev.value.g)}, ${Math.round(ev.value.b)})`, opacity: 1 }],
       });
     });
   });

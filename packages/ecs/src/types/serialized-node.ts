@@ -17,6 +17,7 @@ import {
   VectorNetwork,
   Visibility,
 } from '../components';
+import type { FillLayerBlendMode } from './fill-layer-blend';
 import { EdgeStyle } from '../utils';
 import { DIRECTION_EAST, DIRECTION_NORTH, DIRECTION_SOUTH, DIRECTION_WEST } from '../utils/binding/constants';
 
@@ -136,13 +137,39 @@ export interface VisibilityAttributes {
   visibility: Visibility['value'];
 }
 
+/** 多层填充的一层，与 ECS {@link FillLayers} 中条目同构（Figma `Paint` 子集） */
+export type SerializedFillLayerItem =
+  | {
+      type: 'solid';
+      value: string;
+      /** 0–1；可为设计变量引用字符串（如 `$token`） */
+      opacity?: number | string;
+      enabled?: boolean;
+      blendMode?: FillLayerBlendMode;
+    }
+  | {
+      type: 'gradient';
+      value: string;
+      opacity?: number | string;
+      enabled?: boolean;
+      blendMode?: FillLayerBlendMode;
+    }
+  | {
+      /** 位图 / SVG 等资源 URL（与历史 `fill` 为 URL 时语义一致） */
+      type: 'image';
+      value: string;
+      opacity?: number | string;
+      enabled?: boolean;
+      blendMode?: FillLayerBlendMode;
+    };
+
 export interface FillAttributes {
+  /** 节点整体不透明度（SVG `opacity`），与单层 `fills[].opacity` 不同 */
+  opacity?: Opacity['opacity'];
   /**
-   * Solid color, gradient, stringified pattern, image data-uri, etc.
+   * 填充栈（对齐 Figma `fills`）。历史 `fill` / `fillOpacity` / `fillLayers` 在加载时归一化为此字段。
    */
-  fill: string;
-  fillOpacity: Opacity['fillOpacity'];
-  opacity: Opacity['opacity'];
+  fills?: SerializedFillLayerItem[];
 }
 
 export interface StrokeAttributes {
@@ -331,10 +358,11 @@ export interface RoughAttributes {
 
 export interface FilterAttributes {
   /**
-   * The filter CSS property applies graphical effects like blur or color shift to an element. Filters are commonly used to adjust the rendering of images.
+   * CSS `filter` string (blur, drop-shadow, …), aligned with Figma layer effects: applies to the **whole shape** (fill + stroke) in SVG export via `style="filter: …"` on the exported wrapper.
+   * Runtime uses the same string for GPU post-effects via {@link Filter}.
    * @see https://developer.mozilla.org/en-US/docs/Web/CSS/Reference/Properties/filter
    */
-  filter: string;
+  filter?: string;
 }
 
 export interface GSerializedNode
@@ -414,6 +442,7 @@ export interface LineSerializedNode
   Partial<HitStrokeInteractionAttributes>,
   Partial<Pick<AttenuationAttributes, 'strokeAttenuation'>>,
   Partial<MarkerAttributes>,
+  Partial<FilterAttributes>,
   Partial<BindingAttributes> { }
 
 export interface PolylineAttributes {
@@ -427,6 +456,7 @@ export interface PolylineSerializedNode
   Partial<Pick<AttenuationAttributes, 'strokeAttenuation'>>,
   Partial<WireframeAttributes>,
   Partial<MarkerAttributes>,
+  Partial<FilterAttributes>,
   Partial<BindingAttributes> { }
 
 export interface BrushAttributes {
@@ -520,6 +550,7 @@ export interface TextSerializedNode
   Partial<TextDecorationAttributes>,
   Partial<AttenuationAttributes>,
   Partial<WireframeAttributes>,
+  Partial<FilterAttributes>,
   Partial<BindedAttributes> { }
 
 export interface VectorNetworkAttributes {

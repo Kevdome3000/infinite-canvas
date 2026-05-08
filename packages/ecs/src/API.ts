@@ -54,6 +54,7 @@ import {
 } from './utils/icon-font';
 import type {
   BrushSerializedNode,
+  FillAttributes,
   GSerializedNode,
   LineSerializedNode,
   PathSerializedNode,
@@ -61,6 +62,10 @@ import type {
   SerializedNode,
   TextSerializedNode,
 } from './types/serialized-node';
+import {
+  firstEnabledFillPresentation,
+  migrateLegacyFillWireInPlace,
+} from './utils/normalize-fill-wire';
 import { v4 as uuidv4 } from 'uuid';
 import {
   AABB,
@@ -125,6 +130,11 @@ import {
 } from './systems';
 import { DOMAdapter } from './environment';
 import { SIBLINGS_MAX_Z_INDEX, SIBLINGS_MIN_Z_INDEX } from './context';
+import {
+  applyIcDocumentToApi,
+  buildIcDocumentFromState,
+  parseIcDocumentJson,
+} from './format/ic-document';
 
 export interface StateManagement {
   getAppState: () => AppState;
@@ -233,6 +243,12 @@ export const arrayToMap = <T extends { id: string } | string>(
 export const pendingAPICallings: (() => any)[] = [];
 
 /**
+ * 在 {@link Deleter} 完成本帧 `ToBeDeleted` 实体移除后执行（晚于 `pendingAPICallings`）。
+ * 用于导入场景等需在「旧实体已删除」后再 `updateNodes` 的逻辑。
+ */
+export const pendingAPICallingsAfterDelete: (() => any)[] = [];
+
+/**
  * Expose the API to the outside world.
  *
  * @see https://docs.excalidraw.com/docs/@excalidraw/excalidraw/api/props/excalidraw-api
@@ -279,6 +295,10 @@ export class API {
         this.onchange(snapshot);
       }
     });
+  }
+
+  getCommands() {
+    return this.commands;
   }
 
   getAppState() {
@@ -483,17 +503,6 @@ export class API {
 
   getEntityCommands() {
     return this.#idEntityMap;
-  }
-
-  /**
-   * 与反序列化相同：`spawn` 出子实体。供 `mutateElement` 中 iconfont 子 path 数量增加时补全。
-   */
-  spawnEntityCommands(): EntityCommands {
-    return this.commands.spawn();
-  }
-
-  appendEntityChild(parent: Entity, child: EntityCommands) {
-    this.commands.entity(parent).appendChild(child);
   }
 
   getEntity(node: SerializedNode) {
@@ -2480,12 +2489,23 @@ export class API {
     }
 
     const ctx = canvas.getContext('2d')!;
+    migrateLegacyFillWireInPlace(node as unknown as Record<string, unknown>);
+    const pres = firstEnabledFillPresentation((node as FillAttributes).fills);
+    const fillFromFills = pres?.fill ?? '';
+    const fillOpacity = (() => {
+      const o = pres?.fillOpacity ?? 1;
+      if (typeof o === 'number' && Number.isFinite(o)) {
+        return Math.max(0, Math.min(1, o));
+      }
+      const n = parseFloat(String(o));
+      return Number.isFinite(n) ? Math.max(0, Math.min(1, n)) : 1;
+    })();
     const opacity = (node as { opacity?: number }).opacity ?? 1;
-    const fillOpacity = (node as { fillOpacity?: number }).fillOpacity ?? 1;
     const strokeOpacity = (node as { strokeOpacity?: number }).strokeOpacity ?? 1;
 
     if (node.type === 'rect' || node.type === 'rough-rect') {
-      const { x, y, width, height, strokeWidth, strokeLinecap, strokeLinejoin, fill, stroke } = node;
+      const { x, y, width, height, strokeWidth, strokeLinecap, strokeLinejoin, stroke } = node;
+      const fill = fillFromFills;
       ctx.save();
       if (isDataUrl(fill) || isUrl(fill)) {
         ctx.globalAlpha = opacity * fillOpacity;
@@ -2504,7 +2524,8 @@ export class API {
       ctx.stroke();
       ctx.restore();
     } else if (node.type === 'ellipse' || node.type === 'rough-ellipse') {
-      const { x, y, width, height, strokeWidth, strokeLinecap, strokeLinejoin, fill, stroke } = node;
+      const { x, y, width, height, strokeWidth, strokeLinecap, strokeLinejoin, stroke } = node;
+      const fill = fillFromFills;
       ctx.save();
       ctx.globalAlpha = opacity * fillOpacity;
       ctx.fillStyle = fill;
@@ -2518,7 +2539,8 @@ export class API {
       ctx.stroke();
       ctx.restore();
     } else if (node.type === 'path' || node.type === 'rough-path') {
-      const { d, fill, stroke, strokeWidth } = node;
+      const { d, stroke, strokeWidth } = node;
+      const fill = fillFromFills;
       ctx.save();
       ctx.globalAlpha = opacity * fillOpacity;
       ctx.fillStyle = fill;
@@ -2611,6 +2633,31 @@ export class API {
 
   runAtNextTick(fn: () => any) {
     pendingAPICallings.push(fn);
+  }
+
+  /**
+   * 在当前帧实体删除（`ToBeDeleted` → `entity.delete()`）完成之后执行回调。
+   */
+  runAfterDeletedEntities(fn: () => any) {
+    pendingAPICallingsAfterDelete.push(fn);
+  }
+
+  /**
+   * 导出为 `.ic` 互换文档（含 variables / themes / elements / appState）。
+   * @see https://docs.excalidraw.com/docs/codebase/json-schema
+   */
+  exportIcDocument(source?: string) {
+    return buildIcDocumentFromState(this.getAppState(), this.getNodes(), source);
+  }
+
+  /**
+   * 自 `.ic` 文档或 JSON 字符串恢复场景（会先清空当前场景根节点）。
+   */
+  importIcDocument(
+    doc: unknown,
+    options?: { recordHistory?: boolean },
+  ) {
+    applyIcDocumentToApi(this, parseIcDocumentJson(doc), options);
   }
 
   // AI APIs

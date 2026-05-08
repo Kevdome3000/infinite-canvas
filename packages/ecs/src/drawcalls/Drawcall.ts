@@ -33,6 +33,9 @@ import { Entity } from '@lastolivegames/becsy';
 import {
   RenderCache,
   Effect,
+  fillLayersNeedFillImage,
+  fillLayersShouldPrecompose,
+  getEnabledFillLayers,
   uid,
   halftoneDotsUniformValues,
   flutedGlassUniformValues,
@@ -60,16 +63,20 @@ import {
   FillGradient,
   FillImage,
   FillPattern,
+  FillLayers,
   FillSolid,
   FillTexture,
   ClipMode,
+  type ClipModeValue,
   Wireframe,
+  type FillLayerItem,
 } from '../components';
 import {
   filterStringUsesEngineTimePost,
   getRasterFilterValueForShape,
   hasRasterPostEffects,
 } from '../utils/filter';
+import { shouldBakeStrokeIntoRasterFilterTexture } from '../utils/solidShapeRasterForFilter';
 import { API } from '../API';
 import { MeshGradientPass } from '../render-graph/MeshGradientPass';
 import type { MeshGradient } from '../utils/gradient';
@@ -504,6 +511,31 @@ export const ZINDEX_FACTOR = 100000;
 /** Stencil reference value for clipChildren: write (useStencil) and test (parentAsStencil) must use the same value. 0–255 for 8-bit stencil. */
 export const STENCIL_CLIP_REF = 1;
 
+/**
+ * 沿 ECS 父链查找最近的 {@link ClipMode}（例如裁剪 rect → iconfont 根 → path，path 应对 rect 做 stencil 测试）。
+ */
+function nearestAncestorClipMode(shape: Entity): ClipModeValue | null {
+  let ancestor = shape.has(Children) ? shape.read(Children).parent : null;
+  while (ancestor) {
+    if (ancestor.has(ClipMode)) {
+      return ancestor.read(ClipMode).value;
+    }
+    ancestor = ancestor.has(Children) ? ancestor.read(Children).parent : null;
+  }
+  return null;
+}
+
+function nearestAncestorClipOutsideAlpha(shape: Entity): number {
+  let ancestor = shape.has(Children) ? shape.read(Children).parent : null;
+  while (ancestor) {
+    if (ancestor.has(ClipMode)) {
+      return ancestor.read(ClipMode).outsideAlpha;
+    }
+    ancestor = ancestor.has(Children) ? ancestor.read(Children).parent : null;
+  }
+  return 0.5;
+}
+
 export abstract class Drawcall {
   uid = uid();
 
@@ -639,6 +671,12 @@ export abstract class Drawcall {
     uniformLegacyObject: Record<string, unknown>,
   ): void;
 
+  /**
+   * Scene `u_ZoomScale` from the current frame's {@link submit} (set before `createMaterial`).
+   * Used by off-screen raster bakes so glyph size attenuation matches the main pass.
+   */
+  protected sceneZoomScale = 1;
+
   destroy() {
     if (this.program) {
       this.indexBuffer?.destroy();
@@ -669,6 +707,10 @@ export abstract class Drawcall {
     uniformLegacyObject: Record<string, unknown>,
     builder: RGGraphBuilder,
   ) {
+    const zs = uniformLegacyObject['u_ZoomScale'];
+    this.sceneZoomScale =
+      typeof zs === 'number' && Number.isFinite(zs) && zs > 0 ? zs : 1;
+
     if (this.geometryDirty) {
       // CPU Poisson / heatmap preprocess are derived from the rasterized shape; `useEngineTime`
       // otherwise skips readback assuming only time changes — invalidate when geometry changes.
@@ -698,7 +740,7 @@ export abstract class Drawcall {
       const { width, height } = this.swapChain.getCanvas();
       renderPass.setViewport(0, 0, width, height);
     } else if (
-      this.useFillImage &&
+      (this.useFillImage || this.useRasterFilterEngineTimeRefresh) &&
       this.shapes.length > 0 &&
       this.#filterChainReady
     ) {
@@ -793,14 +835,14 @@ export abstract class Drawcall {
   }
 
   protected get parentClipMode() {
-    const parent = this.shapes[0].has(Children) ? this.shapes[0].read(Children).parent : null;
-    return parent?.has(ClipMode) ? parent.read(ClipMode).value : null;
+    const s = this.shapes[0];
+    return s ? nearestAncestorClipMode(s) : null;
   }
 
   /** When parent ClipMode is 'soft', alpha for content outside the mask (0–1). */
   protected get parentOutsideAlpha() {
-    const parent = this.shapes[0].has(Children) ? this.shapes[0].read(Children).parent : null;
-    return parent?.has(ClipMode) ? parent.read(ClipMode).outsideAlpha : 0.5;
+    const s = this.shapes[0];
+    return s ? nearestAncestorClipOutsideAlpha(s) : 0.5;
   }
 
   protected get useWireframe() {
@@ -819,10 +861,34 @@ export abstract class Drawcall {
     ) {
       return true;
     }
-    return (
+    if (s.has(FillLayers)) {
+      const enabled = getEnabledFillLayers(s);
+      if (enabled.length >= 2 && fillLayersNeedFillImage(enabled)) {
+        return true;
+      }
+      if (enabled.length >= 2 && fillLayersShouldPrecompose(enabled)) {
+        return true;
+      }
+      if (enabled.length === 1) {
+        return true;
+      }
+    }
+    if (
       s.has(FillSolid) &&
       hasRasterPostEffects(getRasterFilterValueForShape(s))
-    );
+    ) {
+      return true;
+    }
+    return !this.instanced && shouldBakeStrokeIntoRasterFilterTexture(s);
+  }
+
+  /**
+   * When true (and filter chain is ready), re-run texture-space post passes each frame for
+   * `useEngineTime` filters — same branch as {@link useFillImage}. {@link SmoothPolyline} stroke
+   * textures use this for animated liquid-metal, etc.
+   */
+  protected get useRasterFilterEngineTimeRefresh(): boolean {
+    return false;
   }
 
   /** Subclasses (e.g. {@link SmoothPolyline}) append shader `#define`s beyond {@link useFillImage}. */
@@ -1010,6 +1076,19 @@ export abstract class Drawcall {
       this.#readback = this.device.createReadback();
     }
     return this.#readback;
+  }
+
+  /**
+   * Sync readback RGBA8（如 mesh-gradient GPU 纹理）以便与 Canvas 文字遮罩做 CPU 合成。
+   */
+  protected readTextureRgba8Sync(
+    texture: Texture,
+    width: number,
+    height: number,
+  ): Uint8Array {
+    const data = new Uint8Array(width * height * 4);
+    this.#getReadback().readTextureSync(texture, 0, 0, width, height, data);
+    return data;
   }
 
   #ensureLiquidMetalPoissonTexture(width: number, height: number): Texture {
@@ -1496,37 +1575,37 @@ export abstract class Drawcall {
       const bindings =
         effect.type === 'lut' && lutAtlasTexture
           ? this.renderCache.createBindings({
-              pipeline,
-              samplerBindings: [
-                {
-                  texture: srcTexture,
-                  sampler: this.createLutPassInputSampler(),
-                },
-                {
-                  texture: lutAtlasTexture,
-                  sampler: this.createLutSampler(),
-                },
-              ],
-              uniformBufferBindings: [
-                {
-                  buffer: uniformBuffer,
-                },
-              ],
-            })
+            pipeline,
+            samplerBindings: [
+              {
+                texture: srcTexture,
+                sampler: this.createLutPassInputSampler(),
+              },
+              {
+                texture: lutAtlasTexture,
+                sampler: this.createLutSampler(),
+              },
+            ],
+            uniformBufferBindings: [
+              {
+                buffer: uniformBuffer,
+              },
+            ],
+          })
           : this.renderCache.createBindings({
-              pipeline,
-              samplerBindings: [
-                {
-                  texture: srcTexture,
-                  sampler: this.createSampler(),
-                },
-              ],
-              uniformBufferBindings: [
-                {
-                  buffer: uniformBuffer,
-                },
-              ],
-            });
+            pipeline,
+            samplerBindings: [
+              {
+                texture: srcTexture,
+                sampler: this.createSampler(),
+              },
+            ],
+            uniformBufferBindings: [
+              {
+                buffer: uniformBuffer,
+              },
+            ],
+          });
 
       this.#postEffectPasses.push({
         program,

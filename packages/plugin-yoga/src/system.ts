@@ -31,12 +31,14 @@ import {
   type SerializedNode,
   GeometryDirty,
   Stroke,
+  StrokeGradient,
   MaterialDirty,
   Group,
   FillImage,
   FillPattern,
   Filter,
   IconFont,
+  IconFontEllipseStrokeRasterPlaceholder,
   Visibility
 } from '@infinite-canvas-tutorial/ecs';
 import { YogaLayoutApplied } from './YogaLayoutApplied';
@@ -183,12 +185,14 @@ export class YogaSystem extends System {
             GeometryDirty,
             MaterialDirty,
             Stroke,
+            StrokeGradient,
             Visibility,
             FillGradient,
             FillSolid,
             FillImage,
             FillPattern,
             Filter,
+            IconFontEllipseStrokeRasterPlaceholder,
           ).write,
     );
   }

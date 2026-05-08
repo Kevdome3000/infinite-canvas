@@ -104,6 +104,7 @@
   "toolbar": {
     "home": "Home",
     "myProjects": "My Projects",
+    "tools": "Tools",
     "editArea": "Edit Area",
     "drawRectMask": "Draw Rect Mask",
     "drawPencilFreehandMask": "Draw Pencil Freehand Mask",
@@ -201,9 +202,13 @@
         "description": "Overlay three filters: CRT, vignette and glitch.",
         "description2": "Try to download the GIF in the export panel on the right."
       },
-      "fujifilmLuts": {
-        "title": "Fujifilm LUTs",
-        "description": ".cube LUTs from Fujifilm. sRGB conversion from <repo>github.com/abpy/FujifilmCameraProfiles</repo>."
+      "luts": {
+        "title": "LUT preview",
+        "description": ".cube film-style LUTs (Fujifilm, Ricoh, and more). Fujifilm luts from <fujiRepo>github.com/abpy/FujifilmCameraProfiles</fujiRepo>. Ricoh luts from <ricohRepo>https://www.reddit.com/r/Lumix/comments/1s5sxbv/i_reverseengineered_ricoh_gr_iis_positive_film/</ricohRepo>."
+      },
+      "liquidMetal": {
+        "title": "Liquid metal",
+        "description": "Lucide icons and text with the liquid-metal filter. Add layers or tweak the effect in the properties panel."
       }
     },
     "photoColors": {
@@ -217,9 +222,13 @@
       "metaDescription": "Glitch-style image effects (coming soon).",
       "placeholder": "Glitch effect controls will go here."
     },
-    "fujifilmLuts": {
-      "metaTitle": "Fujifilm LUTs",
-      "metaDescription": "Try Fujifilm-style film emulation LUTs on your photos."
+    "luts": {
+      "metaTitle": "LUT preview",
+      "metaDescription": "Try .cube film emulation LUTs on the canvas (Fujifilm, Ricoh, and more)."
+    },
+    "liquidMetal": {
+      "metaTitle": "Liquid metal",
+      "metaDescription": "Preview the liquid-metal filter on icon-font layers and text (Lucide and more)."
     }
   }
 }

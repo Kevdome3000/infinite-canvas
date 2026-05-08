@@ -36,6 +36,8 @@ import {
   FillPattern,
   FillSolid,
   FillTexture,
+  FillTextureLive,
+  FillLayers,
   GlobalRenderOrder,
   InnerShadow,
   Opacity,
@@ -50,6 +52,7 @@ import {
   Wireframe,
   Visibility,
   GPUResource,
+  VelloCanvasSurface,
   Name,
   ToBeDeleted,
   SizeAttenuation,
@@ -71,6 +74,7 @@ import {
   FlexLayoutDirty,
   Group,
   IconFont,
+  IconFontEllipseStrokeRasterPlaceholder,
 } from '../components';
 
 export interface RendererPluginOptions {
@@ -84,6 +88,7 @@ function createRendererPlugin(options: RendererPluginOptions = {}): Plugin {
      * Components
      */
     component(GPUResource);
+    component(VelloCanvasSurface);
     component(Renderable);
     component(Name);
     component(LockAspectRatio);
@@ -109,6 +114,8 @@ function createRendererPlugin(options: RendererPluginOptions = {}): Plugin {
     component(FillPattern);
     component(FillImage);
     component(FillTexture);
+    component(FillTextureLive);
+    component(FillLayers);
     component(Stroke);
     component(StrokeGradient);
     component(Opacity);
@@ -125,6 +132,7 @@ function createRendererPlugin(options: RendererPluginOptions = {}): Plugin {
      * Geometry
      */
     component(IconFont);
+    component(IconFontEllipseStrokeRasterPlaceholder);
     component(Group);
     component(Circle);
     component(Ellipse);

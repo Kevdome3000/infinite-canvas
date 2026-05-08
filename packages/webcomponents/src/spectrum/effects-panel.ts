@@ -1163,12 +1163,12 @@ export class EffectsPanel extends LitElement {
             >${msg(str`Edge color`)}</sp-field-label
           >
           ${this.renderEffectSolidPopover(
-            `ic-ef-burn-edge-${index}`,
-            h.edgeColor,
-            (e) => {
-              solidColorToPatch(e, (v) => patch({ edgeColor: v }));
-            },
-          )}
+          `ic-ef-burn-edge-${index}`,
+          h.edgeColor,
+          (e) => {
+            solidColorToPatch(e, (v) => patch({ edgeColor: v }));
+          },
+        )}
         </div>
         <div class="effect-color-field-row">
           <sp-field-label
@@ -1178,12 +1178,12 @@ export class EffectsPanel extends LitElement {
             >${msg(str`Mask color`)}</sp-field-label
           >
           ${this.renderEffectSolidPopover(
-            `ic-ef-burn-mask-${index}`,
-            h.maskColor,
-            (e) => {
-              solidColorToPatch(e, (v) => patch({ maskColor: v }));
-            },
-          )}
+          `ic-ef-burn-mask-${index}`,
+          h.maskColor,
+          (e) => {
+            solidColorToPatch(e, (v) => patch({ maskColor: v }));
+          },
+        )}
         </div>
         <sp-switch
           size="s"
@@ -1397,11 +1397,7 @@ export class EffectsPanel extends LitElement {
           >
         </div>
         ${h.useEngineTime
-          ? html`<span class="hint"
-              >${msg(
-                str`Time uniform follows the app clock each frame (liquid metal).`,
-              )}</span
-            >`
+          ? html``
           : html`
               <sp-slider
                 size="s"
@@ -1598,11 +1594,7 @@ export class EffectsPanel extends LitElement {
           >
         </div>
         ${h.useEngineTime
-          ? html`<span class="hint"
-              >${msg(
-                str`Time uniform follows the app clock each frame (heat map).`,
-              )}</span
-            >`
+          ? html``
           : html`
               <sp-slider
                 size="s"
@@ -1863,11 +1855,7 @@ export class EffectsPanel extends LitElement {
           >
         </div>
         ${h.useEngineTime
-          ? html`<span class="hint"
-              >${msg(
-                str`Time uniform follows the app clock each frame (gem smoke).`,
-              )}</span
-            >`
+          ? html``
           : html`
               <sp-slider
                 size="s"

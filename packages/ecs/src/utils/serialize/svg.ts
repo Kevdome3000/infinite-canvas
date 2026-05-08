@@ -10,6 +10,7 @@ import {
 } from '../../systems';
 import { createSVGElement } from '../browser';
 import {
+  FillAttributes,
   IconFontSerializedNode,
   InnerShadowAttributes,
   PathSerializedNode,
@@ -20,6 +21,11 @@ import {
   StrokeAttributes,
   TextSerializedNode,
 } from '../../types/serialized-node';
+import {
+  firstEnabledFillPresentation,
+  getPrimaryFillValue,
+  migrateLegacyFillWireInPlace,
+} from '../normalize-fill-wire';
 import { serializePoints } from './points';
 import {
   computeLinearGradient,
@@ -284,6 +290,18 @@ function effectiveSvgRectCornerRadius(
   return Math.min(r, cap);
 }
 
+/** Append `propertyName: value` to SVG `style`, escaping double quotes for XML attribute safety. */
+function appendSvgStyleProperty(
+  el: SVGElement,
+  propertyName: string,
+  value: string,
+) {
+  const safe = value.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+  const decl = `${propertyName}: ${safe}`;
+  const prev = el.getAttribute('style');
+  el.setAttribute('style', prev?.trim() ? `${prev.trim()}; ${decl}` : decl);
+}
+
 /**
  * 将场景节点导出为 SVG 子树。对 `fill` / `stroke` 等与 {@link getComputedInheritGroupWireMap} 一致的可继承
  * 线框字段，按 `parentId` 链做「有效展示」再写出，使从父 `g` 继承到的颜色在导出中显式化。
@@ -299,6 +317,9 @@ export async function serializeNodesToSVGElements(
   const idSerializedNodeMap = new Map<string, SerializedNode>();
   for (const node of nodes) {
     idSerializedNodeMap.set(node.id, node);
+  }
+  for (const n of nodes) {
+    migrateLegacyFillWireInPlace(n as unknown as Record<string, unknown>);
   }
   const inheritGroupWireById = getComputedInheritGroupWireMap(nodes);
 
@@ -377,7 +398,7 @@ export async function serializeNodesToSVGElements(
       markerStart,
       markerEnd,
       markerFactor,
-      filter,
+      filter: _filterWireOmitFromAttrs,
       sizeAttenuation,
       strokeAttenuation,
       hitStrokeWidth,
@@ -434,11 +455,31 @@ export async function serializeNodesToSVGElements(
 
     const effWire = inheritGroupWireById.get(id) ?? {};
     const restForExport = { ...rest, ...effWire };
+    migrateLegacyFillWireInPlace(restForExport as Record<string, unknown>);
+    const fillPres = firstEnabledFillPresentation(
+      (restForExport as FillAttributes).fills,
+    );
+    if (fillPres) {
+      (restForExport as Record<string, unknown>).fill = fillPres.fill;
+      const fo = fillPres.fillOpacity ?? 1;
+      const n =
+        typeof fo === 'number' && Number.isFinite(fo)
+          ? fo
+          : parseFloat(String(fo));
+      (restForExport as Record<string, unknown>).fillOpacity =
+        Number.isFinite(n) ? Math.max(0, Math.min(1, n)) : 1;
+    }
+    const restExportRec = restForExport as Record<string, unknown>;
     const nodeForExport = { ...node, ...effWire } as SerializedNode;
 
     if (element) {
       Object.entries(restForExport).forEach(([key, value]) => {
-        if (key === 'hitStrokeWidth' || key === 'svgDataAttributes') {
+        if (
+          key === 'hitStrokeWidth' ||
+          key === 'svgDataAttributes' ||
+          key === 'filter' ||
+          key === 'fills'
+        ) {
           return;
         }
         if (
@@ -455,7 +496,7 @@ export async function serializeNodesToSVGElements(
     }
 
     if (type === 'rect' || type === 'ellipse' || type === 'polyline' || type === 'path') {
-      if (!restForExport.fill) {
+      if (!restExportRec.fill) {
         element.setAttribute('fill', 'none');
       }
     }
@@ -553,15 +594,15 @@ export async function serializeNodesToSVGElements(
       (markerStart && markerStart !== 'none') ||
       (markerEnd && markerEnd !== 'none');
     const hasFillImage =
-      restForExport.fill &&
-      isString(restForExport.fill) &&
-      (isUrl(restForExport.fill) || isDataUrl(restForExport.fill as string));
+      restExportRec.fill &&
+      isString(restExportRec.fill) &&
+      (isUrl(restExportRec.fill) || isDataUrl(restExportRec.fill as string));
     const hasFillGradient =
-      restForExport.fill &&
-      isString(restForExport.fill) &&
-      isGradient(restForExport.fill as string);
+      restExportRec.fill &&
+      isString(restExportRec.fill) &&
+      isGradient(restExportRec.fill as string);
     const hasFillPattern =
-      restForExport.fill && isPattern(restForExport.fill);
+      restExportRec.fill && isPattern(restExportRec.fill);
     const hasStrokeGradient =
       restForExport.stroke &&
       isString(restForExport.stroke) &&
@@ -632,6 +673,7 @@ export async function serializeNodesToSVGElements(
         $g,
       );
     }
+    const strokeDecorationsTarget = strokePaintLayer ?? element;
     if (innerShadowBlurRadius > 0) {
       exportInnerShadow(nodeForExport, element, $g);
     }
@@ -646,15 +688,15 @@ export async function serializeNodesToSVGElements(
     if (hasFillGradient || hasFillPattern) {
       exportFillGradientOrPattern(nodeForExport, element, $g);
     }
-    if ((hasStrokeGradient || hasStrokePattern) && element) {
+    if ((hasStrokeGradient || hasStrokePattern) && strokeDecorationsTarget) {
       exportStrokeGradientOrPattern(
         nodeForExport,
-        strokePaintLayer ?? element,
+        strokeDecorationsTarget,
         ($g ?? element) as SVGElement,
       );
     }
-    if (hasMarker && !isRough) {
-      exportMarker(nodeForExport, element, $g);
+    if (hasMarker && !isRough && strokeDecorationsTarget) {
+      exportMarker(nodeForExport, strokeDecorationsTarget, $g);
     }
     if (hasClipMode) {
       await exportClipOrMask(nodeForExport, element, $g);
@@ -662,6 +704,11 @@ export async function serializeNodesToSVGElements(
 
     $g = $g || element;
     $g.id = `node-${id}`;
+
+    const wireFilter = (nodeForExport as { filter?: string }).filter;
+    if (typeof wireFilter === 'string' && wireFilter.trim() !== '') {
+      appendSvgStyleProperty($g, 'filter', wireFilter.trim());
+    }
 
     applySvgDataAttributesToElement($g, {
       hitStrokeWidth,
@@ -1261,7 +1308,7 @@ export function exportFillGradientOrPattern(
 ) {
   const $defs = ensureGroupDefs($g);
 
-  const fill = (node as TextSerializedNode).fill;
+  const fill = getPrimaryFillValue(node as FillAttributes) ?? '';
 
   if (isPattern(fill)) {
     const patternId = createOrUpdatePattern(node, $defs, fill);
@@ -1498,8 +1545,15 @@ export async function exportClipOrMask(
 }
 
 export function exportRough(node: SerializedNode, $g: SVGElement) {
-  const { stroke, fill, strokeWidth, fillOpacity = 1 } =
-    node as PathSerializedNode;
+  migrateLegacyFillWireInPlace(node as unknown as Record<string, unknown>);
+  const pres = firstEnabledFillPresentation((node as FillAttributes).fills);
+  const fill = pres?.fill ?? 'none';
+  const rawFo = pres?.fillOpacity ?? 1;
+  const fillOpacity =
+    typeof rawFo === 'number' && Number.isFinite(rawFo)
+      ? rawFo
+      : parseFloat(String(rawFo)) || 1;
+  const { stroke, strokeWidth } = node as PathSerializedNode;
   const roughFillStyle = (node as RoughAttributes).roughFillStyle;
 
   if (roughFillStyle === 'watercolor') {
@@ -1552,6 +1606,9 @@ export function exportText(
   $g: SVGElement,
   element: SVGElement,
 ) {
+  migrateLegacyFillWireInPlace(attributes as unknown as Record<string, unknown>);
+  const fp = firstEnabledFillPresentation((attributes as FillAttributes).fills);
+  const fillFromFills = fp?.fill;
   const {
     content,
     fontFamily,
@@ -1559,13 +1616,13 @@ export function exportText(
     fontWeight,
     fontStyle,
     fontVariant,
-    fill,
     decorationLine,
     decorationStyle,
     decorationColor,
     decorationThickness,
     letterSpacing,
   } = attributes;
+  const fill = fillFromFills ?? '#000';
 
   $g.setAttribute('dominant-baseline', 'hanging');
 
@@ -1652,6 +1709,14 @@ export async function exportFillImage(
   element: SVGElement,
   $g: SVGElement,
 ) {
+  const wire = { ...(node as unknown as Record<string, unknown>) };
+  migrateLegacyFillWireInPlace(wire);
+  let fill = getPrimaryFillValue(wire as FillAttributes) ?? '';
+  if (!fill) {
+    element.setAttribute('fill', 'none');
+    return;
+  }
+
   const $defs = createSVGElement('defs');
   const $pattern = createSVGElement('pattern');
   $pattern.id = `image-fill_${node.id}`;
@@ -1661,7 +1726,6 @@ export async function exportFillImage(
   $pattern.setAttribute('height', '1');
   const $image = createSVGElement('image');
 
-  let fill = (node as any).fill as string;
   if (isUrl(fill)) {
     // Convert url to dataURL
     fill = (await imageToCanvas(fill)).toDataURL();

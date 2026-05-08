@@ -26,8 +26,10 @@ import {
   FillGradient,
   FillImage,
   FillPattern,
+  FillLayers,
   FillSolid,
   FillTexture,
+  FillTextureLive,
   FractionalIndex,
   GlobalRenderOrder,
   GlobalTransform,
@@ -68,6 +70,7 @@ import {
   ClipMode,
   Flex,
   IconFont,
+  IconFontEllipseStrokeRasterPlaceholder,
 } from '../components';
 import {
   Effect,
@@ -218,6 +221,9 @@ export class MeshPipeline extends System {
   private fillSolids = this.query(
     (q) => q.addedChangedOrRemoved.with(FillSolid).trackWrites,
   );
+  private fillLayers = this.query(
+    (q) => q.addedChangedOrRemoved.with(FillLayers).trackWrites,
+  );
   private fillGradients = this.query(
     (q) => q.addedChangedOrRemoved.with(FillGradient).trackWrites,
   );
@@ -235,6 +241,15 @@ export class MeshPipeline extends System {
   );
   private strokeGradients = this.query(
     (q) => q.addedChangedOrRemoved.with(StrokeGradient).trackWrites,
+  );
+  private rectsStrokeGradientBounds = this.query(
+    (q) => q.addedChangedOrRemoved.with(Rect).trackWrites,
+  );
+  private ellipsesStrokeGradientBounds = this.query(
+    (q) => q.addedChangedOrRemoved.with(Ellipse).trackWrites,
+  );
+  private circlesStrokeGradientBounds = this.query(
+    (q) => q.addedChangedOrRemoved.with(Circle).trackWrites,
   );
   private opacities = this.query(
     (q) => q.addedChangedOrRemoved.with(Opacity).trackWrites,
@@ -271,6 +286,10 @@ export class MeshPipeline extends System {
   );
   /** Used to force continuous frames when CRT `useEngineTime` animates without component churn. */
   private filtersCurrent = this.query((q) => q.current.with(Filter).read);
+  /** External GPU fills (e.g. spectrum particles) update every frame; keep compositing. */
+  private fillTextureLiveCurrent = this.query((q) =>
+    q.current.with(FillTextureLive).read,
+  );
   private clipModes = this.query(
     (q) => q.addedChangedOrRemoved.with(ClipMode).trackWrites,
   );
@@ -321,6 +340,7 @@ export class MeshPipeline extends System {
             FillImage,
             FillPattern,
             FillGradient,
+            FillLayers,
             FillSolid,
             FillTexture,
             FractionalIndex,
@@ -333,7 +353,8 @@ export class MeshPipeline extends System {
             Locked,
             ClipMode,
             Flex,
-            IconFont
+            IconFont,
+            IconFontEllipseStrokeRasterPlaceholder,
           )
           .read.and.using(
             RasterScreenshotRequest,
@@ -342,6 +363,7 @@ export class MeshPipeline extends System {
             Screenshot,
             GeometryDirty,
             MaterialDirty,
+            ComputedTextMetrics,
           ).write,
     );
   }
@@ -812,7 +834,26 @@ export class MeshPipeline extends System {
       }
     });
 
+    new Set([
+      ...this.rectsStrokeGradientBounds.addedChangedOrRemoved,
+      ...this.ellipsesStrokeGradientBounds.addedChangedOrRemoved,
+      ...this.circlesStrokeGradientBounds.addedChangedOrRemoved,
+    ]).forEach((entity) => {
+      if (entity.has(StrokeGradient)) {
+        safeAddComponent(entity, MaterialDirty);
+        safeAddComponent(entity, GeometryDirty);
+      }
+    });
+
+    this.filters.addedChangedOrRemoved.forEach((entity) => {
+      if (entity.has(Text)) {
+        safeAddComponent(entity, MaterialDirty);
+      }
+    });
+
     const engineTimeNeedsContinuousRender = this.anyFilterUsesEngineTimePost();
+    const fillTextureLiveNeedsContinuousRender =
+      this.fillTextureLiveCurrent.current.length > 0;
 
     this.canvases.current.forEach((canvas) => {
       if (
@@ -845,7 +886,8 @@ export class MeshPipeline extends System {
         this.grids.addedChangedOrRemoved.includes(canvas) ||
         this.themes.addedChangedOrRemoved.includes(canvas) ||
         this.rasterScreenshotRequests.addedChangedOrRemoved.includes(canvas) ||
-        engineTimeNeedsContinuousRender;
+        engineTimeNeedsContinuousRender ||
+        fillTextureLiveNeedsContinuousRender;
 
       const { cameras } = canvas.read(Canvas);
       cameras.forEach((camera) => {
@@ -861,6 +903,7 @@ export class MeshPipeline extends System {
         if (
           !toRender &&
           (!!this.fillSolids.addedChangedOrRemoved.length ||
+            !!this.fillLayers.addedChangedOrRemoved.length ||
             !!this.fillGradients.addedChangedOrRemoved.length ||
             !!this.strokeGradients.addedChangedOrRemoved.length ||
             !!this.fillPatterns.addedChangedOrRemoved.length ||
