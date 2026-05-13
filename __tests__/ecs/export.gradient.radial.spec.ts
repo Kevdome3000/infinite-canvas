@@ -10,7 +10,8 @@ import {
   DOMAdapter,
   DefaultPlugins,
   DefaultStateManagement,
-  FillSolid,
+  FillLayers,
+  StrokeLayers,
   Grid,
   Parent,
   Plugin,
@@ -30,7 +31,6 @@ import {
   ExportFormat,
   Opacity,
   Screenshot,
-  FillGradient,
 } from '../../packages/ecs/src';
 import { NodeJSAdapter, sleep } from '../utils';
 
@@ -66,8 +66,8 @@ describe('Export SVG', () => {
             Children,
             Transform,
             Renderable,
-            FillSolid,
-            FillGradient,
+            FillLayers,
+            StrokeLayers,
             Stroke,
             Rect,
             Visibility,

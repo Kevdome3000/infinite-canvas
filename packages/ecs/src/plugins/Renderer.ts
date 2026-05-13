@@ -31,13 +31,10 @@ import {
   ComputedTextMetrics,
   DropShadow,
   Ellipse,
-  FillGradient,
-  FillImage,
-  FillPattern,
-  FillSolid,
   FillTexture,
   FillTextureLive,
   FillLayers,
+  StrokeLayers,
   GlobalRenderOrder,
   InnerShadow,
   Opacity,
@@ -47,7 +44,6 @@ import {
   Renderable,
   Rough,
   Stroke,
-  StrokeGradient,
   Text,
   Wireframe,
   Visibility,
@@ -109,15 +105,11 @@ function createRendererPlugin(options: RendererPluginOptions = {}): Plugin {
     /**
      * Style
      */
-    component(FillSolid);
-    component(FillGradient);
-    component(FillPattern);
-    component(FillImage);
     component(FillTexture);
     component(FillTextureLive);
     component(FillLayers);
+    component(StrokeLayers);
     component(Stroke);
-    component(StrokeGradient);
     component(Opacity);
     component(DropShadow);
     component(InnerShadow);

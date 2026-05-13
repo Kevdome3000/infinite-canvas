@@ -3,7 +3,10 @@
  * @see https://docs.pencil.dev/for-developers/the-pen-format#variables-and-themes
  */
 
-import type { SerializedNode } from '../types/serialized-node';
+import type {
+  SerializedFillLayerItem,
+  SerializedNode,
+} from '../types/serialized-node';
 import { ThemeMode } from '../components/Theme';
 
 export type DesignVariableType = 'color' | 'number' | 'string';
@@ -249,6 +252,7 @@ export function setDesignVariableLightDarkColumn(
 
 export const SERIALIZED_NODE_VARIABLE_KEYS = [
   'fills',
+  'strokes',
   'stroke',
   'fontSize',
   'decorationColor',
@@ -256,7 +260,6 @@ export const SERIALIZED_NODE_VARIABLE_KEYS = [
   'innerShadowColor',
   'strokeWidth',
   'cornerRadius',
-  'strokeOpacity',
   'cornerRadius',
   'letterSpacing',
   'lineHeight',
@@ -333,16 +336,16 @@ export type DesignVariablesSvgExportMode =
   /** `:root{--x:...}` + `fill="var(--x)"` 形式 */
   | 'css-var';
 
-function resolveFillsVariableReferences(
-  fills: unknown,
+function resolvePaintStackVariableReferences(
+  stack: unknown,
   variables: DesignVariablesMap | undefined,
   themeMode?: ThemeMode,
 ): { next: unknown; changed: boolean } {
-  if (!Array.isArray(fills)) {
-    return { next: fills, changed: false };
+  if (!Array.isArray(stack)) {
+    return { next: stack, changed: false };
   }
   let changed = false;
-  const next = fills.map((layer) => {
+  const next = stack.map((layer) => {
     if (!layer || typeof layer !== 'object') {
       return layer;
     }
@@ -366,15 +369,31 @@ function resolveFillsVariableReferences(
   return { next, changed };
 }
 
-function mapFillsToCssVarPlaceholders(fills: unknown): {
+function resolveFillsVariableReferences(
+  fills: unknown,
+  variables: DesignVariablesMap | undefined,
+  themeMode?: ThemeMode,
+): { next: unknown; changed: boolean } {
+  return resolvePaintStackVariableReferences(fills, variables, themeMode);
+}
+
+function resolveStrokesVariableReferences(
+  strokes: unknown,
+  variables: DesignVariablesMap | undefined,
+  themeMode?: ThemeMode,
+): { next: unknown; changed: boolean } {
+  return resolvePaintStackVariableReferences(strokes, variables, themeMode);
+}
+
+function mapPaintStackToCssVarPlaceholders(stack: unknown): {
   next: unknown;
   changed: boolean;
 } {
-  if (!Array.isArray(fills)) {
-    return { next: fills, changed: false };
+  if (!Array.isArray(stack)) {
+    return { next: stack, changed: false };
   }
   let changed = false;
-  const next = fills.map((layer) => {
+  const next = stack.map((layer) => {
     if (!layer || typeof layer !== 'object') {
       return layer;
     }
@@ -396,6 +415,20 @@ function mapFillsToCssVarPlaceholders(fills: unknown): {
   return { next, changed };
 }
 
+function mapFillsToCssVarPlaceholders(fills: unknown): {
+  next: unknown;
+  changed: boolean;
+} {
+  return mapPaintStackToCssVarPlaceholders(fills);
+}
+
+function mapStrokesToCssVarPlaceholders(strokes: unknown): {
+  next: unknown;
+  changed: boolean;
+} {
+  return mapPaintStackToCssVarPlaceholders(strokes);
+}
+
 function mapSerializedNodeToCssVarPlaceholders(
   node: SerializedNode,
 ): SerializedNode {
@@ -409,6 +442,14 @@ function mapSerializedNodeToCssVarPlaceholders(
     const raw = nodeRec[key];
     if (key === 'fills') {
       const { next: nf, changed: cf } = mapFillsToCssVarPlaceholders(raw);
+      if (cf) {
+        next[key] = nf;
+        changed = true;
+      }
+      continue;
+    }
+    if (key === 'strokes') {
+      const { next: nf, changed: cf } = mapStrokesToCssVarPlaceholders(raw);
       if (cf) {
         next[key] = nf;
         changed = true;
@@ -485,6 +526,30 @@ export function resolveDesignVariableValue<T>(
 }
 
 /**
+ * 解析各层 `value` / `opacity` 上的 `$` 引用，供写入 ECS {@link FillLayers}。
+ * GPU 侧 `parseColor` 需要字面量颜色；线框节点上的 `fills` 仍保留原始 `$` 字符串。
+ */
+export function resolveFillLayerItemsForEcs(
+  layers: SerializedFillLayerItem[],
+  variables: DesignVariablesMap | undefined,
+  themeMode?: ThemeMode,
+): SerializedFillLayerItem[] {
+  return layers.map((layer) => {
+    const L = { ...layer } as Record<string, unknown>;
+    if (typeof L.value === 'string') {
+      L.value = resolveDesignVariableValue(L.value, variables, themeMode);
+    }
+    if (L.type === 'pattern' && typeof L.value === 'string') {
+      L.value = resolveDesignVariableValue(L.value, variables, themeMode);
+    }
+    if (typeof L.opacity === 'string') {
+      L.opacity = resolveDesignVariableValue(L.opacity, variables, themeMode);
+    }
+    return L as SerializedFillLayerItem;
+  });
+}
+
+/**
  * 浅拷贝每个节点并解析已知字段上的 `$` 引用（用于导出等只读路径）。
  */
 export function resolveSerializedNodesDesignVariables(
@@ -506,6 +571,18 @@ export function resolveSerializedNodesDesignVariables(
       const raw = nodeRec[key];
       if (key === 'fills') {
         const { next: nf, changed: cf } = resolveFillsVariableReferences(
+          raw,
+          variables,
+          themeMode,
+        );
+        if (cf) {
+          next[key] = nf;
+          changed = true;
+        }
+        continue;
+      }
+      if (key === 'strokes') {
+        const { next: nf, changed: cf } = resolveStrokesVariableReferences(
           raw,
           variables,
           themeMode,

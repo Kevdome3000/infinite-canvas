@@ -10,7 +10,8 @@ import {
   DOMAdapter,
   DefaultPlugins,
   DefaultStateManagement,
-  FillSolid,
+  FillLayers,
+  StrokeLayers,
   Grid,
   Parent,
   Plugin,
@@ -70,7 +71,8 @@ describe('Export SVG', () => {
             Children,
             Transform,
             Renderable,
-            FillSolid,
+            FillLayers,
+            StrokeLayers,
             Stroke,
             Rect,
             Ellipse,
@@ -103,7 +105,7 @@ describe('Export SVG', () => {
           type: 'g',
           zIndex: 0,
           fills: [{ type: 'solid', value: 'red', opacity: 1 }],
-          stroke: 'black',
+          strokes: [{ type: 'solid', value: 'black', opacity: 1 }],
           strokeWidth: 10,
         };
 

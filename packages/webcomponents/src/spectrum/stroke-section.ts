@@ -3,10 +3,11 @@ import { customElement, property, state } from 'lit/decorators.js';
 import { consume } from '@lit/context';
 import {
   AppState,
-  FillAttributes,
   isGradient,
+  migrateLegacyStrokeWireInPlace,
   resolveDesignVariableValue,
   SerializedNode,
+  StrokeAttributes,
   type SerializedFillLayerItem,
 } from '@infinite-canvas-tutorial/ecs';
 import { apiContext, appStateContext } from '../context';
@@ -18,8 +19,9 @@ import {
   type ColorPickerChangeDetail,
 } from './color-picker.js';
 import './color-picker.js';
-import './fill-icon.js';
+import './stroke-icon.js';
 import '@spectrum-web-components/action-button/sp-action-button.js';
+import '@spectrum-web-components/number-field/sp-number-field.js';
 import '@spectrum-web-components/textfield/sp-textfield.js';
 import '@spectrum-web-components/tooltip/sp-tooltip.js';
 import '@spectrum-web-components/overlay/sp-overlay.js';
@@ -31,10 +33,6 @@ import '@spectrum-web-components/icons-workflow/icons/sp-icon-visibility-off.js'
 
 function clamp01(n: number): number {
   return Math.min(1, Math.max(0, n));
-}
-
-function fillLayerPrimaryWire(layer: SerializedFillLayerItem): string {
-  return layer.value;
 }
 
 function layerOpacity01(o?: number | string): number {
@@ -55,9 +53,9 @@ function layerOpacity01(o?: number | string): number {
   return clamp01(o);
 }
 
-@customElement('ic-spectrum-fill-section')
+@customElement('ic-spectrum-stroke-section')
 @localized()
-export class FillSection extends LitElement {
+export class StrokeSection extends LitElement {
   static styles = css`
     :host {
       display: block;
@@ -113,7 +111,7 @@ export class FillSection extends LitElement {
       overflow: hidden;
     }
 
-    .swatch ic-spectrum-fill-icon {
+    .swatch ic-spectrum-stroke-icon {
       width: 22px;
       height: 22px;
       display: block;
@@ -147,7 +145,6 @@ export class FillSection extends LitElement {
       box-sizing: border-box;
     }
 
-    /* 与 fill-action-button / stroke-content 一致：默认 dialog popover 内边距过大易挡住取色按钮点击 */
     sp-popover {
       padding: 0;
     }
@@ -162,44 +159,42 @@ export class FillSection extends LitElement {
   @property({ type: Object })
   node!: SerializedNode;
 
-  /** 与同引用 `node` 解耦，保证删 `fills` 等就地 mutate 后仍调度渲染 */
   @state()
-  private fillPanelEpoch = 0;
+  private strokePanelEpoch = 0;
 
   private commit(patch: Partial<SerializedNode>) {
     this.api.updateNode(this.node, patch as Partial<SerializedNode>);
     this.api.record();
-    const p = patch as Partial<FillAttributes>;
+    const p = patch as Partial<StrokeAttributes>;
     if (
-      Object.prototype.hasOwnProperty.call(p, 'fills') &&
-      p.fills === undefined
+      Object.prototype.hasOwnProperty.call(p, 'strokes') &&
+      p.strokes === undefined
     ) {
-      delete (this.node as FillAttributes).fills;
+      delete (this.node as StrokeAttributes).strokes;
     }
-    this.fillPanelEpoch += 1;
+    this.strokePanelEpoch += 1;
   }
 
-  /** 线框上已使用 `fills` 数组（可为空 `[]`）；非数组为旧数据，编辑时写入数组。 */
-  private fillsWireArray(): SerializedFillLayerItem[] | null {
-    const fl = (this.node as FillAttributes).fills;
-    return Array.isArray(fl) ? fl.map((L) => ({ ...L })) : null;
+  private strokesWireArray(): SerializedFillLayerItem[] | null {
+    migrateLegacyStrokeWireInPlace(this.node as unknown as Record<string, unknown>);
+    const sl = (this.node as StrokeAttributes).strokes;
+    return Array.isArray(sl) ? sl.map((L) => ({ ...L })) : null;
   }
 
-  /** 单层编辑用的当前层（无 `fills` 数组时给默认，首次写入时再 `commit`） */
   private singleLayerFromNode(): SerializedFillLayerItem {
-    const fl = (this.node as FillAttributes).fills;
-    if (Array.isArray(fl) && fl.length >= 1) {
-      return { ...fl[0]! };
+    migrateLegacyStrokeWireInPlace(this.node as unknown as Record<string, unknown>);
+    const sl = (this.node as StrokeAttributes).strokes;
+    if (Array.isArray(sl) && sl.length >= 1) {
+      return { ...sl[0]! };
     }
-    return { type: 'solid', value: '#000000', opacity: 1 };
+    return { type: 'solid', value: 'none', opacity: 1 };
   }
 
-  /** 色盘是否带整体不透明度 / 变量绑定：仅「唯一一层」时启用（含 `fills: [L]` 与旧式无数组） */
-  private fillPickerUsesOpacityUi(index: number | null): boolean {
+  private strokePickerUsesOpacityUi(index: number | null): boolean {
     if (index === null) {
       return true;
     }
-    const arr = this.fillsWireArray();
+    const arr = this.strokesWireArray();
     return arr !== null && arr.length === 1 && index === 0;
   }
 
@@ -232,34 +227,34 @@ export class FillSection extends LitElement {
   private handleAdd() {
     const defaultLayer: SerializedFillLayerItem = {
       type: 'solid',
-      value: '#CCCCCC',
+      value: '#888888',
       opacity: 1,
     };
-    const arr = this.fillsWireArray();
+    const arr = this.strokesWireArray();
     if (arr !== null) {
-      this.commit({ fills: [...arr, defaultLayer] });
+      this.commit({ strokes: [...arr, defaultLayer] });
       return;
     }
-    this.commit({ fills: [defaultLayer] });
+    this.commit({ strokes: [defaultLayer] });
   }
 
   private handleRemove(index: number) {
-    const arr = this.fillsWireArray();
+    const arr = this.strokesWireArray();
     if (arr !== null) {
       if (index < 0 || index >= arr.length) {
         return;
       }
-      this.commit({ fills: arr.filter((_, i) => i !== index) });
+      this.commit({ strokes: arr.filter((_, i) => i !== index) });
       return;
     }
     if (index !== 0) {
       return;
     }
-    this.commit({ fills: [] });
+    this.commit({ strokes: [] });
   }
 
   private handleToggleLayer(index: number) {
-    const arr = this.fillsWireArray();
+    const arr = this.strokesWireArray();
     if (arr !== null) {
       const cur = arr[index];
       if (!cur) {
@@ -269,7 +264,7 @@ export class FillSection extends LitElement {
       const next = arr.map((L, i) =>
         i === index ? { ...L, enabled: visible ? false : true } : L,
       );
-      this.commit({ fills: next });
+      this.commit({ strokes: next });
       return;
     }
     if (index !== 0) {
@@ -278,7 +273,7 @@ export class FillSection extends LitElement {
     const base = this.singleLayerFromNode();
     const visible = base.enabled !== false;
     this.commit({
-      fills: [{ ...base, enabled: visible ? false : true }],
+      strokes: [{ ...base, enabled: visible ? false : true }],
     });
   }
 
@@ -287,7 +282,7 @@ export class FillSection extends LitElement {
     e: CustomEvent<{ value: string }>,
   ) {
     const raw = String((e.target as unknown as { value: string }).value).trim();
-    const arr = this.fillsWireArray();
+    const arr = this.strokesWireArray();
     if (arr !== null && index != null) {
       const L = arr[index];
       if (!L) {
@@ -302,7 +297,7 @@ export class FillSection extends LitElement {
         nextLayer = { ...L, value: normalizeSolidCssValue(raw) };
       }
       const next = arr.map((x, i) => (i === index ? nextLayer : x));
-      this.commit({ fills: next });
+      this.commit({ strokes: next });
       return;
     }
     const base = this.singleLayerFromNode();
@@ -316,14 +311,14 @@ export class FillSection extends LitElement {
         value: normalizeSolidCssValue(raw),
       };
     }
-    this.commit({ fills: [nextLayer] });
+    this.commit({ strokes: [nextLayer] });
   }
 
   private handlePickerColorChange(
     index: number | null,
     e: CustomEvent<ColorPickerChangeDetail>,
   ) {
-    const { type, value, fillOpacity: pickFillOpacity } = e.detail;
+    const { type, value, strokeOpacity: pickStrokeOpacity } = e.detail;
     let layerType: 'solid' | 'gradient' | 'image';
     let wireValue: string;
     if (type === ColorType.Gradient) {
@@ -343,11 +338,11 @@ export class FillSection extends LitElement {
       wireValue = value;
     }
 
-    const arr = this.fillsWireArray();
+    const arr = this.strokesWireArray();
 
     if (arr !== null && index != null) {
       const applyOpacity =
-        pickFillOpacity !== undefined && arr.length === 1 && index === 0;
+        pickStrokeOpacity !== undefined && arr.length === 1 && index === 0;
       const next = arr.map((L, i) => {
         if (i !== index) {
           return L;
@@ -361,12 +356,12 @@ export class FillSection extends LitElement {
           nextL = { ...L, type: 'solid' as const, value: wireValue };
         }
         if (applyOpacity) {
-          nextL = { ...nextL, opacity: pickFillOpacity };
+          nextL = { ...nextL, opacity: pickStrokeOpacity };
         }
         return nextL;
       });
 
-      this.commit({ fills: next });
+      this.commit({ strokes: next });
       return;
     }
 
@@ -377,39 +372,39 @@ export class FillSection extends LitElement {
         : layerType === 'image'
           ? { ...base, type: 'image', value: wireValue }
           : { ...base, type: 'solid', value: wireValue };
-    if (pickFillOpacity !== undefined && index == null && arr === null) {
-      next0.opacity = pickFillOpacity;
+    if (pickStrokeOpacity !== undefined && index == null && arr === null) {
+      next0.opacity = pickStrokeOpacity;
     }
-    this.commit({ fills: [next0] });
+    this.commit({ strokes: [next0] });
   }
 
   private handlePickerOpacityChange(
-    e: CustomEvent<{ fillOpacity?: number }>,
+    e: CustomEvent<{ fillOpacity?: number; strokeOpacity?: number }>,
   ) {
-    const { fillOpacity } = e.detail;
-    if (fillOpacity === undefined) {
+    const strokeOpacity = e.detail.strokeOpacity;
+    if (strokeOpacity === undefined) {
       return;
     }
     const base = this.singleLayerFromNode();
-    this.commit({ fills: [{ ...base, opacity: fillOpacity }] });
+    this.commit({ strokes: [{ ...base, opacity: strokeOpacity }] });
   }
 
   private handlePickerOpacityVariablePick(
     e: CustomEvent<{ mode: 'fill' | 'stroke'; key: string }>,
   ) {
-    if (e.detail.mode !== 'fill') {
+    if (e.detail.mode !== 'stroke') {
       return;
     }
     const base = this.singleLayerFromNode();
     this.commit({
-      fills: [{ ...base, opacity: `$${e.detail.key}` }],
+      strokes: [{ ...base, opacity: `$${e.detail.key}` }],
     });
   }
 
   private handlePickerOpacityVariableUnbind(
     e: CustomEvent<{ mode: 'fill' | 'stroke' }>,
   ) {
-    if (e.detail.mode !== 'fill') {
+    if (e.detail.mode !== 'stroke') {
       return;
     }
     const base = this.singleLayerFromNode();
@@ -425,7 +420,7 @@ export class FillSection extends LitElement {
         : parseFloat(String(resolved ?? ''));
     if (Number.isFinite(n)) {
       this.commit({
-        fills: [{ ...base, opacity: Math.max(0, Math.min(1, n)) }],
+        strokes: [{ ...base, opacity: Math.max(0, Math.min(1, n)) }],
       });
     }
   }
@@ -435,9 +430,8 @@ export class FillSection extends LitElement {
     index: number | null,
   ): TemplateResult {
     const safeId = this.node.id.replace(/[^a-zA-Z0-9_-]/g, '_');
-    const suffix =
-      index == null ? 'single' : `i${index}`;
-    const triggerId = `ic-fill-swatch-${safeId}-${suffix}`;
+    const suffix = index == null ? 'single' : `i${index}`;
+    const triggerId = `ic-stroke-swatch-${safeId}-${suffix}`;
     const pickerValue = this.swatchValue(layer);
     return html`
       <sp-action-button
@@ -445,13 +439,13 @@ export class FillSection extends LitElement {
         size="s"
         class="swatch-btn"
         id=${triggerId}
-        label=${msg(str`Edit fill color`)}
+        label=${msg(str`Edit stroke color`)}
       >
         <div class="swatch" slot="icon">
-          <ic-spectrum-fill-icon
+          <ic-spectrum-stroke-icon
             .value=${pickerValue}
             .node=${this.node}
-          ></ic-spectrum-fill-icon>
+          ></ic-spectrum-stroke-icon>
         </div>
         <sp-tooltip self-managed placement="bottom">
           ${msg(str`Edit color`)}
@@ -463,26 +457,26 @@ export class FillSection extends LitElement {
         type="auto"
       >
         <sp-popover dialog>
-          ${this.fillPickerUsesOpacityUi(index)
-        ? html`<ic-spectrum-color-picker
+          ${this.strokePickerUsesOpacityUi(index)
+            ? html`<ic-spectrum-color-picker
                 .value=${pickerValue}
-                .fillOpacity=${this.layerOpacityResolved01(
-          index == null
-            ? this.singleLayerFromNode()
-            : this.fillsWireArray()![0]!,
-        )}
+                .strokeOpacity=${this.layerOpacityResolved01(
+                  index == null
+                    ? this.singleLayerFromNode()
+                    : this.strokesWireArray()![0]!,
+                )}
                 enable-opacity-variable-binding
                 @color-change=${(e: CustomEvent<ColorPickerChangeDetail>) =>
-            this.handlePickerColorChange(index, e)}
+                  this.handlePickerColorChange(index, e)}
                 @opacity-change=${this.handlePickerOpacityChange}
                 @opacity-variable-pick=${this.handlePickerOpacityVariablePick}
                 @opacity-variable-unbind=${this
-            .handlePickerOpacityVariableUnbind}
+                  .handlePickerOpacityVariableUnbind}
               ></ic-spectrum-color-picker>`
-        : html`<ic-spectrum-color-picker
+            : html`<ic-spectrum-color-picker
                 .value=${pickerValue}
                 @color-change=${(e: CustomEvent<ColorPickerChangeDetail>) =>
-            this.handlePickerColorChange(index, e)}
+                  this.handlePickerColorChange(index, e)}
               ></ic-spectrum-color-picker>`}
         </sp-popover>
       </sp-overlay>
@@ -498,7 +492,7 @@ export class FillSection extends LitElement {
       10,
     );
     const p = Number.isFinite(n) ? clamp01(n / 100) : 1;
-    const arr = this.fillsWireArray();
+    const arr = this.strokesWireArray();
     if (arr !== null) {
       if (index == null) {
         return;
@@ -506,11 +500,11 @@ export class FillSection extends LitElement {
       const next = arr.map((L, i) =>
         i === index ? { ...L, opacity: p } : L,
       );
-      this.commit({ fills: next });
+      this.commit({ strokes: next });
       return;
     }
     const base = this.singleLayerFromNode();
-    this.commit({ fills: [{ ...base, opacity: p }] });
+    this.commit({ strokes: [{ ...base, opacity: p }] });
   }
 
   private renderEye(layer: SerializedFillLayerItem, index: number) {
@@ -521,13 +515,15 @@ export class FillSection extends LitElement {
         size="s"
         class="row-actions"
         label=${visible
-        ? msg(str`Hide fill layer`)
-        : msg(str`Show fill layer`)}
+          ? msg(str`Hide stroke layer`)
+          : msg(str`Show stroke layer`)}
         @click=${() => this.handleToggleLayer(index)}
       >
         ${visible
-        ? html`<sp-icon-visibility slot="icon"></sp-icon-visibility>`
-        : html`<sp-icon-visibility-off slot="icon"></sp-icon-visibility-off>`}
+          ? html`<sp-icon-visibility slot="icon"></sp-icon-visibility>`
+          : html`<sp-icon-visibility-off
+              slot="icon"
+            ></sp-icon-visibility-off>`}
         <sp-tooltip self-managed placement="bottom">
           ${visible ? msg(str`Hide`) : msg(str`Show`)}
         </sp-tooltip>
@@ -538,16 +534,16 @@ export class FillSection extends LitElement {
   private renderLayerRow(
     layer: SerializedFillLayerItem,
     index: number,
-    fillsArrayMode: boolean,
+    strokesArrayMode: boolean,
   ) {
     const pct = Math.round(
-      (fillsArrayMode
+      (strokesArrayMode
         ? layerOpacity01(layer.opacity)
         : this.layerOpacityResolved01(layer)) * 100,
     );
     const pillClass = layer.enabled === false ? 'pill layer-off' : 'pill';
-    const valueIndex = fillsArrayMode ? index : null;
-    const pickerIndex = fillsArrayMode ? index : null;
+    const valueIndex = strokesArrayMode ? index : null;
+    const pickerIndex = strokesArrayMode ? index : null;
 
     return html`
       <div class="row">
@@ -558,7 +554,7 @@ export class FillSection extends LitElement {
             size="s"
             value=${this.displayValueForLayer(layer)}
             @change=${(e: CustomEvent<{ value: string }>) =>
-        this.handleValueChange(valueIndex, e)}
+              this.handleValueChange(valueIndex, e)}
           ></sp-textfield>
           <div class="opacity-wrap">
             <sp-number-field
@@ -566,7 +562,7 @@ export class FillSection extends LitElement {
               size="s"
               value=${String(pct)}
               @change=${(e: CustomEvent<{ value: string }>) =>
-        this.handleOpacityChange(valueIndex, e)}
+                this.handleOpacityChange(valueIndex, e)}
               hide-stepper
               autocomplete="off"
               format-options='{
@@ -580,7 +576,7 @@ export class FillSection extends LitElement {
         <sp-action-button
           quiet
           size="s"
-          label=${msg(str`Remove fill layer`)}
+          label=${msg(str`Remove stroke layer`)}
           @click=${() => this.handleRemove(index)}
         >
           <sp-icon-remove slot="icon"></sp-icon-remove>
@@ -596,8 +592,7 @@ export class FillSection extends LitElement {
     if (!this.node) {
       return html``;
     }
-    // 依赖 fillPanelEpoch，避免仅 mutate node 同引用时 Lit 合并掉更新
-    void this.fillPanelEpoch;
+    void this.strokePanelEpoch;
 
     const header = html`
       <sp-action-button
@@ -605,18 +600,17 @@ export class FillSection extends LitElement {
         size="s"
         @click=${this.handleAdd}
       >
-        ${msg(str`Add fill layer`)}
+        ${msg(str`Add stroke layer`)}
       </sp-action-button>
     `;
 
-    const arr = this.fillsWireArray();
+    const arr = this.strokesWireArray();
     if (arr !== null) {
       return html`
         <div class="rows">
           ${arr.length === 0
-          ? html``
-          : arr.map((layer, i) =>
-            this.renderLayerRow(layer, i, true))}
+            ? html``
+            : arr.map((layer, i) => this.renderLayerRow(layer, i, true))}
         </div>
         ${header}
       `;
@@ -627,6 +621,6 @@ export class FillSection extends LitElement {
 
 declare global {
   interface HTMLElementTagNameMap {
-    'ic-spectrum-fill-section': FillSection;
+    'ic-spectrum-stroke-section': StrokeSection;
   }
 }

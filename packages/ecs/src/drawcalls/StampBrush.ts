@@ -23,8 +23,11 @@ import { mat3 } from 'gl-matrix';
 import { Drawcall, ZINDEX_FACTOR, STENCIL_CLIP_REF } from './Drawcall';
 import { vert, frag, Location } from '../shaders/brush';
 import { distanceBetweenPoints, paddingMat3, parseColor } from '../utils';
+import { getEnabledFillLayers } from '../utils/fillLayers';
+import { strokePaintAlphaMultipliers } from '../utils/strokeLayers';
+import { getFillLayerDecodedBitmap } from '../utils/fill-layer-image-url-raster';
 import {
-  FillImage,
+  FillLayers,
   GlobalRenderOrder,
   GlobalTransform,
   Opacity,
@@ -240,16 +243,23 @@ export class StampBrush extends Drawcall {
 
       const instance = this.shapes[0];
 
-      if (instance.has(FillImage)) {
-        const src = instance.read(FillImage).src as ImageBitmap;
-        const texture = this.device.createTexture({
-          format: Format.U8_RGBA_NORM,
-          width: src.width,
-          height: src.height,
-          usage: TextureUsage.SAMPLED,
-        });
-        texture.setImageData([src]);
-        this.#texture = texture;
+      if (instance.has(FillLayers)) {
+        const imgLayer = getEnabledFillLayers(instance).find(
+          (l) => l.type === 'image',
+        );
+        if (imgLayer) {
+          const src = getFillLayerDecodedBitmap(imgLayer.value);
+          if (src) {
+            const texture = this.device.createTexture({
+              format: Format.U8_RGBA_NORM,
+              width: src.width,
+              height: src.height,
+              usage: TextureUsage.SAMPLED,
+            });
+            texture.setImageData([src]);
+            this.#texture = texture;
+          }
+        }
       }
 
       const sampler = this.renderCache.createSampler({
@@ -367,15 +377,27 @@ export class StampBrush extends Drawcall {
       ? shape.read(Stroke)
       : { color: null, width: 0 };
     const { r: sr, g: sg, b: sb, opacity: so } = parseColor(strokeColor);
+    const { strokeColorAlphaMul, strokeUniformOpacityMul } =
+      strokePaintAlphaMultipliers(shape);
 
-    const u_StrokeColor = [sr / 255, sg / 255, sb / 255, so];
+    const u_StrokeColor = [
+      sr / 255,
+      sg / 255,
+      sb / 255,
+      so * strokeColorAlphaMul,
+    ];
     const u_ZIndexStrokeWidth = [
       globalRenderOrder / ZINDEX_FACTOR,
       width,
       brushType,
       0,
     ];
-    const u_Opacity = [opacity, 0, strokeOpacity, 0];
+    const u_Opacity = [
+      opacity,
+      0,
+      strokeOpacity * strokeUniformOpacityMul,
+      0,
+    ];
     const u_Stamp = [
       stampInterval,
       stampNoiseFactor,

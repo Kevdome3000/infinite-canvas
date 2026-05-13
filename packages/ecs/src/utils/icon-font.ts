@@ -14,7 +14,14 @@ import type {
   FillAttributes,
   StrokeAttributes,
 } from '../types/serialized-node';
-import { getPrimaryFillValue } from './normalize-fill-wire';
+import {
+  getPrimaryFillValue,
+  migrateLegacyFillWireInPlace,
+} from './normalize-fill-wire';
+import {
+  getPrimaryStrokeValue,
+  migrateLegacyStrokeWireInPlace,
+} from './normalize-stroke-wire';
 
 /**
  * 与 Iconify `icons[name]` 一项对齐：可有 `body`，以及该项的视口。
@@ -118,7 +125,10 @@ export function resolveIconFontWireStyle(
   userColorFill: string | undefined;
   rSw: unknown;
 } {
-  const wireStroke = (attributes as StrokeAttributes).stroke;
+  const attrsRec = attributes as unknown as Record<string, unknown>;
+  migrateLegacyFillWireInPlace(attrsRec);
+  migrateLegacyStrokeWireInPlace(attrsRec);
+  const wireStroke = getPrimaryStrokeValue(attributes as StrokeAttributes);
   const wireFill = getPrimaryFillValue(attributes as FillAttributes);
   const wireSw = (attributes as StrokeAttributes).strokeWidth;
   const rStrokeS =
@@ -1009,7 +1019,7 @@ export function pickStrokeColorForChild(
   return s;
 }
 
-/** SVG 上椭圆是否为「仅描边」语义（无实填），与 {@link pickChildFill} 中占位 `FillSolid` 一致。 */
+/** SVG 上椭圆是否为「仅描边」语义（无实填），与 {@link pickChildFill} 中占位 `FillLayers`（纯色层）一致。 */
 export function iconFontSvgFillIsNoneOrTransparent(style: IconSvgStyle): boolean {
   const f = (style.fill ?? 'none').trim();
   return f === 'none' || f === 'transparent';
@@ -1039,7 +1049,7 @@ export function pickChildFill(
   userColorStroke: string | undefined,
   primKind?: ScaledIconPrimitive['kind'],
   /**
-   * 仅在为 true 且图元为 `ellipse` 时，在 SVG `fill="none"` 下用描边色补 `FillSolid`，供父级栅格类 `filter`
+   * 仅在为 true 且图元为 `ellipse` 时，在 SVG `fill="none"` 下用描边色补 `FillLayers`（纯色层），供父级栅格类 `filter`
    * 采样；否则保持 `none`，避免无滤镜时整圆被填成描边色。
    */
   strokeAsPlaceholderFillForRasterFilter?: boolean,

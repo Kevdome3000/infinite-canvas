@@ -26,6 +26,10 @@ import {
   getPrimaryFillValue,
   migrateLegacyFillWireInPlace,
 } from '../normalize-fill-wire';
+import {
+  firstEnabledStrokePresentation,
+  migrateLegacyStrokeWireInPlace,
+} from '../normalize-stroke-wire';
 import { serializePoints } from './points';
 import {
   computeLinearGradient,
@@ -60,8 +64,9 @@ import {
 } from '../icon-font';
 
 const strokeDefaultAttributes = {
+  strokes: [{ type: 'solid' as const, value: 'none', opacity: 1 }],
+  /** 与 SVG 默认一致；导出时与 `fillOpacity` 相同，为 1 则不写属性 */
   strokeOpacity: 1,
-  stroke: 'none',
   strokeWidth: 1,
   strokeLinecap: 'butt',
   strokeLinejoin: 'miter',
@@ -69,6 +74,7 @@ const strokeDefaultAttributes = {
   strokeMiterlimit: 4,
   strokeDasharray: '0,0',
   strokeDashoffset: 0,
+  strokeDashCap: 'none',
 };
 
 export const markerDefaultAttributes = {
@@ -218,6 +224,8 @@ export const defaultAttributes: Record<
   },
   g: {
     ...commonDefaultAttributes,
+    /** 与 {@link strokeDefaultAttributes.strokeOpacity} 一致，避免 `<g>` 上多余 `stroke-opacity="1"` */
+    strokeOpacity: 1,
   },
   'vector-network': {
     ...commonDefaultAttributes,
@@ -308,6 +316,9 @@ function appendSvgStyleProperty(
  *
  * 入参**不应**含 `type: 'ref'`（无对应 SVG 图元）。请在外层用
  * {@link expandSerializedNodesForSvgExport} 展开，或使用 `toSVGElement` / `API#renderToSVG` 已接好的路径。
+ *
+ * 支持**仅导出子集**（例如只含某个子节点、不含其父）：父级不在 `nodes` 中时，不会向 toposort 注入未知顶点；
+ * 该子节点会作为顶层根写入返回列表；继承类属性仍由 {@link getComputedInheritGroupWireMap} 在子集内能解析的 `g` 链上尽量合并。
  */
 export async function serializeNodesToSVGElements(
   nodes: SerializedNode[],
@@ -318,8 +329,10 @@ export async function serializeNodesToSVGElements(
   for (const node of nodes) {
     idSerializedNodeMap.set(node.id, node);
   }
+  const vertexSet = new Set(idSerializedNodeMap.keys());
   for (const n of nodes) {
     migrateLegacyFillWireInPlace(n as unknown as Record<string, unknown>);
+    migrateLegacyStrokeWireInPlace(n as unknown as Record<string, unknown>);
   }
   const inheritGroupWireById = getComputedInheritGroupWireMap(nodes);
 
@@ -327,9 +340,13 @@ export async function serializeNodesToSVGElements(
   const svgElementIdMap = new WeakMap<SVGElement, string>();
 
   const vertices = nodes.map((node) => node.id);
+  /** 仅当父也在导出集合内时才建立边，避免 toposort 因未知父 id 抛错。 */
   const edges = nodes
-    .filter((node) => !isNil(node.parentId))
-    .map((node) => [node.parentId, node.id] as [string, string]);
+    .filter(
+      (node) =>
+        !isNil(node.parentId) && vertexSet.has(node.parentId as string),
+    )
+    .map((node) => [node.parentId as string, node.id] as [string, string]);
   const sorted = toposort.array(vertices, edges);
 
   for (const id of sorted) {
@@ -456,6 +473,7 @@ export async function serializeNodesToSVGElements(
     const effWire = inheritGroupWireById.get(id) ?? {};
     const restForExport = { ...rest, ...effWire };
     migrateLegacyFillWireInPlace(restForExport as Record<string, unknown>);
+    migrateLegacyStrokeWireInPlace(restForExport as Record<string, unknown>);
     const fillPres = firstEnabledFillPresentation(
       (restForExport as FillAttributes).fills,
     );
@@ -469,6 +487,19 @@ export async function serializeNodesToSVGElements(
       (restForExport as Record<string, unknown>).fillOpacity =
         Number.isFinite(n) ? Math.max(0, Math.min(1, n)) : 1;
     }
+    const strokePres = firstEnabledStrokePresentation(
+      (restForExport as unknown as StrokeAttributes).strokes,
+    );
+    if (strokePres) {
+      (restForExport as Record<string, unknown>).stroke = strokePres.stroke;
+      const so = strokePres.strokeOpacity ?? 1;
+      const sn =
+        typeof so === 'number' && Number.isFinite(so)
+          ? so
+          : parseFloat(String(so));
+      (restForExport as Record<string, unknown>).strokeOpacity =
+        Number.isFinite(sn) ? Math.max(0, Math.min(1, sn)) : 1;
+    }
     const restExportRec = restForExport as Record<string, unknown>;
     const nodeForExport = { ...node, ...effWire } as SerializedNode;
 
@@ -478,7 +509,8 @@ export async function serializeNodesToSVGElements(
           key === 'hitStrokeWidth' ||
           key === 'svgDataAttributes' ||
           key === 'filter' ||
-          key === 'fills'
+          key === 'fills' ||
+          key === 'strokes'
         ) {
           return;
         }
@@ -782,10 +814,14 @@ export async function serializeNodesToSVGElements(
 
     idSVGElementMap.set(id, $g);
     svgElementIdMap.set($g, id);
-    if (parentId) {
-      const parent = idSVGElementMap.get(parentId);
+    const parentInExport =
+      parentId != null && vertexSet.has(parentId as string);
+    if (parentInExport) {
+      const parent = idSVGElementMap.get(parentId as string);
       if (parent) {
         parent.appendChild($g);
+      } else {
+        elements.push($g);
       }
     } else {
       elements.push($g);
@@ -1343,7 +1379,15 @@ export function exportStrokeGradientOrPattern(
   $g: SVGElement,
 ) {
   const $defs = ensureGroupDefs($g);
-  const stroke = (node as PathSerializedNode).stroke;
+  const nrec = node as unknown as Record<string, unknown>;
+  migrateLegacyStrokeWireInPlace(nrec);
+  const stroke =
+    firstEnabledStrokePresentation(
+      (node as StrokeAttributes).strokes,
+    )?.stroke ?? '';
+  if (!stroke || String(stroke).trim() === '') {
+    return;
+  }
 
   if (isPattern(stroke)) {
     const patternId = createOrUpdatePattern(node, $defs, stroke);
@@ -1376,14 +1420,18 @@ function createOrUpdateMarker(
   marker: Marker['start'],
   isEnd = false,
 ) {
-  const {
-    stroke,
-    strokeWidth,
-    strokeOpacity,
-    strokeLinecap,
-    strokeLinejoin,
-    markerFactor = 3,
-  } = node as PathSerializedNode;
+  migrateLegacyStrokeWireInPlace(node as unknown as Record<string, unknown>);
+  const sp = firstEnabledStrokePresentation(
+    (node as StrokeAttributes).strokes,
+  );
+  const stroke = sp?.stroke ?? 'none';
+  const rawSo = sp?.strokeOpacity ?? 1;
+  const strokeOpacity =
+    typeof rawSo === 'number' && Number.isFinite(rawSo)
+      ? rawSo
+      : parseFloat(String(rawSo)) || 1;
+  const { strokeWidth, strokeLinecap, strokeLinejoin, markerFactor = 3 } =
+    node as PathSerializedNode;
 
   const patternId = `marker-${marker}-${isEnd ? 'end' : 'start'
     }-${strokeWidth}`;
@@ -1425,7 +1473,7 @@ function createOrUpdateMarker(
         const points = lineArrow(0, 0, arrowRadius, Math.PI);
         d = `M ${points[0][0]} ${points[0][1]} L ${points[1][0]} ${points[1][1]} L ${points[2][0]} ${points[2][1]} Z`;
         $path.setAttribute('fill', stroke);
-        if (!isNil(strokeOpacity)) {
+        if (!isNil(strokeOpacity) && strokeOpacity !== 1) {
           $path.setAttribute('fill-opacity', `${strokeOpacity}`);
         }
       } else {
@@ -1437,14 +1485,14 @@ function createOrUpdateMarker(
         const right = [center[0], center[1] + halfWidth] as const;
         d = `M ${tip[0]} ${tip[1]} L ${left[0]} ${left[1]} L ${back[0]} ${back[1]} L ${right[0]} ${right[1]} Z`;
         $path.setAttribute('fill', stroke);
-        if (!isNil(strokeOpacity)) {
+        if (!isNil(strokeOpacity) && strokeOpacity !== 1) {
           $path.setAttribute('fill-opacity', `${strokeOpacity}`);
         }
       }
 
       $path.setAttribute('stroke', stroke);
       $path.setAttribute('stroke-width', `${strokeWidth}`);
-      if (!isNil(strokeOpacity)) {
+      if (!isNil(strokeOpacity) && strokeOpacity !== 1) {
         $path.setAttribute('stroke-opacity', `${strokeOpacity}`);
       }
       if (!isNil(strokeLinecap)) {
@@ -1546,6 +1594,7 @@ export async function exportClipOrMask(
 
 export function exportRough(node: SerializedNode, $g: SVGElement) {
   migrateLegacyFillWireInPlace(node as unknown as Record<string, unknown>);
+  migrateLegacyStrokeWireInPlace(node as unknown as Record<string, unknown>);
   const pres = firstEnabledFillPresentation((node as FillAttributes).fills);
   const fill = pres?.fill ?? 'none';
   const rawFo = pres?.fillOpacity ?? 1;
@@ -1553,7 +1602,10 @@ export function exportRough(node: SerializedNode, $g: SVGElement) {
     typeof rawFo === 'number' && Number.isFinite(rawFo)
       ? rawFo
       : parseFloat(String(rawFo)) || 1;
-  const { stroke, strokeWidth } = node as PathSerializedNode;
+  const { strokeWidth } = node as PathSerializedNode;
+  const stroke =
+    firstEnabledStrokePresentation((node as StrokeAttributes).strokes)
+      ?.stroke ?? 'none';
   const roughFillStyle = (node as RoughAttributes).roughFillStyle;
 
   if (roughFillStyle === 'watercolor') {
@@ -1607,6 +1659,7 @@ export function exportText(
   element: SVGElement,
 ) {
   migrateLegacyFillWireInPlace(attributes as unknown as Record<string, unknown>);
+  migrateLegacyStrokeWireInPlace(attributes as unknown as Record<string, unknown>);
   const fp = firstEnabledFillPresentation((attributes as FillAttributes).fills);
   const fillFromFills = fp?.fill;
   const {
@@ -1711,6 +1764,7 @@ export async function exportFillImage(
 ) {
   const wire = { ...(node as unknown as Record<string, unknown>) };
   migrateLegacyFillWireInPlace(wire);
+  migrateLegacyStrokeWireInPlace(wire);
   let fill = getPrimaryFillValue(wire as FillAttributes) ?? '';
   if (!fill) {
     element.setAttribute('fill', 'none');

@@ -10,7 +10,8 @@ import {
   DefaultPlugins,
   DefaultStateManagement,
   Entity,
-  FillSolid,
+  FillLayers,
+  StrokeLayers,
   Grid,
   Parent,
   Plugin,
@@ -66,7 +67,8 @@ describe('Group', () => {
             Children,
             Transform,
             Renderable,
-            FillSolid,
+            FillLayers,
+            StrokeLayers,
             Stroke,
             Ellipse,
             Visibility,
@@ -98,7 +100,7 @@ describe('Group', () => {
           type: 'g',
           zIndex: 0,
           fills: [{ type: 'solid', value: 'red', opacity: 1 }],
-          stroke: 'black',
+          strokes: [{ type: 'solid', value: 'black', opacity: 1 }],
           strokeWidth: 10,
         };
 

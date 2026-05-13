@@ -23,11 +23,8 @@ import {
   Culled,
   DropShadow,
   Ellipse,
-  FillGradient,
-  FillImage,
-  FillPattern,
   FillLayers,
-  FillSolid,
+  StrokeLayers,
   FillTexture,
   FillTextureLive,
   FractionalIndex,
@@ -49,7 +46,6 @@ import {
   SizeAttenuation,
   StrokeAttenuation,
   Stroke,
-  StrokeGradient,
   Text,
   Theme,
   ToBeDeleted,
@@ -102,6 +98,8 @@ import {
 } from '../render-graph/utils';
 import { RenderGraph } from '../render-graph/RenderGraph';
 import { PostProcessingRenderer } from '../render-graph/PostProcessingRenderer';
+import { getFirstGradientFillLayerValue } from '../utils/fillLayers';
+import { getFirstGradientStrokeLayerValue } from '../utils/strokeLayers';
 
 type GPURenderer = {
   uniformBuffer: Buffer;
@@ -218,29 +216,17 @@ export class MeshPipeline extends System {
     (q) => q.addedChangedOrRemoved.with(RasterAnimationExportRequest).trackWrites,
   );
 
-  private fillSolids = this.query(
-    (q) => q.addedChangedOrRemoved.with(FillSolid).trackWrites,
-  );
   private fillLayers = this.query(
     (q) => q.addedChangedOrRemoved.with(FillLayers).trackWrites,
   );
-  private fillGradients = this.query(
-    (q) => q.addedChangedOrRemoved.with(FillGradient).trackWrites,
-  );
-  private fillPatterns = this.query(
-    (q) => q.addedChangedOrRemoved.with(FillPattern).trackWrites,
+  private strokeLayers = this.query(
+    (q) => q.addedChangedOrRemoved.with(StrokeLayers).trackWrites,
   );
   private fillTextures = this.query(
     (q) => q.addedChangedOrRemoved.with(FillTexture).trackWrites,
   );
-  private fillImages = this.query(
-    (q) => q.addedChangedOrRemoved.with(FillImage).trackWrites,
-  );
   private strokes = this.query(
     (q) => q.addedChangedOrRemoved.with(Stroke).trackWrites,
-  );
-  private strokeGradients = this.query(
-    (q) => q.addedChangedOrRemoved.with(StrokeGradient).trackWrites,
   );
   private rectsStrokeGradientBounds = this.query(
     (q) => q.addedChangedOrRemoved.with(Rect).trackWrites,
@@ -328,7 +314,6 @@ export class MeshPipeline extends System {
             GlobalTransform,
             Opacity,
             Stroke,
-            StrokeGradient,
             InnerShadow,
             DropShadow,
             Wireframe,
@@ -337,11 +322,7 @@ export class MeshPipeline extends System {
             ComputedRough,
             Text,
             ComputedTextMetrics,
-            FillImage,
-            FillPattern,
-            FillGradient,
             FillLayers,
-            FillSolid,
             FillTexture,
             FractionalIndex,
             SizeAttenuation,
@@ -789,7 +770,10 @@ export class MeshPipeline extends System {
         }
       }
 
-      if (entity.has(FillGradient) || entity.has(StrokeGradient)) {
+      if (
+        getFirstGradientFillLayerValue(entity) != null ||
+        getFirstGradientStrokeLayerValue(entity) != null
+      ) {
         safeAddComponent(entity, MaterialDirty);
       }
 
@@ -829,17 +813,25 @@ export class MeshPipeline extends System {
       ...this.strokes.addedChangedOrRemoved,
       ...this.markers.addedChangedOrRemoved,
     ].forEach((entity) => {
-      if (entity.has(Polyline) || entity.has(Path) || entity.has(Line)) {
+      if (
+        entity.has(Polyline) ||
+        entity.has(Path) ||
+        entity.has(Line) ||
+        entity.has(Ellipse) ||
+        entity.has(Rect) ||
+        entity.has(Circle)
+      ) {
         safeAddComponent(entity, GeometryDirty);
       }
     });
 
     new Set([
+      ...this.strokeLayers.addedChangedOrRemoved,
       ...this.rectsStrokeGradientBounds.addedChangedOrRemoved,
       ...this.ellipsesStrokeGradientBounds.addedChangedOrRemoved,
       ...this.circlesStrokeGradientBounds.addedChangedOrRemoved,
     ]).forEach((entity) => {
-      if (entity.has(StrokeGradient)) {
+      if (getFirstGradientStrokeLayerValue(entity) != null) {
         safeAddComponent(entity, MaterialDirty);
         safeAddComponent(entity, GeometryDirty);
       }
@@ -902,13 +894,9 @@ export class MeshPipeline extends System {
 
         if (
           !toRender &&
-          (!!this.fillSolids.addedChangedOrRemoved.length ||
-            !!this.fillLayers.addedChangedOrRemoved.length ||
-            !!this.fillGradients.addedChangedOrRemoved.length ||
-            !!this.strokeGradients.addedChangedOrRemoved.length ||
-            !!this.fillPatterns.addedChangedOrRemoved.length ||
+          (!!this.fillLayers.addedChangedOrRemoved.length ||
+            !!this.strokeLayers.addedChangedOrRemoved.length ||
             !!this.fillTextures.addedChangedOrRemoved.length ||
-            !!this.fillImages.addedChangedOrRemoved.length ||
             !!this.strokes.addedChangedOrRemoved.length ||
             !!this.opacities.addedChangedOrRemoved.length ||
             !!this.innerShadows.addedChangedOrRemoved.length ||

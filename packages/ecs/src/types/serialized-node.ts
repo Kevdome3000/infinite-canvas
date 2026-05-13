@@ -140,40 +140,57 @@ export interface VisibilityAttributes {
 /** 多层填充的一层，与 ECS {@link FillLayers} 中条目同构（Figma `Paint` 子集） */
 export type SerializedFillLayerItem =
   | {
-      type: 'solid';
-      value: string;
-      /** 0–1；可为设计变量引用字符串（如 `$token`） */
-      opacity?: number | string;
-      enabled?: boolean;
-      blendMode?: FillLayerBlendMode;
-    }
+    type: 'solid';
+    value: string;
+    /** 0–1；可为设计变量引用字符串（如 `$token`） */
+    opacity?: number | string;
+    enabled?: boolean;
+    blendMode?: FillLayerBlendMode;
+  }
   | {
-      type: 'gradient';
-      value: string;
-      opacity?: number | string;
-      enabled?: boolean;
-      blendMode?: FillLayerBlendMode;
-    }
+    type: 'gradient';
+    value: string;
+    opacity?: number | string;
+    enabled?: boolean;
+    blendMode?: FillLayerBlendMode;
+  }
   | {
-      /** 位图 / SVG 等资源 URL（与历史 `fill` 为 URL 时语义一致） */
-      type: 'image';
-      value: string;
-      opacity?: number | string;
-      enabled?: boolean;
-      blendMode?: FillLayerBlendMode;
-    };
+    /** 位图 / SVG 等资源 URL（与历史 `fill` 为 URL 时语义一致） */
+    type: 'image';
+    value: string;
+    opacity?: number | string;
+    enabled?: boolean;
+    blendMode?: FillLayerBlendMode;
+  }
+  | {
+    type: 'pattern';
+    value: string;
+    repetition?: 'repeat' | 'repeat-x' | 'repeat-y' | 'no-repeat';
+    transform?: string;
+    opacity?: number | string;
+    enabled?: boolean;
+    blendMode?: FillLayerBlendMode;
+  };
 
 export interface FillAttributes {
   /** 节点整体不透明度（SVG `opacity`），与单层 `fills[].opacity` 不同 */
   opacity?: Opacity['opacity'];
   /**
-   * 填充栈（对齐 Figma `fills`）。历史 `fill` / `fillOpacity` / `fillLayers` 在加载时归一化为此字段。
+   * 填充栈（对齐 Figma `fills`）。可为空数组表示无填充；历史 `fill` / `fillOpacity` / `fillLayers` 在加载时归一化为此字段。
    */
   fills?: SerializedFillLayerItem[];
 }
 
+/** 描边栈的一层，与 {@link SerializedFillLayerItem} 同构（Figma `strokes` / 线框 `strokes`） */
+export type SerializedStrokeLayerItem = SerializedFillLayerItem;
+
 export interface StrokeAttributes {
-  stroke: Stroke['color'];
+  /**
+   * 描边栈（与 `fills` 对称）。历史 `stroke` + `strokeOpacity` 在加载时归一化为此字段。
+   */
+  strokes?: SerializedStrokeLayerItem[];
+  /** @deprecated 由 migrate 合并入 `strokes` */
+  stroke?: Stroke['color'];
   strokeWidth: Stroke['width'];
   strokeAlignment: Stroke['alignment'];
   strokeLinecap: Stroke['linecap'];
@@ -181,7 +198,10 @@ export interface StrokeAttributes {
   strokeMiterlimit: Stroke['miterlimit'];
   strokeDasharray: string;
   strokeDashoffset: Stroke['dashoffset'];
-  strokeOpacity: Opacity['strokeOpacity'];
+  /** 虚线端帽（Figma）；未写时等价于 `none` */
+  strokeDashCap?: Stroke['dashcap'];
+  /** @deprecated 由 migrate 合并入 `strokes[].opacity` */
+  strokeOpacity?: Opacity['strokeOpacity'];
 }
 
 /** Wider hit target for thin stroked lines / paths (Konva `hitStrokeWidth`). */
@@ -467,8 +487,12 @@ export interface BrushAttributes {
   stampMode: StampMode;
   stampNoiseFactor: number;
   stampRotationFactor: number;
-  stroke: Stroke['color'];
-  strokeOpacity: Opacity['strokeOpacity'];
+  /** 与 {@link StrokeAttributes#strokes} 一致；历史 `stroke` / `strokeOpacity` 由 migrate 合并 */
+  strokes?: SerializedStrokeLayerItem[];
+  /** @deprecated 由 migrate 合并入 `strokes` */
+  stroke?: Stroke['color'];
+  /** @deprecated 由 migrate 合并入 `strokes[].opacity` */
+  strokeOpacity?: Opacity['strokeOpacity'];
 }
 export interface BrushSerializedNode
   extends BaseSerializeNode<'brush'>,

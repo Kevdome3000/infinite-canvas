@@ -22,7 +22,6 @@ import {
   Children,
   Transform,
   Renderable,
-  FillSolid,
   Stroke,
   Rect,
   Visibility,
@@ -310,6 +309,8 @@ async function openCanvas(id?: string) {
     ],
     propertiesPanelSectionsOpen: {
       fillSection: true,
+      strokeSection: true,
+      typographySection: true,
       shape: false,
       transform: false,
       layout: false,
@@ -327,7 +328,7 @@ async function openCanvas(id?: string) {
     snapToPixelGridSize: 1,
       // snapToPixelGridEnabled: false,
       // snapToPixelGridSize: 0,
-    snapToObjectsEnabled: true,
+    // snapToObjectsEnabled: true,
       // filter: 'brightness(0.8) noise(0.1)',
       // penbarDrawSizeLabelVisible: true,
     // penbarSelected: Pen.SELECT,
@@ -342,19 +343,13 @@ async function openCanvas(id?: string) {
       // filter: 'noise(0.5)',
     // layersLassoing: ['parent'],
     // filter: 'fxaa() brightness(0.8) noise(0.1)',
-    });
-
-  api.setAppState({
-    variables: {
-      '--primary': { type: 'color', value: 'red' },
-      '--secondary': { type: 'color', value: 'green' },
-    },
+    // layersCropping: ['parent-1'],
   });
 
   const node1: EllipseSerializedNode = {
     id: '1',
     type: 'ellipse',
-    fills: [{ type: 'solid', value: '$--primary', opacity: 1 }],
+    fills: [{ type: 'solid', value: 'red', opacity: 1 }],
     x: 0,
     y: 50,
     width: 200,
@@ -366,7 +361,7 @@ async function openCanvas(id?: string) {
     id: '2',
     parentId: '1',
     type: 'ellipse',
-    fills: [{ type: 'solid', value: '$--secondary', opacity: 1 }],
+    fills: [{ type: 'solid', value: 'green', opacity: 1 }],
     x: 50,
     y: -50,
     width: 100,

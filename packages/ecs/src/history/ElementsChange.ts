@@ -19,6 +19,7 @@ import { hasRasterPostEffects } from '../utils/filter';
 import {
   resolveDesignVariableValue,
   designVariableRefKeyFromWire,
+  resolveFillLayerItemsForEcs,
 } from '../utils/design-variables';
 import type {
   FillAttributes,
@@ -27,16 +28,15 @@ import type {
   SerializedFillLayerItem,
   SerializedNode,
   SerializedNodeAttributes,
+  StrokeAttributes,
 } from '../types/serialized-node';
 import { API } from '../API';
 import { refreshComputedRoughForEntity } from '../systems/ComputeRough';
 import {
   Name,
-  FillSolid,
-  FillGradient,
   FillLayers,
+  StrokeLayers,
   Stroke,
-  StrokeGradient,
   Visibility,
   Ellipse,
   Rect,
@@ -48,8 +48,6 @@ import {
   ZIndex,
   Transform,
   MaterialDirty,
-  FillImage,
-  FillPattern,
   StrokeAttenuation,
   SizeAttenuation,
   TextDecoration,
@@ -74,7 +72,6 @@ import {
   IconFont,
   IconFontEllipseStrokeRasterPlaceholder,
 } from '../components';
-import { isFillLayerEnabled } from '../utils/fillLayers';
 import { getDescendants } from '../systems';
 import { syncEdgeBindingForEntity } from '../utils/binding/sync-edge-entity';
 import {
@@ -93,6 +90,11 @@ import { insertIconFontChildFromPrimitive } from '../utils/insert-icon-font-chil
 import { getComputedInheritGroupWireForId } from '../utils/inherit-group-wire';
 import { buildGroupWirePresentation } from '../utils/group-presentation';
 import { migrateLegacyFillWireInPlace } from '../utils/normalize-fill-wire';
+import {
+  migrateLegacyStrokeWireInPlace,
+  normalizeStrokeDashCap,
+} from '../utils/normalize-stroke-wire';
+import { isFillLayerEnabled } from '../utils/fillLayers';
 import { TesselationMethod } from '../components/geometry/Path';
 
 export type SceneElementsMap = Map<SerializedNode['id'], SerializedNode>;
@@ -395,11 +397,6 @@ function syncIconFontChildrenFromUpdatedNode(
       iw.layoutHeight = h;
     }
     safeAddComponent(rootEntity, Group, groupPres);
-    safeRemoveComponent(rootEntity, FillSolid);
-    safeRemoveComponent(rootEntity, FillGradient);
-    safeRemoveComponent(rootEntity, FillImage);
-    safeRemoveComponent(rootEntity, FillPattern);
-    safeRemoveComponent(rootEntity, StrokeGradient);
     safeRemoveComponent(rootEntity, Stroke);
     safeAddComponent(rootEntity, MaterialDirty);
     return;
@@ -455,9 +452,8 @@ function syncIconFontChildrenFromUpdatedNode(
     );
 
     if (fillPart && fillPart !== 'none') {
-      safeAddComponent(child, FillSolid, {
-        value: fillPart,
-        fillVariableRef: '',
+      safeAddComponent(child, FillLayers, {
+        layers: [{ type: 'solid', value: fillPart }],
       });
       if (
         shouldUseIconFontEllipseStrokeRasterPlaceholder(
@@ -471,7 +467,7 @@ function syncIconFontChildrenFromUpdatedNode(
         safeRemoveComponent(child, IconFontEllipseStrokeRasterPlaceholder);
       }
     } else {
-      safeRemoveComponent(child, FillSolid);
+      safeRemoveComponent(child, FillLayers);
       safeRemoveComponent(child, IconFontEllipseStrokeRasterPlaceholder);
     }
     safeAddComponent(child, MaterialDirty);
@@ -486,11 +482,6 @@ function syncIconFontChildrenFromUpdatedNode(
     iw.layoutHeight = h;
   }
   safeAddComponent(rootEntity, Group, groupPres);
-  safeRemoveComponent(rootEntity, FillSolid);
-  safeRemoveComponent(rootEntity, FillGradient);
-  safeRemoveComponent(rootEntity, FillImage);
-  safeRemoveComponent(rootEntity, FillPattern);
-  safeRemoveComponent(rootEntity, StrokeGradient);
   safeRemoveComponent(rootEntity, Stroke);
   safeAddComponent(rootEntity, MaterialDirty);
 }
@@ -1027,112 +1018,157 @@ function applyFillsWireMutation(
     return false;
   }
 
-  if (wireArr.length >= 2) {
-    safeRemoveComponent(entity, FillSolid);
-    safeRemoveComponent(entity, FillGradient);
-    safeRemoveComponent(entity, FillImage);
-    safeRemoveComponent(entity, FillPattern);
-    if (!entity.has(FillLayers)) {
-      safeAddComponent(entity, FillLayers);
-    }
-    entity.write(FillLayers).layers = (wireArr as SerializedFillLayerItem[]).map(
-      (L) => ({ ...L }),
-    );
+  if (wireArr.length === 0) {
+    safeRemoveComponent(entity, FillLayers);
     safeAddComponent(entity, MaterialDirty);
     if (entity.has(Opacity)) {
       entity.write(Opacity).fillOpacity = 1;
-    } else {
-      safeAddComponent(entity, Opacity, { fillOpacity: 1 });
     }
     return true;
   }
 
-  if (wireArr.length === 1) {
-    const L = wireArr[0]!;
-    safeRemoveComponent(entity, FillLayers);
-
-    if (L.type === 'gradient' && isFillLayerEnabled(L)) {
-      safeRemoveComponent(entity, FillSolid);
-      safeRemoveComponent(entity, FillImage);
-      safeRemoveComponent(entity, FillPattern);
-      safeAddComponent(entity, MaterialDirty);
-      safeAddComponent(entity, FillGradient, { value: L.value });
-    } else if (L.type === 'image' && isFillLayerEnabled(L)) {
-      const resolvedFill = resolveDesignVariableValue(
-        L.value,
-        designVariables,
-        themeMode,
-      );
-      safeRemoveComponent(entity, FillSolid);
-      safeRemoveComponent(entity, FillGradient);
-      safeRemoveComponent(entity, FillPattern);
-      safeAddComponent(entity, MaterialDirty);
-      loadImage(String(resolvedFill ?? ''), entity);
-    } else if (L.type === 'solid' && isFillLayerEnabled(L)) {
-      const resolvedFill = resolveDesignVariableValue(
-        L.value,
-        designVariables,
-        themeMode,
-      );
-      if (isGradient(resolvedFill)) {
-        safeRemoveComponent(entity, FillSolid);
-        safeRemoveComponent(entity, FillImage);
-        safeRemoveComponent(entity, FillPattern);
-        safeAddComponent(entity, MaterialDirty);
-        safeAddComponent(entity, FillGradient, {
-          value: resolvedFill as string,
-        });
-      } else if (isDataUrl(resolvedFill) || isUrl(resolvedFill)) {
-        safeRemoveComponent(entity, FillSolid);
-        safeRemoveComponent(entity, FillGradient);
-        safeRemoveComponent(entity, FillPattern);
-        safeAddComponent(entity, MaterialDirty);
-        loadImage(resolvedFill, entity);
-      } else {
-        if (entity.has(FillGradient) || entity.has(FillImage) || entity.has(FillPattern)) {
-          safeAddComponent(entity, MaterialDirty);
-        }
-        safeRemoveComponent(entity, FillGradient);
-        safeRemoveComponent(entity, FillImage);
-        safeRemoveComponent(entity, FillPattern);
-        safeAddComponent(entity, FillSolid, {
-          value: resolvedFill as string,
-          fillVariableRef: designVariableRefKeyFromWire(
-            typeof L.value === 'string' ? L.value : undefined,
-          ),
-        });
-      }
-    } else {
-      safeRemoveComponent(entity, FillSolid);
-      safeRemoveComponent(entity, FillGradient);
-      safeRemoveComponent(entity, FillImage);
-      safeRemoveComponent(entity, FillPattern);
-      safeAddComponent(entity, MaterialDirty);
-    }
-
-    const to01 = (v: unknown): number => {
-      if (v === undefined || v === null) {
-        return 1;
-      }
-      const n = typeof v === 'number' ? v : parseFloat(String(v));
-      return Number.isFinite(n) ? Math.max(0, Math.min(1, n)) : 1;
-    };
-    const mul = isFillLayerEnabled(L)
-      ? to01(
-        resolveDesignVariableValue(
-          L.opacity ?? 1,
-          designVariables,
-          themeMode,
-        ),
-      )
-      : 1;
-    safeAddComponent(entity, Opacity, { fillOpacity: mul });
-    return true;
+  if (!entity.has(FillLayers)) {
+    safeAddComponent(entity, FillLayers);
   }
-
-  safeRemoveComponent(entity, FillLayers);
+  entity.write(FillLayers).layers = resolveFillLayerItemsForEcs(
+    wireArr as SerializedFillLayerItem[],
+    designVariables,
+    themeMode,
+  );
   safeAddComponent(entity, MaterialDirty);
-  return false;
+  if (entity.has(Opacity)) {
+    entity.write(Opacity).fillOpacity = 1;
+  } else {
+    safeAddComponent(entity, Opacity, { fillOpacity: 1 });
+  }
+  return true;
+}
+
+/**
+ * 将 wire `strokes` 同步到 ECS（与反序列化一致）。
+ */
+function applyStrokesWireMutation(
+  entity: Entity,
+  elAttrs: StrokeAttributes,
+  designVariables: Parameters<typeof resolveDesignVariableValue>[1],
+  themeMode: Parameters<typeof resolveDesignVariableValue>[2],
+): boolean {
+  const wireArr = elAttrs.strokes;
+  if (!Array.isArray(wireArr)) {
+    safeRemoveComponent(entity, StrokeLayers);
+    safeAddComponent(entity, MaterialDirty);
+    return false;
+  }
+
+  if (wireArr.length === 0) {
+    safeRemoveComponent(entity, StrokeLayers);
+    safeRemoveComponent(entity, Stroke);
+    safeAddComponent(entity, MaterialDirty);
+    if (entity.has(Opacity)) {
+      entity.write(Opacity).strokeOpacity = 1;
+    }
+    return true;
+  }
+
+  const resolved = resolveFillLayerItemsForEcs(
+    wireArr as SerializedFillLayerItem[],
+    designVariables,
+    themeMode,
+  );
+  if (!entity.has(StrokeLayers)) {
+    safeAddComponent(entity, StrokeLayers);
+  }
+  entity.write(StrokeLayers).layers = resolved;
+
+  const priorStroke = entity.has(Stroke) ? entity.read(Stroke) : undefined;
+  const dashcap =
+    normalizeStrokeDashCap(elAttrs.strokeDashCap) ??
+    priorStroke?.dashcap ??
+    'none';
+
+  const firstWire = wireArr.find(isFillLayerEnabled);
+  const firstRes = resolved.find(isFillLayerEnabled);
+  const paint =
+    firstRes != null && typeof firstRes.value === 'string'
+      ? firstRes.value
+      : undefined;
+  if (paint != null && paint.trim() !== '') {
+    const strokeRef = designVariableRefKeyFromWire(
+      firstWire != null && typeof firstWire.value === 'string'
+        ? firstWire.value
+        : undefined,
+    );
+    if (isGradient(paint)) {
+      if (entity.has(Stroke)) {
+        const s = entity.read(Stroke);
+        safeAddComponent(entity, Stroke, {
+          color: 'none',
+          colorVariableRef: strokeRef,
+          width: s.width,
+          linecap: s.linecap,
+          linejoin: s.linejoin,
+          miterlimit: s.miterlimit,
+          dasharray: s.dasharray,
+          dashoffset: s.dashoffset,
+          dashcap,
+          alignment: s.alignment,
+          widthVariableRef: s.widthVariableRef,
+        });
+      } else {
+        safeAddComponent(entity, Stroke, {
+          color: 'none',
+          colorVariableRef: strokeRef,
+        });
+      }
+    } else {
+      if (entity.has(Stroke)) {
+        const s = entity.read(Stroke);
+        safeAddComponent(entity, Stroke, {
+          color: paint,
+          colorVariableRef: strokeRef,
+          width: s.width,
+          linecap: s.linecap,
+          linejoin: s.linejoin,
+          miterlimit: s.miterlimit,
+          dasharray: s.dasharray,
+          dashoffset: s.dashoffset,
+          dashcap,
+          alignment: s.alignment,
+          widthVariableRef: s.widthVariableRef,
+        });
+      } else {
+        safeAddComponent(entity, Stroke, {
+          color: paint,
+          colorVariableRef: strokeRef,
+        });
+      }
+    }
+  } else {
+    if (entity.has(Stroke)) {
+      const s = entity.read(Stroke);
+      safeAddComponent(entity, Stroke, {
+        color: 'none',
+        colorVariableRef: '',
+        width: s.width,
+        linecap: s.linecap,
+        linejoin: s.linejoin,
+        miterlimit: s.miterlimit,
+        dasharray: s.dasharray,
+        dashoffset: s.dashoffset,
+        dashcap,
+        alignment: s.alignment,
+        widthVariableRef: s.widthVariableRef,
+      });
+    }
+  }
+
+  safeAddComponent(entity, MaterialDirty);
+  if (entity.has(Opacity)) {
+    entity.write(Opacity).strokeOpacity = 1;
+  } else {
+    safeAddComponent(entity, Opacity, { strokeOpacity: 1 });
+  }
+  return true;
 }
 
 // This function tracks updates of text elements for the purposes for collaboration.
@@ -1177,6 +1213,7 @@ export const mutateElement = <TElement extends Mutable<SerializedNode>>(
   }
 
   migrateLegacyFillWireInPlace(element as unknown as Record<string, unknown>);
+  migrateLegacyStrokeWireInPlace(element as unknown as Record<string, unknown>);
 
   const designVariables = api.getAppState().variables;
   const themeMode = api.getAppState().themeMode;
@@ -1193,13 +1230,11 @@ export const mutateElement = <TElement extends Mutable<SerializedNode>>(
   const {
     parentId,
     zIndex,
-    stroke,
     strokeWidth,
     strokeLinecap,
     strokeLinejoin,
     strokeAlignment,
     opacity,
-    strokeOpacity,
     innerShadowColor,
     innerShadowBlurRadius,
     innerShadowOffsetX,
@@ -1333,67 +1368,18 @@ export const mutateElement = <TElement extends Mutable<SerializedNode>>(
       safeAddComponent(child, MaterialDirty);
     });
   }
-  if ('stroke' in updates && !isIconFontWireNode) {
-    const resolvedStroke = resolveDesignVariableValue(
-      stroke,
+  if (
+    ('strokes' in updates ||
+      'stroke' in updates ||
+      'strokeOpacity' in updates) &&
+    !isIconFontWireNode
+  ) {
+    applyStrokesWireMutation(
+      entity,
+      element as StrokeAttributes,
       designVariables,
       themeMode,
     );
-    const strokeRef = designVariableRefKeyFromWire(
-      typeof stroke === 'string' ? stroke : undefined,
-    );
-    if (isGradient(resolvedStroke as string)) {
-      if (entity.has(Stroke)) {
-        const s = entity.read(Stroke);
-        safeAddComponent(entity, Stroke, {
-          color: 'none',
-          colorVariableRef: strokeRef,
-          width: s.width,
-          linecap: s.linecap,
-          linejoin: s.linejoin,
-          miterlimit: s.miterlimit,
-          dasharray: s.dasharray,
-          dashoffset: s.dashoffset,
-          alignment: s.alignment,
-          widthVariableRef: s.widthVariableRef,
-        });
-      } else {
-        safeAddComponent(entity, Stroke, {
-          color: 'none',
-          colorVariableRef: strokeRef,
-        });
-      }
-      safeRemoveComponent(entity, StrokeGradient);
-      safeAddComponent(entity, StrokeGradient, {
-        value: resolvedStroke as string,
-      });
-      safeAddComponent(entity, MaterialDirty);
-    } else {
-      if (entity.has(StrokeGradient)) {
-        safeRemoveComponent(entity, StrokeGradient);
-        safeAddComponent(entity, MaterialDirty);
-      }
-      if (entity.has(Stroke)) {
-        const s = entity.read(Stroke);
-        safeAddComponent(entity, Stroke, {
-          color: resolvedStroke as string,
-          colorVariableRef: strokeRef,
-          width: s.width,
-          linecap: s.linecap,
-          linejoin: s.linejoin,
-          miterlimit: s.miterlimit,
-          dasharray: s.dasharray,
-          dashoffset: s.dashoffset,
-          alignment: s.alignment,
-          widthVariableRef: s.widthVariableRef,
-        });
-      } else {
-        safeAddComponent(entity, Stroke, {
-          color: resolvedStroke as string,
-          colorVariableRef: strokeRef,
-        });
-      }
-    }
   }
   if ('strokeWidth' in updates && !isIconFontWireNode) {
     const w = resolveDesignVariableValue(
@@ -1417,23 +1403,40 @@ export const mutateElement = <TElement extends Mutable<SerializedNode>>(
   if ('strokeAlignment' in updates && !isIconFontWireNode) {
     safeAddComponent(entity, Stroke, { alignment: strokeAlignment });
   }
+  if ('strokeDasharray' in updates && !isIconFontWireNode) {
+    const sd = (element as StrokeAttributes).strokeDasharray;
+    const pair: [number, number] =
+      sd === 'none' || sd === undefined
+        ? [0, 0]
+        : (() => {
+          const parts = sd.includes(',')
+            ? sd.split(',')
+            : sd.trim().split(/\s+/).filter(Boolean);
+          const a = Number(parts[0]);
+          const b = Number(parts[1] ?? parts[0]);
+          return [
+            Number.isFinite(a) ? a : 0,
+            Number.isFinite(b) ? b : 0,
+          ] as [number, number];
+        })();
+    safeAddComponent(entity, Stroke, { dasharray: pair });
+  }
+  if ('strokeDashoffset' in updates && !isIconFontWireNode) {
+    const raw = (element as StrokeAttributes).strokeDashoffset;
+    const n =
+      typeof raw === 'number' ? raw : parseFloat(String(raw ?? '0'));
+    safeAddComponent(entity, Stroke, {
+      dashoffset: Number.isFinite(n) ? n : 0,
+    });
+  }
+  if ('strokeDashCap' in updates && !isIconFontWireNode) {
+    const raw = (element as StrokeAttributes).strokeDashCap;
+    safeAddComponent(entity, Stroke, {
+      dashcap: normalizeStrokeDashCap(raw) ?? 'none',
+    });
+  }
   if ('opacity' in updates) {
     safeAddComponent(entity, Opacity, { opacity });
-  }
-  if ('strokeOpacity' in updates) {
-    const so = resolveDesignVariableValue(
-      strokeOpacity,
-      designVariables,
-      themeMode,
-    );
-    const n =
-      so !== undefined && so !== null
-        ? typeof so === 'number'
-          ? so
-          : parseFloat(String(so))
-        : NaN;
-    const v = Number.isFinite(n) ? Math.max(0, Math.min(1, n)) : 1;
-    safeAddComponent(entity, Opacity, { strokeOpacity: v });
   }
   if ('dropShadowColor' in updates) {
     safeAddComponent(entity, DropShadow, {
@@ -1734,6 +1737,14 @@ export const mutateElement = <TElement extends Mutable<SerializedNode>>(
       }
     }
   }
+  /** 椭圆/矩形尺寸变化需重建几何；虚线描边走 SmoothPolyline，依赖 GeometryDirty。 */
+  if (
+    ('width' in updates || 'height' in updates) &&
+    (entity.has(Ellipse) || entity.has(Rect))
+  ) {
+    safeAddComponent(entity, GeometryDirty);
+    safeAddComponent(entity, MaterialDirty);
+  }
   if (
     ('width' in updates || 'height' in updates) &&
     entity.has(Filter)
@@ -1754,6 +1765,8 @@ export const mutateElement = <TElement extends Mutable<SerializedNode>>(
         : parseFloat(String(resolved ?? ''));
     if (Number.isFinite(n)) {
       entity.write(Rect).cornerRadius = Math.max(0, n);
+      safeAddComponent(entity, GeometryDirty);
+      safeAddComponent(entity, MaterialDirty);
     }
   }
   if ('points' in updates) {
@@ -1911,11 +1924,16 @@ export const mutateElement = <TElement extends Mutable<SerializedNode>>(
     if (
       isIconFontNode &&
       (('fills' in updates) ||
+        ('strokes' in updates) ||
         ('stroke' in updates) ||
+        ('strokeOpacity' in updates) ||
         ('strokeWidth' in updates) ||
         ('strokeLinecap' in updates) ||
         ('strokeLinejoin' in updates) ||
         ('strokeAlignment' in updates) ||
+        ('strokeDasharray' in updates) ||
+        ('strokeDashoffset' in updates) ||
+        ('strokeDashCap' in updates) ||
         ('width' in updates) ||
         ('height' in updates) ||
         ('iconFontName' in updates) ||
@@ -1934,13 +1952,17 @@ export const mutateElement = <TElement extends Mutable<SerializedNode>>(
     if (
       gType === 'g' &&
       (('fills' in updates) ||
+        ('strokes' in updates) ||
         ('stroke' in updates) ||
+        ('strokeOpacity' in updates) ||
         ('strokeWidth' in updates) ||
         ('fillRule' in updates) ||
         ('opacity' in updates) ||
-        ('strokeOpacity' in updates) ||
         ('strokeLinecap' in updates) ||
-        ('strokeLinejoin' in updates))
+        ('strokeLinejoin' in updates) ||
+        ('strokeDasharray' in updates) ||
+        ('strokeDashoffset' in updates) ||
+        ('strokeDashCap' in updates))
     ) {
       safeAddComponent(
         entity,

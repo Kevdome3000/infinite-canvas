@@ -9,10 +9,7 @@ import {
   ComputedRough,
   ComputedTextMetrics,
   Ellipse,
-  FillGradient,
-  FillImage,
-  FillPattern,
-  FillSolid,
+  FillLayers,
   FillTexture,
   IconFontEllipseStrokeRasterPlaceholder,
   Opacity,
@@ -22,10 +19,19 @@ import {
   Rect,
   Rough,
   Stroke,
-  StrokeGradient,
   Text,
   VectorNetwork,
 } from '../components';
+import {
+  fillLayersEligibleForSimpleStrokeBake,
+  fillLayersNeedFillImage,
+  getEnabledFillLayers,
+  getFirstSolidFillLayerValue,
+} from './fillLayers';
+import {
+  getFirstGradientStrokeLayerValue,
+  strokePaintAlphaMultipliers,
+} from './strokeLayers';
 import { buildVectorNetworkFillMesh } from './vector-network-fill';
 import { parseColor } from './color';
 import { getRasterFilterValueForShape, hasRasterPostEffects } from './filter';
@@ -483,18 +489,23 @@ export function shouldBakeStrokeIntoRasterFilterTexture(shape: Entity): boolean 
   if (!shape.hasSomeOf(Rect, Ellipse, Circle)) {
     return false;
   }
+  if (shape.has(FillTexture)) {
+    return false;
+  }
   if (
-    shape.has(FillGradient) ||
-    shape.has(FillPattern) ||
-    shape.has(FillImage) ||
-    shape.has(FillTexture)
+    shape.has(FillLayers) &&
+    (!fillLayersEligibleForSimpleStrokeBake(shape) ||
+      fillLayersNeedFillImage(getEnabledFillLayers(shape)))
   ) {
     return false;
   }
   if (shape.has(Rough)) {
     return false;
   }
-  if (!shape.has(Stroke) || shape.has(StrokeGradient)) {
+  if (
+    !shape.has(Stroke) ||
+    getFirstGradientStrokeLayerValue(shape) != null
+  ) {
     return false;
   }
   const st = shape.read(Stroke);
@@ -538,8 +549,10 @@ export function createFillAndStrokeRgbaRasterForFilter(
   const { fillOpacity, strokeOpacity } = shape.has(Opacity)
     ? shape.read(Opacity)
     : { fillOpacity: 1, strokeOpacity: 1 };
+  const { strokeColorAlphaMul, strokeUniformOpacityMul } =
+    strokePaintAlphaMultipliers(shape);
 
-  const fillStr = shape.has(FillSolid) ? shape.read(FillSolid).value : 'none';
+  const fillStr = getFirstSolidFillLayerValue(shape) ?? 'none';
   const fillRgb = parseColor(
     fillStr && fillStr !== 'none' ? fillStr : 'transparent',
   );
@@ -549,7 +562,10 @@ export function createFillAndStrokeRgbaRasterForFilter(
   const strokeRgb = parseColor(
     stroke.color && stroke.color !== 'none' ? stroke.color : 'transparent',
   );
-  const strokeRgba = rgbaFromParsed(strokeRgb, strokeOpacity);
+  const strokeRgba = rgbaFromParsed(
+    strokeRgb,
+    strokeOpacity * strokeColorAlphaMul * strokeUniformOpacityMul,
+  );
 
   ctx.lineWidth = stroke.width;
   ctx.lineJoin = stroke.linejoin;
