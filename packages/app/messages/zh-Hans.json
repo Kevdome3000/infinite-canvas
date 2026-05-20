@@ -209,6 +209,13 @@
       "liquidMetal": {
         "title": "液态金属",
         "description": "为 Lucide 图标与文字套用 liquid-metal 滤镜；可在右侧属性面板继续添加图层或调整效果参数。"
+      },
+      "rain": {
+        "title": "雨滴",
+        "description": "raindrop-fx 玻璃雨滴效果：默认细雨与大风暴雨预设对比，可在属性面板微调 rain() 参数。",
+        "originalLabel": "原图",
+        "gentleLabel": "细雨 rain()",
+        "stormLabel": "暴雨 preset"
       }
     },
     "photoColors": {
@@ -229,6 +236,10 @@
     "liquidMetal": {
       "metaTitle": "液态金属",
       "metaDescription": "在图标字体与文字上预览 liquid-metal 滤镜效果。"
+    },
+    "rain": {
+      "metaTitle": "雨滴",
+      "metaDescription": "预览 rain() 滤镜：Codrops 雨滴模拟、水面折射，以及与 blur 等效果的叠加。"
     }
   }
 }

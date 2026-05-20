@@ -1,5 +1,5 @@
 import { css, html, LitElement, type TemplateResult } from 'lit';
-import { customElement, property, state } from 'lit/decorators.js';
+import { customElement, property } from 'lit/decorators.js';
 import { consume } from '@lit/context';
 import {
   SerializedNode,
@@ -265,8 +265,10 @@ export class PropertiesPanelContent extends LitElement {
   @property()
   node: SerializedNode;
 
-  @state()
-  lockAspectRatio: boolean = true;
+  /** 与 {@link SerializedNode.lockAspectRatio} 同步；未设置时视为未锁定。 */
+  private get lockAspectRatio(): boolean {
+    return this.node.lockAspectRatio === true;
+  }
 
   private get propertiesPanelSectionsOpenResolved(): {
     fillSection: boolean;
@@ -411,7 +413,10 @@ export class PropertiesPanelContent extends LitElement {
   }
 
   private handleLockAspectRatioChanged() {
-    this.lockAspectRatio = !this.lockAspectRatio;
+    this.api.updateNode(this.node, {
+      lockAspectRatio: !this.lockAspectRatio,
+    });
+    this.api.record();
   }
 
   private handleIconFontControlsPatch(e: CustomEvent<IconFontControlsPatch>) {

@@ -69,12 +69,20 @@ import {
   IconFontEllipseStrokeRasterPlaceholder,
 } from '../components';
 import {
+  collectRainDropTextureUrlsFromFilterValue,
   Effect,
   filterStringUsesEngineTimePost,
+  isRainFxEffect,
   paddingMat3,
   parseColor,
   parseEffect,
 } from '../utils';
+import {
+  clearRainFxExportContext,
+  setRainFxExportContext,
+} from '../utils/rain-fx/rain-fx-export-context';
+import { preloadRainDropTextures } from '../utils/rain-drop-texture-cache';
+import { preloadRaindropSprites } from '../utils/raindrop-sim/raindrop-sprite-cache';
 import type { SerializedNode } from '../types/serialized-node';
 import { GridRenderer } from '../render-graph/GridRenderer';
 import { BatchManager } from './BatchManager';
@@ -282,6 +290,9 @@ export class MeshPipeline extends System {
 
   renderers: Map<Entity, GPURenderer> = new Map();
 
+  /** Reused across partial (layer) raster export frames so rain-fx sim/GPU state persists. */
+  private partialRasterRenderers: Map<Entity, GPURenderer> = new Map();
+
   private pendingRenderables: WeakMap<
     Entity,
     {
@@ -349,6 +360,101 @@ export class MeshPipeline extends System {
     );
   }
 
+  private collectRainUrlsForRasterExport(
+    api: { getNodes: () => SerializedNode[] },
+    nodes: SerializedNode[],
+  ): string[] {
+    const set = new Set<string>();
+    const list = nodes.length > 0 ? nodes : api.getNodes();
+    for (const n of list) {
+      const filterValue =
+        'filter' in n && typeof n.filter === 'string' ? n.filter : undefined;
+      for (const u of collectRainDropTextureUrlsFromFilterValue(filterValue)) {
+        set.add(u);
+      }
+    }
+    return [...set];
+  }
+
+  private rasterExportHasRainFx(
+    api: { getAppState: () => { filter?: string } },
+    nodes: SerializedNode[],
+  ): boolean {
+    const hasRainFx = (filterValue?: string) => {
+      if (!filterValue?.trim()) {
+        return false;
+      }
+      return parseEffect(filterValue).some(
+        (e) => e.type === 'rain' && isRainFxEffect(e),
+      );
+    };
+    if (nodes.length > 0) {
+      for (const n of nodes) {
+        if (
+          'filter' in n &&
+          typeof n.filter === 'string' &&
+          hasRainFx(n.filter)
+        ) {
+          return true;
+        }
+      }
+      return false;
+    }
+    return hasRainFx(api.getAppState().filter);
+  }
+
+  private async runRasterScreenshotExport(
+    canvas: Entity,
+    camera: Entity,
+  ): Promise<void> {
+    if (!canvas.has(RasterScreenshotRequest)) {
+      return;
+    }
+    const req = canvas.read(RasterScreenshotRequest);
+    const { api } = canvas.read(Canvas);
+    const rainUrls = this.collectRainUrlsForRasterExport(api, req.nodes);
+    if (rainUrls.length > 0) {
+      try {
+        await Promise.all([
+          preloadRaindropSprites(rainUrls),
+          preloadRainDropTextures(rainUrls),
+        ]);
+      } catch (err) {
+        console.warn('rain: preload drop textures before export failed', err);
+      }
+    }
+    const warmupSec = Math.max(0, req.rainWarmupSec ?? 0);
+    const captureRaw = req.rainCaptureTimeSec ?? 0;
+    const captureTimeSec =
+      captureRaw > 0 && Number.isFinite(captureRaw) ? captureRaw : warmupSec;
+    const useRainWarmup =
+      warmupSec > 0 && this.rasterExportHasRainFx(api, req.nodes);
+    if (useRainWarmup) {
+      setRainFxExportContext({
+        kind: 'png',
+        warmupSec,
+        captureTimeSec: captureTimeSec > 0 ? captureTimeSec : warmupSec,
+      });
+    }
+    try {
+      this.renderCamera(canvas, camera, true, {
+        ...(useRainWarmup
+          ? {
+            postEffectTimeSec:
+              captureTimeSec > 0 ? captureTimeSec : warmupSec,
+          }
+          : {}),
+      });
+    } finally {
+      if (useRainWarmup) {
+        clearRainFxExportContext();
+      }
+      if (req.nodes.length > 0) {
+        this.releasePartialRasterRenderer(canvas);
+      }
+    }
+  }
+
   @co private *setScreenshotTrigger(
     canvas: Entity,
     dataURL: string,
@@ -362,6 +468,33 @@ export class MeshPipeline extends System {
 
     safeRemoveComponent(canvas, Screenshot);
     safeRemoveComponent(canvas, RasterScreenshotRequest);
+  }
+
+  private getOrCreatePartialRasterRenderer(
+    canvas: Entity,
+    gpuResource: GPUResource,
+    api: API,
+  ): GPURenderer {
+    let renderer = this.partialRasterRenderers.get(canvas);
+    if (!renderer) {
+      renderer = this.createRenderer(gpuResource, api);
+      this.partialRasterRenderers.set(canvas, renderer);
+    }
+    return renderer;
+  }
+
+  private releasePartialRasterRenderer(canvas: Entity): void {
+    const renderer = this.partialRasterRenderers.get(canvas);
+    if (!renderer) {
+      return;
+    }
+    Object.values(renderer.filters).forEach((filter) => {
+      filter.destroy();
+    });
+    renderer.batchManager.clear();
+    renderer.batchManager.destroy();
+    renderer.renderGraph.destroy();
+    this.partialRasterRenderers.delete(canvas);
   }
 
   private createRenderer(gpuResource: GPUResource, api: API) {
@@ -495,9 +628,9 @@ export class MeshPipeline extends System {
     }
 
     if (shouldRenderPartially) {
-      // Render to offscreen canvas.
+      // Render to offscreen canvas (reuse renderer across animation frames).
       gpuResource = this.setupDevice.getOffscreenGPUResource();
-      renderer = this.createRenderer(gpuResource, api);
+      renderer = this.getOrCreatePartialRasterRenderer(canvas, gpuResource, api);
     } else {
       if (!this.renderers.get(camera)) {
         this.renderers.set(camera, this.createRenderer(gpuResource, api));
@@ -658,19 +791,31 @@ export class MeshPipeline extends System {
       nodes: SerializedNode[];
       scale: number;
       timeStart: number;
+      rainWarmupSec: number;
       gifQuality: 'high' | 'medium' | 'low';
     },
   ): Promise<void> {
-    const { durationSec, fps, timeStart, download } = req;
+    const { durationSec, fps, timeStart, rainWarmupSec, download } = req;
     let { format } = req;
     const totalFrames = Math.max(
       1,
       Math.min(450, Math.ceil(Math.max(0, durationSec) * Math.max(1, fps))),
     );
     const invFps = 1 / Math.max(1, fps);
+    const animExport = {
+      kind: 'animation' as const,
+      timeStart,
+      invFps,
+      frameIndex: 0,
+      rainWarmupSec: Math.max(0, rainWarmupSec),
+      warmupApplied: false,
+    };
+    setRainFxExportContext(animExport);
     const renderFrame = (frameIndex: number) => {
+      animExport.frameIndex = frameIndex;
       this.renderCamera(canvas, camera, true, {
-        postEffectTimeSec: timeStart + frameIndex * invFps,
+        postEffectTimeSec:
+          animExport.rainWarmupSec + timeStart + frameIndex * invFps,
         rasterForExport: {
           grid: req.grid,
           nodes: req.nodes,
@@ -679,6 +824,7 @@ export class MeshPipeline extends System {
       });
     };
     if (!canvas.has(GPUResource)) {
+      clearRainFxExportContext();
       return;
     }
     if (format === 'webm' && !pickWebmMimeType()) {
@@ -722,6 +868,11 @@ export class MeshPipeline extends System {
       });
     } catch (e) {
       console.error('Raster animation export failed', e);
+    } finally {
+      clearRainFxExportContext();
+      if (req.nodes.length > 0) {
+        this.releasePartialRasterRenderer(canvas);
+      }
     }
   }
 
@@ -823,6 +974,22 @@ export class MeshPipeline extends System {
       ) {
         safeAddComponent(entity, GeometryDirty);
       }
+      // 圆角矩形 / 椭圆 / 圆：实色描边与渐变、虚线等会改变 `SmoothPolyline` 是否参与，
+      // 需重新走 BatchManager.add 以按 ctor 重建缓存（仅 MaterialDirty 不够）。
+      if (
+        entity.has(Renderable) &&
+        !entity.has(Rough) &&
+        (entity.has(Ellipse) || entity.has(Rect) || entity.has(Circle))
+      ) {
+        const camera = getSceneRoot(entity);
+        if (!this.pendingRenderables.has(camera)) {
+          this.pendingRenderables.set(camera, []);
+        }
+        this.pendingRenderables.get(camera)!.push({
+          type: 'add',
+          entity,
+        });
+      }
     });
 
     new Set([
@@ -831,6 +998,20 @@ export class MeshPipeline extends System {
       ...this.ellipsesStrokeGradientBounds.addedChangedOrRemoved,
       ...this.circlesStrokeGradientBounds.addedChangedOrRemoved,
     ]).forEach((entity) => {
+      if (
+        entity.has(Renderable) &&
+        !entity.has(Rough) &&
+        (entity.has(Ellipse) || entity.has(Rect) || entity.has(Circle))
+      ) {
+        const camera = getSceneRoot(entity);
+        if (!this.pendingRenderables.has(camera)) {
+          this.pendingRenderables.set(camera, []);
+        }
+        this.pendingRenderables.get(camera)!.push({
+          type: 'add',
+          entity,
+        });
+      }
       if (getFirstGradientStrokeLayerValue(entity) != null) {
         safeAddComponent(entity, MaterialDirty);
         safeAddComponent(entity, GeometryDirty);
@@ -849,6 +1030,18 @@ export class MeshPipeline extends System {
 
     this.canvases.current.forEach((canvas) => {
       if (
+        this.rasterScreenshotRequests.addedChangedOrRemoved.includes(canvas) &&
+        canvas.has(RasterScreenshotRequest)
+      ) {
+        const { cameras } = canvas.read(Canvas);
+        const firstCamera = cameras[0];
+        if (firstCamera) {
+          void this.runRasterScreenshotExport(canvas, firstCamera);
+        }
+        return;
+      }
+
+      if (
         this.rasterAnimationExportRequests.addedChangedOrRemoved.includes(
           canvas,
         ) &&
@@ -864,6 +1057,7 @@ export class MeshPipeline extends System {
           nodes: r.nodes,
           scale: r.scale,
           timeStart: r.timeStart,
+          rainWarmupSec: r.rainWarmupSec ?? 0,
           gifQuality: r.gifQuality,
         };
         safeRemoveComponent(canvas, RasterAnimationExportRequest);
@@ -877,7 +1071,6 @@ export class MeshPipeline extends System {
       let toRender =
         this.grids.addedChangedOrRemoved.includes(canvas) ||
         this.themes.addedChangedOrRemoved.includes(canvas) ||
-        this.rasterScreenshotRequests.addedChangedOrRemoved.includes(canvas) ||
         engineTimeNeedsContinuousRender ||
         fillTextureLiveNeedsContinuousRender;
 
@@ -933,6 +1126,9 @@ export class MeshPipeline extends System {
         renderGraph.destroy();
       },
     );
+    this.partialRasterRenderers.forEach((_, canvas) => {
+      this.releasePartialRasterRenderer(canvas);
+    });
   }
 
   private updateUniform(

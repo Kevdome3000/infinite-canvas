@@ -310,7 +310,6 @@ async function openCanvas(id?: string) {
     propertiesPanelSectionsOpen: {
       fillSection: true,
       strokeSection: true,
-      typographySection: true,
       shape: false,
       transform: false,
       layout: false,
@@ -346,39 +345,17 @@ async function openCanvas(id?: string) {
     // layersCropping: ['parent-1'],
   });
 
-  const node1: EllipseSerializedNode = {
-    id: '1',
-    type: 'ellipse',
-    fills: [{ type: 'solid', value: 'red', opacity: 1 }],
-    x: 0,
-    y: 50,
-    width: 200,
-    height: 100,
-    visibility: 'visible',
-    zIndex: 0,
-  };
-  const node2: EllipseSerializedNode = {
-    id: '2',
-    parentId: '1',
-    type: 'ellipse',
-    fills: [{ type: 'solid', value: 'green', opacity: 1 }],
-    x: 50,
-    y: -50,
-    width: 100,
-    height: 200,
-    stroke: 'black',
-    strokeWidth: 10,
-    strokeAlignment: 'center',
-    strokeDasharray: '10 10',
-    visibility: 'visible',
-    zIndex: 0,
-  };
+  fetch('/applecycling.json').then(res => res.json()).then(data => {
+    const animation = loadAnimation(data, {
+      loop: true,
+      autoplay: true,
+    });
 
-  api.updateNodes([
-    node1,
-    node2,
-  ]);
-
+    api.runAtNextTick(() => {
+      animation.render(api);
+      animation.play();
+    });
+  });
   // api.updateNodes([node3]);
   // api.selectNodes([node3]);
 

@@ -199,6 +199,16 @@ export interface ExportOptions {
    * @see RasterAnimationExportRequest.gifQuality
    */
   gifQuality?: AnimationGifQuality;
+  /**
+   * raindrop-fx（`rain()` / `rain(url("…"))`）专用：导出前离线模拟雨的秒数（从 t=0 重置）。
+   * PNG/JPEG：预热后截单帧；WEBM/GIF：在 `timeStart` 之前预热。默认 `0` 表示用当前预览状态。
+   */
+  rainWarmupSec?: number;
+  /**
+   * raindrop-fx 专用：截图帧的引擎时间（秒）；默认等于 `rainWarmupSec`。
+   * @see RasterScreenshotRequest.rainCaptureTimeSec
+   */
+  rainCaptureTimeSec?: number;
 }
 
 export class DefaultStateManagement implements StateManagement {
@@ -2355,12 +2365,29 @@ export class API {
         options.scale != null && Number.isFinite(options.scale)
           ? Math.max(0.25, Math.min(8, options.scale))
           : 1;
+      const rainWarmupRaw = options.rainWarmupSec;
+      const rainWarmupSec = Math.max(
+        0,
+        Math.min(
+          30,
+          rainWarmupRaw != null && Number.isFinite(rainWarmupRaw)
+            ? rainWarmupRaw
+            : 0,
+        ),
+      );
+      const rainCaptureRaw = options.rainCaptureTimeSec;
+      const rainCaptureTimeSec =
+        rainCaptureRaw != null && Number.isFinite(rainCaptureRaw)
+          ? Math.max(0, Math.min(120, rainCaptureRaw))
+          : 0;
       safeAddComponent(this.#canvas, RasterScreenshotRequest, {
         canvas: this.#canvas,
         type: `image/${format}`,
         download,
         nodes,
         scale,
+        rainWarmupSec,
+        rainCaptureTimeSec,
       });
     } else if (format === ExportFormat.WEBM || format === ExportFormat.GIF) {
       const scale =
@@ -2386,6 +2413,16 @@ export class API {
       const gq = options.gifQuality;
       const gifQuality: AnimationGifQuality =
         gq === 'medium' || gq === 'low' || gq === 'high' ? gq : 'high';
+      const rainWarmupRaw = options.rainWarmupSec;
+      const rainWarmupSec = Math.max(
+        0,
+        Math.min(
+          30,
+          rainWarmupRaw != null && Number.isFinite(rainWarmupRaw)
+            ? rainWarmupRaw
+            : 0,
+        ),
+      );
       safeAddComponent(this.#canvas, RasterAnimationExportRequest, {
         canvas: this.#canvas,
         download,
@@ -2396,6 +2433,7 @@ export class API {
         nodes,
         scale,
         timeStart,
+        rainWarmupSec,
         gifQuality: format === ExportFormat.GIF ? gifQuality : 'high',
       });
     }
