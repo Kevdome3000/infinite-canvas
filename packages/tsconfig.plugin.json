@@ -3,14 +3,14 @@
   "compilerOptions": {
     "baseUrl": ".",
     "paths": {
-      "@infinite-canvas-tutorial/ecs": ["ecs/lib/index.d.ts"],
-      "@infinite-canvas-tutorial/ecs/*": ["ecs/lib/*"],
+      "@infinite-canvas-tutorial/ecs": ["ecs/src/index.ts"],
+      "@infinite-canvas-tutorial/ecs/*": ["ecs/src/*"],
       "@infinite-canvas-tutorial/webcomponents": [
-        "webcomponents/lib/index.d.ts"
+        "webcomponents/src/index.ts"
       ],
-      "@infinite-canvas-tutorial/webcomponents/*": ["webcomponents/lib/*"],
+      "@infinite-canvas-tutorial/webcomponents/*": ["webcomponents/src/*"],
       "yoga-layout/load": [
-        "plugin-yoga/node_modules/yoga-layout/dist/src/load.d.ts"
+        "plugin-yoga/node_modules/yoga-layout/dist/src/load.js"
       ]
     }
   }

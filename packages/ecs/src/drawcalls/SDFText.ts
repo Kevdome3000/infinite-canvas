@@ -57,22 +57,22 @@ import {
   parseEffect,
   filterRasterPostEffects,
   filterStringUsesEngineTimePost,
-} from '../utils/filter';
+} from '../utils';
 import {
   parseGradient,
   isMeshGradientGradient,
   type Gradient,
-} from '../utils/gradient';
+} from '../utils';
 import {
   fillLayerOpacity,
   getEnabledFillLayers,
   getFirstFillLayerOpacityMul,
   getSingleEnabledFillLayer,
-} from '../utils/fillLayers';
+} from '../utils';
 import {
   resolveGpuStrokeColor,
   strokePaintAlphaMultipliers,
-} from '../utils/strokeLayers';
+} from '../utils';
 import {
   applyTextGlyphMaskToFilterRasterCanvas,
   createGradientFillTextRasterForFilter,
@@ -80,12 +80,12 @@ import {
   setWorldToCanvasTransform,
   shouldBakeStrokeIntoRasterFilterTexture,
   type SolidShapeRasterBounds,
-} from '../utils/solidShapeRasterForFilter';
+} from '../utils';
 import {
   getDevicePixelRatioForRaster,
   resolveFillImageTexturePixelSize,
-} from '../utils/fillImageTextureSize';
-import { measureText } from '../systems/ComputeTextMetrics';
+} from '../utils';
+import { measureText } from '../systems';
 import { safeAddComponent } from '../history';
 
 function firstStopColorFromGradients(grads: Gradient[] | undefined): string | null {

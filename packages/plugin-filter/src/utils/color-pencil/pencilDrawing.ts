@@ -50,7 +50,7 @@ export function pencilDrawing(
   height: number,
   pencil: PencilTextureData,
   params: PencilDrawingParams = {},
-): Uint8ClampedArray<ArrayBuffer> {
+): Uint8ClampedArray {
   const ks = params.ks ?? 8;
   const strokeWidth = params.strokeWidth ?? 1;
   const dirNum = params.dirNum ?? 8;
