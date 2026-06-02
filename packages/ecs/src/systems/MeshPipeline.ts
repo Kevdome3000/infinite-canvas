@@ -10,6 +10,7 @@ import {
 } from '@infinite-canvas-tutorial/device-api';
 import {
   Camera,
+  Camera3D,
   Canvas,
   CheckboardStyle,
   Children,
@@ -67,6 +68,10 @@ import {
   Flex,
   IconFont,
   IconFontEllipseStrokeRasterPlaceholder,
+  Extrude3D,
+  Mesh3D,
+  Material3D,
+  Transform3D,
 } from '../components';
 import {
   collectRainDropTextureUrlsFromFilterValue,
@@ -76,13 +81,18 @@ import {
   paddingMat3,
   parseColor,
   parseEffect,
+  preloadRaindropSprites,
 } from '../utils';
+import {
+  createPostProcessingRenderer,
+  type PostProcessingRendererLike,
+  setPostEffectEngineTimeSeconds,
+} from '../filter/api';
 import {
   clearRainFxExportContext,
   setRainFxExportContext,
 } from '../utils/rain-fx/rain-fx-export-context';
 import { preloadRainDropTextures } from '../utils/rain-drop-texture-cache';
-import { preloadRaindropSprites } from '../utils/raindrop-sim/raindrop-sprite-cache';
 import type { SerializedNode } from '../types/serialized-node';
 import { GridRenderer } from '../render-graph/GridRenderer';
 import { BatchManager } from './BatchManager';
@@ -93,9 +103,9 @@ import {
   encodeGifFromCanvas,
   maxColorsForAnimationGifQuality,
 } from '../utils/animationExportCodec';
-import { setPostEffectEngineTimeSeconds } from '../utils/postEffectEngineTime';
 import { safeAddComponent, safeRemoveComponent } from '../history';
 import { SetupDevice } from './SetupDevice';
+import { getMeshPipeline3D } from './mesh3d-bridge';
 import { API } from '../API';
 import { RGAttachmentSlot } from '../render-graph/interface';
 import {
@@ -105,7 +115,6 @@ import {
   opaqueWhiteFullClearRenderPassDescriptor,
 } from '../render-graph/utils';
 import { RenderGraph } from '../render-graph/RenderGraph';
-import { PostProcessingRenderer } from '../render-graph/PostProcessingRenderer';
 import { getFirstGradientFillLayerValue } from '../utils/fillLayers';
 import { getFirstGradientStrokeLayerValue } from '../utils/strokeLayers';
 
@@ -114,7 +123,7 @@ type GPURenderer = {
   uniformLegacyObject: Record<string, unknown>;
   gridRenderer: GridRenderer;
   batchManager: BatchManager;
-  filters: Record<Effect['type'], PostProcessingRenderer>;
+  filters: Record<Effect['type'], PostProcessingRendererLike>;
   renderGraph: RenderGraph;
 };
 
@@ -287,6 +296,19 @@ export class MeshPipeline extends System {
   private clipModes = this.query(
     (q) => q.addedChangedOrRemoved.with(ClipMode).trackWrites,
   );
+  /** 3D mesh / material / transform churn → redraw (e.g. animated Transform3D). */
+  private meshes3DChanged = this.query(
+    (q) =>
+      q.addedOrChanged.and.current
+        .with(Mesh3D, Material3D, Transform3D)
+        .trackWrites,
+  );
+  private extrude3DChanged = this.query(
+    (q) => q.addedOrChanged.and.removed.with(Extrude3D).trackWrites,
+  );
+  private cameras3DChanged = this.query(
+    (q) => q.addedOrChanged.and.current.with(Camera3D).trackWrites,
+  );
 
   renderers: Map<Entity, GPURenderer> = new Map();
 
@@ -311,6 +333,7 @@ export class MeshPipeline extends System {
             Grid,
             GPUResource,
             Camera,
+            Camera3D,
             ComputedCamera,
             Parent,
             Children,
@@ -347,6 +370,8 @@ export class MeshPipeline extends System {
             Flex,
             IconFont,
             IconFontEllipseStrokeRasterPlaceholder,
+            Mesh3D,
+            Material3D,
           )
           .read.and.using(
             RasterScreenshotRequest,
@@ -356,6 +381,7 @@ export class MeshPipeline extends System {
             GeometryDirty,
             MaterialDirty,
             ComputedTextMetrics,
+            Transform3D,
           ).write,
     );
   }
@@ -508,7 +534,7 @@ export class MeshPipeline extends System {
       }),
       uniformLegacyObject: null,
       gridRenderer: new GridRenderer(),
-      filters: {} as Record<Effect['type'], PostProcessingRenderer>,
+      filters: {} as Record<Effect['type'], PostProcessingRendererLike>,
       batchManager: new BatchManager(
         device,
         swapChain,
@@ -642,6 +668,9 @@ export class MeshPipeline extends System {
     const { uniformBuffer, gridRenderer, batchManager, filters } = renderer;
 
     const { width, height } = swapChain.getCanvas();
+    if (width <= 0 || height <= 0) {
+      return;
+    }
     const onscreenTexture = swapChain.getOnscreenTexture();
 
     if (raster) {
@@ -665,10 +694,17 @@ export class MeshPipeline extends System {
       antialiasingMode: AntialiasingMode.None,
     };
 
+    const mesh3d = getMeshPipeline3D();
+    mesh3d?.prepareForComposite(canvas);
+    const composite3D = mesh3d?.shouldComposite() ?? false;
+
     const mainColorDesc = makeBackbufferDescSimple(
       RGAttachmentSlot.Color0,
       renderInput,
-      makeAttachmentClearDescriptor(TransparentWhite),
+      composite3D
+        ? (mesh3d!.getColorClearDescriptor() ??
+          makeAttachmentClearDescriptor(TransparentWhite))
+        : makeAttachmentClearDescriptor(TransparentWhite),
     );
     const mainDepthDesc = makeBackbufferDescSimple(
       RGAttachmentSlot.DepthStencil,
@@ -687,7 +723,9 @@ export class MeshPipeline extends System {
       'Main Depth',
     );
     builder.pushPass((pass) => {
-      pass.setDebugName('Main Render Pass');
+      pass.setDebugName(
+        composite3D ? 'Main Render Pass (3D + 2D)' : 'Main Render Pass',
+      );
       pass.attachRenderTargetID(RGAttachmentSlot.Color0, mainColorTargetID);
       pass.attachRenderTargetID(
         RGAttachmentSlot.DepthStencil,
@@ -695,6 +733,10 @@ export class MeshPipeline extends System {
       );
       pass.exec((renderPass) => {
         gridRenderer.render(device, renderPass, uniformBuffer, legacyObject);
+        // Grid fills the framebuffer with theme background; draw 3D after it.
+        if (composite3D) {
+          mesh3d!.drawMeshes(renderPass, canvas, width, height);
+        }
         if (shouldRenderPartially) {
           const { api } = canvas.read(Canvas);
           // Add clip parent if exists.
@@ -748,7 +790,7 @@ export class MeshPipeline extends System {
         pass.attachResolveTexture(mainColorResolveTextureID);
         pass.exec((passRenderer, scope) => {
           if (!filters[effect.type]) {
-            filters[effect.type] = new PostProcessingRenderer(
+            filters[effect.type] = createPostProcessingRenderer(
               device,
               swapChain,
               renderCache,
@@ -1011,9 +1053,9 @@ export class MeshPipeline extends System {
           type: 'add',
           entity,
         });
+        safeAddComponent(entity, MaterialDirty);
       }
       if (getFirstGradientStrokeLayerValue(entity) != null) {
-        safeAddComponent(entity, MaterialDirty);
         safeAddComponent(entity, GeometryDirty);
       }
     });
@@ -1024,9 +1066,33 @@ export class MeshPipeline extends System {
       }
     });
 
+    new Set([
+      ...this.extrude3DChanged.addedOrChanged,
+      ...this.extrude3DChanged.removed,
+    ]).forEach((entity) => {
+      if (!entity.has(Renderable)) {
+        return;
+      }
+      const camera = getSceneRoot(entity);
+      if (!this.pendingRenderables.has(camera)) {
+        this.pendingRenderables.set(camera, []);
+      }
+      const pending = this.pendingRenderables.get(camera)!;
+      pending.push({ type: 'remove', entity });
+      if (!entity.has(Extrude3D)) {
+        pending.push({ type: 'add', entity });
+      }
+    });
+
     const engineTimeNeedsContinuousRender = this.anyFilterUsesEngineTimePost();
     const fillTextureLiveNeedsContinuousRender =
       this.fillTextureLiveCurrent.current.length > 0;
+    const mesh3d = getMeshPipeline3D();
+    const mesh3dNeedsRender =
+      this.meshes3DChanged.addedOrChanged.length > 0 ||
+      this.cameras3DChanged.addedOrChanged.length > 0 ||
+      this.extrude3DChanged.addedOrChanged.length > 0 ||
+      (mesh3d?.has3DContent() ?? false);
 
     this.canvases.current.forEach((canvas) => {
       if (
@@ -1072,7 +1138,8 @@ export class MeshPipeline extends System {
         this.grids.addedChangedOrRemoved.includes(canvas) ||
         this.themes.addedChangedOrRemoved.includes(canvas) ||
         engineTimeNeedsContinuousRender ||
-        fillTextureLiveNeedsContinuousRender;
+        fillTextureLiveNeedsContinuousRender ||
+        mesh3dNeedsRender;
 
       const { cameras } = canvas.read(Canvas);
       cameras.forEach((camera) => {
@@ -1083,6 +1150,14 @@ export class MeshPipeline extends System {
 
         if (!toRender && this.cameras.addedOrChanged.includes(camera)) {
           toRender = true;
+        }
+
+        if (this.fillLayers.addedChangedOrRemoved.length > 0) {
+          for (const entity of this.fillLayers.addedChangedOrRemoved) {
+            if (entity.has(Renderable)) {
+              safeAddComponent(entity, MaterialDirty);
+            }
+          }
         }
 
         if (

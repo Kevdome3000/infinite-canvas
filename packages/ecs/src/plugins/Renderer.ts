@@ -6,7 +6,6 @@ import { Plugin, type PluginWithConfig } from './types';
 import {
   SetupDevice,
   MeshPipeline,
-  PostEffectTime,
   Sort,
   ComputePoints,
   ComputeRough,
@@ -49,6 +48,12 @@ import {
   Visibility,
   GPUResource,
   VelloCanvasSurface,
+  Camera3D,
+  Extrude3D,
+  Extrude3DTarget,
+  Mesh3D,
+  Material3D,
+  Transform3D,
   Name,
   ToBeDeleted,
   SizeAttenuation,
@@ -85,6 +90,12 @@ function createRendererPlugin(options: RendererPluginOptions = {}): Plugin {
      */
     component(GPUResource);
     component(VelloCanvasSurface);
+    component(Camera3D);
+    component(Extrude3D);
+    component(Extrude3DTarget);
+    component(Mesh3D);
+    component(Material3D);
+    component(Transform3D);
     component(Renderable);
     component(Name);
     component(LockAspectRatio);
@@ -155,7 +166,6 @@ function createRendererPlugin(options: RendererPluginOptions = {}): Plugin {
     system(Last)(SetCursor);
 
     const RenderSystem = options.rendererSystemCtor ?? MeshPipeline;
-    system((s) => s.before(RenderSystem))(PostEffectTime);
     system(Last)(RenderSystem);
     system((s) => s.before(Deleter, ExportSVG))(RenderSystem);
 

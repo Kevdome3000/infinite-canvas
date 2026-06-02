@@ -1,5 +1,5 @@
 {
-  "extends": "../../tsconfig.json",
+  "extends": "../tsconfig.plugin.json",
   "include": [
     "src/**/*"
   ],
@@ -7,16 +7,7 @@
     "node_modules"
   ],
   "compilerOptions": {
-    "strict": false,
-    "noImplicitAny": false,
-    "strictNullChecks": false,
-    "exactOptionalPropertyTypes": false,
-    "noUncheckedIndexedAccess": false,
-    "noPropertyAccessFromIndexSignature": false,
     "module": "ESNext",
-    "baseUrl": ".",
-    "paths": {
-      "yoga-layout/load": ["./node_modules/yoga-layout/dist/src/load"]
-    },
+    "rootDir": "./src"
   }
 }

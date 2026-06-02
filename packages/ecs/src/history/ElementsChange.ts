@@ -16,6 +16,7 @@ import {
   deserializeBrushPoints,
 } from '../utils';
 import { hasRasterPostEffects } from '../utils/filter';
+import { resolveExtrude3DDepth } from '../utils/extrude3d';
 import {
   resolveDesignVariableValue,
   designVariableRefKeyFromWire,
@@ -71,6 +72,7 @@ import {
   Group,
   IconFont,
   IconFontEllipseStrokeRasterPlaceholder,
+  Extrude3D,
 } from '../components';
 import { getDescendants } from '../systems';
 import { syncEdgeBindingForEntity } from '../utils/binding/sync-edge-entity';
@@ -96,6 +98,10 @@ import {
 } from '../utils/normalize-stroke-wire';
 import { isFillLayerEnabled } from '../utils/fillLayers';
 import { TesselationMethod } from '../components/geometry/Path';
+import {
+  measureText,
+  yOffsetFromTextBaseline,
+} from '../systems/ComputeTextMetrics';
 
 export type SceneElementsMap = Map<SerializedNode['id'], SerializedNode>;
 
@@ -430,18 +436,23 @@ function syncIconFontChildrenFromUpdatedNode(
       child = ch.id();
     }
 
+    const iconStrokeColor = pickStrokeColorForChild(
+      prim.style,
+      userColorStroke,
+      userColorFill,
+    );
     safeAddComponent(child, Stroke, {
-      color: pickStrokeColorForChild(
-        prim.style,
-        userColorStroke,
-        userColorFill,
-      ),
       width: strokeWidthFromIconStyle(prim.style, rSw, {
         primKind: prim.kind,
       }),
       linecap: mapSvgLineCap(prim.style.strokeLinecap),
       linejoin: mapSvgLineJoin(prim.style.strokeLinejoin),
     });
+    if (iconStrokeColor && iconStrokeColor !== 'none') {
+      safeAddComponent(child, StrokeLayers, {
+        layers: [{ type: 'solid', value: iconStrokeColor }],
+      });
+    }
 
     const fillPart = pickChildFill(
       prim.style,
@@ -1021,9 +1032,6 @@ function applyFillsWireMutation(
   if (wireArr.length === 0) {
     safeRemoveComponent(entity, FillLayers);
     safeAddComponent(entity, MaterialDirty);
-    if (entity.has(Opacity)) {
-      entity.write(Opacity).fillOpacity = 1;
-    }
     return true;
   }
 
@@ -1036,11 +1044,6 @@ function applyFillsWireMutation(
     themeMode,
   );
   safeAddComponent(entity, MaterialDirty);
-  if (entity.has(Opacity)) {
-    entity.write(Opacity).fillOpacity = 1;
-  } else {
-    safeAddComponent(entity, Opacity, { fillOpacity: 1 });
-  }
   return true;
 }
 
@@ -1064,9 +1067,6 @@ function applyStrokesWireMutation(
     safeRemoveComponent(entity, StrokeLayers);
     safeRemoveComponent(entity, Stroke);
     safeAddComponent(entity, MaterialDirty);
-    if (entity.has(Opacity)) {
-      entity.write(Opacity).strokeOpacity = 1;
-    }
     return true;
   }
 
@@ -1092,82 +1092,33 @@ function applyStrokesWireMutation(
     firstRes != null && typeof firstRes.value === 'string'
       ? firstRes.value
       : undefined;
-  if (paint != null && paint.trim() !== '') {
-    const strokeRef = designVariableRefKeyFromWire(
-      firstWire != null && typeof firstWire.value === 'string'
-        ? firstWire.value
-        : undefined,
-    );
-    if (isGradient(paint)) {
-      if (entity.has(Stroke)) {
-        const s = entity.read(Stroke);
-        safeAddComponent(entity, Stroke, {
-          color: 'none',
-          colorVariableRef: strokeRef,
-          width: s.width,
-          linecap: s.linecap,
-          linejoin: s.linejoin,
-          miterlimit: s.miterlimit,
-          dasharray: s.dasharray,
-          dashoffset: s.dashoffset,
-          dashcap,
-          alignment: s.alignment,
-          widthVariableRef: s.widthVariableRef,
-        });
-      } else {
-        safeAddComponent(entity, Stroke, {
-          color: 'none',
-          colorVariableRef: strokeRef,
-        });
-      }
-    } else {
-      if (entity.has(Stroke)) {
-        const s = entity.read(Stroke);
-        safeAddComponent(entity, Stroke, {
-          color: paint,
-          colorVariableRef: strokeRef,
-          width: s.width,
-          linecap: s.linecap,
-          linejoin: s.linejoin,
-          miterlimit: s.miterlimit,
-          dasharray: s.dasharray,
-          dashoffset: s.dashoffset,
-          dashcap,
-          alignment: s.alignment,
-          widthVariableRef: s.widthVariableRef,
-        });
-      } else {
-        safeAddComponent(entity, Stroke, {
-          color: paint,
-          colorVariableRef: strokeRef,
-        });
-      }
-    }
-  } else {
-    if (entity.has(Stroke)) {
-      const s = entity.read(Stroke);
-      safeAddComponent(entity, Stroke, {
-        color: 'none',
-        colorVariableRef: '',
-        width: s.width,
-        linecap: s.linecap,
-        linejoin: s.linejoin,
-        miterlimit: s.miterlimit,
-        dasharray: s.dasharray,
-        dashoffset: s.dashoffset,
-        dashcap,
-        alignment: s.alignment,
-        widthVariableRef: s.widthVariableRef,
-      });
-    }
+  const strokeRef = designVariableRefKeyFromWire(
+    firstWire != null && typeof firstWire.value === 'string'
+      ? firstWire.value
+      : undefined,
+  );
+  if (entity.has(Stroke)) {
+    const s = entity.read(Stroke);
+    safeAddComponent(entity, Stroke, {
+      colorVariableRef: paint != null && paint.trim() !== '' ? strokeRef : '',
+      width: s.width,
+      linecap: s.linecap,
+      linejoin: s.linejoin,
+      miterlimit: s.miterlimit,
+      dasharray: s.dasharray,
+      dashoffset: s.dashoffset,
+      dashcap,
+      alignment: s.alignment,
+      widthVariableRef: s.widthVariableRef,
+    });
+  } else if (paint != null && paint.trim() !== '') {
+    safeAddComponent(entity, Stroke, {
+      colorVariableRef: strokeRef,
+      dashcap,
+    });
   }
 
   safeAddComponent(entity, MaterialDirty);
-  if (entity.has(Opacity)) {
-    entity.write(Opacity).strokeOpacity = 1;
-  } else {
-    safeAddComponent(entity, Opacity, { strokeOpacity: 1 });
-  }
   return true;
 }
 
@@ -1354,6 +1305,10 @@ export const mutateElement = <TElement extends Mutable<SerializedNode>>(
       designVariables,
       themeMode,
     );
+    if (entity.has(Rough)) {
+      refreshComputedRoughForEntity(entity);
+      safeAddComponent(entity, GeometryDirty);
+    }
   }
   if ('brushStamp' in updates) {
     if (isDataUrl(brushStamp) || isUrl(brushStamp)) {
@@ -1380,6 +1335,10 @@ export const mutateElement = <TElement extends Mutable<SerializedNode>>(
       designVariables,
       themeMode,
     );
+    if (entity.has(Rough)) {
+      refreshComputedRoughForEntity(entity);
+      safeAddComponent(entity, GeometryDirty);
+    }
   }
   if ('strokeWidth' in updates && !isIconFontWireNode) {
     const w = resolveDesignVariableValue(
@@ -1670,6 +1629,63 @@ export const mutateElement = <TElement extends Mutable<SerializedNode>>(
       entity.write(Text).lineHeight = n;
     }
   }
+  if (
+    ('textAlign' in updates || 'textBaseline' in updates) &&
+    !('anchorX' in updates) &&
+    !('anchorY' in updates) &&
+    entity.has(Text)
+  ) {
+    const textComp = entity.read(Text);
+    const oldTextAlign = textComp.textAlign;
+    const oldTextBaseline = textComp.textBaseline;
+    const newTextAlign = 'textAlign' in updates ? textAlign : oldTextAlign;
+    const newTextBaseline =
+      'textBaseline' in updates ? textBaseline : oldTextBaseline;
+
+    const metrics = measureText(textComp);
+    const { width = 0, fontMetrics } = metrics;
+
+    if (fontMetrics) {
+      const hwidth = width / 2;
+      let oldAnchorX = textComp.anchorX;
+      let oldAnchorY = textComp.anchorY;
+
+      const xOffsetFromTextAlign = (align: CanvasTextAlign) => {
+        if (align === 'center') {
+          return -hwidth;
+        }
+        if (align === 'right' || align === 'end') {
+          return -hwidth * 2;
+        }
+        return 0;
+      };
+
+      const oldXOffset = xOffsetFromTextAlign(oldTextAlign);
+      const newXOffset = xOffsetFromTextAlign(newTextAlign);
+
+      // Adjust anchorX/Y to compensate for the offset change
+      const newAnchorX = oldAnchorX + oldXOffset - newXOffset;
+      let newAnchorY = oldAnchorY;
+      if (oldTextBaseline !== newTextBaseline) {
+        const lineHeightValue =
+          textComp.lineHeight || (textComp.fontSize as number);
+        const lineHeightAdjust =
+          (lineHeightValue - fontMetrics.fontSize) / 2;
+        const oldYOffset =
+          yOffsetFromTextBaseline(oldTextBaseline, fontMetrics) -
+          lineHeightAdjust;
+        const newYOffset =
+          yOffsetFromTextBaseline(newTextBaseline, fontMetrics) -
+          lineHeightAdjust;
+        newAnchorY = oldAnchorY + oldYOffset - newYOffset;
+      }
+      entity.write(Text).anchorX = newAnchorX;
+      entity.write(Text).anchorY = newAnchorY;
+      // Keep the serialized element in sync
+      (element as any).anchorX = newAnchorX;
+      (element as any).anchorY = newAnchorY;
+    }
+  }
   if ('textAlign' in updates) {
     entity.write(Text).textAlign = textAlign;
   }
@@ -1847,6 +1863,17 @@ export const mutateElement = <TElement extends Mutable<SerializedNode>>(
       getDescendants(entity).forEach((child) => {
         safeAddComponent(child, MaterialDirty);
       });
+    }
+  }
+
+  if ('extrude3d' in updates && entity.has(Rect)) {
+    const depth = resolveExtrude3DDepth(
+      (updates as { extrude3d?: boolean | number }).extrude3d,
+    );
+    if (depth === undefined) {
+      safeRemoveComponent(entity, Extrude3D);
+    } else {
+      safeAddComponent(entity, Extrude3D, { depth });
     }
   }
 

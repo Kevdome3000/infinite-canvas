@@ -222,8 +222,10 @@ export class InfiniteCanvas extends LitElement {
     super.disconnectedCallback();
     this.resizeObserver?.unobserve(this);
 
+    // Defer so shadow-DOM children (context-menu, text-editor, …) can unbind first.
+    const api = this.apiProvider.value;
     try {
-      this.apiProvider.value?.destroy();
+      queueMicrotask(() => api?.destroy());
     } catch (err) {
       console.warn('[ic-spectrum-canvas] destroy() failed during disconnect:', err);
     }

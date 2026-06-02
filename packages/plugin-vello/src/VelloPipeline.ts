@@ -16,6 +16,7 @@ import {
   Ellipse,
   FillLayers,
   FillTexture,
+  StrokeLayers,
   FractionalIndex,
   GlobalRenderOrder,
   GlobalTransform,
@@ -67,10 +68,14 @@ import {
   fontWeightMap,
   parseColor,
   Group,
-  rasterizeFillLayerImageUrlForTexture,
-  resolveFillLayerImageRasterPixelSize,
+  computeObjectFitDrawRect,
+  fillLayerImageRasterOptions,
   getFillLayerDecodedBitmap,
+  rasterizeFillLayerImageUrlForTexture,
+  resolveFillLayerOpacityFromWire,
+  resolveImageFillRasterOptions,
 } from '@infinite-canvas-tutorial/ecs';
+import type { API } from '@infinite-canvas-tutorial/ecs';
 import {
   addRect,
   addEllipse,
@@ -142,6 +147,82 @@ function velloGetEnabledFillLayers(entity: Entity) {
     return [];
   }
   return raw.filter((l) => l.enabled !== false);
+}
+
+function velloGetEnabledStrokeLayers(entity: Entity) {
+  if (!entity.has(StrokeLayers)) {
+    return [];
+  }
+  const raw = entity.read(StrokeLayers).layers;
+  if (!raw?.length) {
+    return [];
+  }
+  return raw.filter((l) => l.enabled !== false);
+}
+
+/** 线框 `strokes` 优先；无有效层时回退 `Stroke.color`（非 `none`）。 */
+function resolveVelloStrokePaint(
+  api: API | undefined,
+  entity: Entity,
+):
+  | {
+    width: number;
+    color: [number, number, number, number];
+    linecap: CanvasLineCap;
+    linejoin: CanvasLineJoin;
+    miterLimit: number;
+    dasharray: number[];
+    dashoffset: number;
+    alignment: 'center' | 'inner' | 'outer';
+  }
+  | undefined {
+  if (!entity.has(Stroke)) {
+    return undefined;
+  }
+  const {
+    width,
+    linecap,
+    linejoin,
+    miterlimit,
+    dasharray,
+    dashoffset,
+    alignment,
+  } = entity.read(Stroke);
+  if (width <= 0) {
+    return undefined;
+  }
+
+  let colorStr: string | undefined;
+  let layerAlphaMul = 1;
+  const layers = velloGetEnabledStrokeLayers(entity);
+  const solidLayer = layers.find((l) => l.type === 'solid');
+  if (solidLayer && solidLayer.type === 'solid') {
+    const v = String(solidLayer.value ?? '').trim();
+    if (v !== '' && v.toLowerCase() !== 'none') {
+      colorStr = solidLayer.value;
+      layerAlphaMul = resolveFillLayerOpacityFromWire(api, entity, solidLayer);
+    }
+  }
+  if (!colorStr) {
+    return undefined;
+  }
+
+  const { r, g, b, opacity } = d3.rgb(colorStr)?.rgb() ?? d3.rgb(0, 0, 0, 1);
+  const a = opacity * layerAlphaMul;
+  if (a < 1e-8) {
+    return undefined;
+  }
+
+  return {
+    width,
+    color: [r / 255, g / 255, b / 255, a],
+    linecap: linecap ?? 'butt',
+    linejoin: linejoin ?? 'miter',
+    miterLimit: miterlimit ?? 4,
+    dasharray: dasharray ?? [],
+    dashoffset: dashoffset ?? 0,
+    alignment: alignment ?? 'center',
+  };
 }
 
 type FillGradientSpec = {
@@ -250,8 +331,85 @@ function buildFillGradients(
   return result;
 }
 
+/** `serde_wasm_bindgen` 反序列化 `Vec<u8>` 需要普通数组，不能是 `Uint8Array`。 */
+function toWasmRgbaBytes(data: Uint8ClampedArray | Uint8Array): number[] {
+  return Array.from(data);
+}
+
+/** 将 TexImageSource 转为 RGBA；支持 ImageBitmap、HTMLImageElement 等。 */
+type ImageRgbaData = { width: number; height: number; data: Uint8Array };
+
+/** 已上传至 WASM `IMAGE_BRUSH_CACHE`（按 URL）；拖拽时不再传 `imageData`。 */
+const velloImageUploadedToWasm = new Set<string>();
+
+function velloImageWasmUploadKey(url: string, width: number, height: number): string {
+  return `${url}|${width}x${height}`;
+}
+
+const velloImageRgbaBySource = new WeakMap<object, ImageRgbaData>();
+
+function readVelloImageRgba(src: TexImageSource): ImageRgbaData | null {
+  const key = src as unknown as object;
+  const cached = velloImageRgbaBySource.get(key);
+  if (cached) {
+    return cached;
+  }
+  const data = imageToRgba(src);
+  if (data) {
+    velloImageRgbaBySource.set(key, data);
+  }
+  return data;
+}
+
+function pushVelloWasmImageFill(
+  out: Record<string, unknown>[],
+  url: string,
+  imageData: ImageRgbaData,
+  geomW: number,
+  geomH: number,
+  objectFit: string,
+  objectPosition: string | undefined,
+  layerAlpha: number,
+) {
+  const pixels = imageData.data;
+  const uploadKey = velloImageWasmUploadKey(
+    url,
+    imageData.width,
+    imageData.height,
+  );
+  const payload: Record<string, unknown> = {
+    kind: 'image',
+    imageRef: url,
+    imageWidth: imageData.width,
+    imageHeight: imageData.height,
+    layerAlpha,
+  };
+  if (!velloImageUploadedToWasm.has(uploadKey)) {
+    payload.imageData = toWasmRgbaBytes(pixels);
+    velloImageUploadedToWasm.add(uploadKey);
+  }
+  if (objectFit !== 'fill') {
+    const r = computeObjectFitDrawRect(
+      imageData.width,
+      imageData.height,
+      geomW,
+      geomH,
+      objectFit as 'contain' | 'cover' | 'none' | 'scale-down' | 'fill',
+      objectPosition,
+    );
+    payload.fitDrawRect = {
+      dx: r.dx,
+      dy: r.dy,
+      dw: r.dw,
+      dh: r.dh,
+    };
+  }
+  out.push(payload);
+}
+
 /** 与 Rust `WasmFillPaint` 对齐（`kind`：solid | gradient | image）。 */
 function buildVelloWasmFills(
+  api: API | undefined,
   entity: Entity,
   min: [number, number],
   width: number,
@@ -261,16 +419,14 @@ function buildVelloWasmFills(
     return [];
   }
   const layers = velloGetEnabledFillLayers(entity);
-  const opacity = entity.has(Opacity) ? entity.read(Opacity).opacity : 1;
-  const fo = entity.has(Opacity) ? entity.read(Opacity).fillOpacity : 1;
   const out: Record<string, unknown>[] = [];
 
   for (const layer of layers) {
-    const lo = velloFillLayerOpacity(layer.opacity);
+    const lo = resolveFillLayerOpacityFromWire(api, entity, layer);
     if (layer.type === 'solid') {
       const rgb = parseColor(layer.value);
       const { r, g, b } = d3.rgb(rgb)?.rgb() ?? d3.rgb(0, 0, 0, 1);
-      const a = (rgb.opacity ?? 1) * lo * fo;
+      const a = (rgb.opacity ?? 1) * lo;
       if (a < 1e-8) continue;
       const rgba: [number, number, number, number] = [
         r / 255,
@@ -282,7 +438,7 @@ function buildVelloWasmFills(
     } else if (layer.type === 'gradient') {
       let grads = buildFillGradients(layer.value, min, width, height);
       if (!grads.length) continue;
-      const aScale = lo * fo;
+      const aScale = lo;
       if (aScale !== 1) {
         grads = grads.map((g) => ({
           ...g,
@@ -299,35 +455,39 @@ function buildVelloWasmFills(
       }
       out.push({ kind: 'gradient', fillGradients: grads });
     } else if (layer.type === 'image') {
-      const { width: tw, height: th } = resolveFillLayerImageRasterPixelSize(
-        layer.value,
+      const rasterOpts = resolveImageFillRasterOptions(api, entity, layer);
+      const objectFit = rasterOpts.objectFit ?? 'fill';
+      const layerAlpha = lo;
+      const url = layer.value;
+      let imageData: ImageRgbaData | null = null;
+      const decoded = getFillLayerDecodedBitmap(url);
+      if (decoded) {
+        imageData = readVelloImageRgba(decoded);
+      } else {
+        const canvas = rasterizeFillLayerImageUrlForTexture(
+          url,
+          width,
+          height,
+          () => safeAddComponent(entity, MaterialDirty),
+          rasterOpts,
+        );
+        if (canvas) {
+          imageData = readVelloImageRgba(canvas as TexImageSource);
+        }
+      }
+      if (!imageData) {
+        continue;
+      }
+      pushVelloWasmImageFill(
+        out,
+        url,
+        imageData,
         width,
         height,
+        objectFit,
+        rasterOpts.objectPosition,
+        layerAlpha,
       );
-      const canvas = rasterizeFillLayerImageUrlForTexture(
-        layer.value,
-        tw,
-        th,
-        () => safeAddComponent(entity, MaterialDirty),
-      );
-      if (!canvas) continue;
-      const imageData = imageToRgba(canvas as TexImageSource);
-      if (!imageData) continue;
-      const scale = lo * fo * opacity;
-      let pixels = imageData.data;
-      if (scale !== 1) {
-        const d = new Uint8Array(imageData.data);
-        for (let i = 3; i < d.length; i += 4) {
-          d[i] = Math.min(255, Math.round(d[i] * scale));
-        }
-        pixels = d;
-      }
-      out.push({
-        kind: 'image',
-        imageWidth: imageData.width,
-        imageHeight: imageData.height,
-        imageData: pixels,
-      });
     }
   }
   return out;
@@ -340,9 +500,6 @@ function roughRepresentativeFillRgba(entity: Entity): [
   number,
   number,
 ] {
-  const fillOpacity = entity.has(Opacity)
-    ? entity.read(Opacity).fillOpacity
-    : 1;
   const opacity = entity.has(Opacity) ? entity.read(Opacity).opacity : 1;
   if (!entity.has(FillLayers)) {
     return [0, 0, 0, 0];
@@ -357,7 +514,7 @@ function roughRepresentativeFillRgba(entity: Entity): [
       }
       const rgb = parseColor(layer.value);
       const { r, g, b } = d3.rgb(rgb)?.rgb() ?? d3.rgb(0, 0, 0, 1);
-      const a = (rgb.opacity ?? 1) * lo * fillOpacity * opacity;
+      const a = (rgb.opacity ?? 1) * lo * opacity;
       if (a < 1e-8) {
         continue;
       }
@@ -368,14 +525,14 @@ function roughRepresentativeFillRgba(entity: Entity): [
       const step0 = parsed?.steps?.[0];
       if (step0) {
         const [rf, gf, bf, af] = colorToRgba(step0.color);
-        const a = af * lo * fillOpacity * opacity;
+        const a = af * lo * opacity;
         if (a >= 1e-8) {
           return [rf, gf, bf, a];
         }
       }
     }
     if (layer.type === 'image') {
-      const a = lo * fillOpacity * opacity;
+      const a = lo * opacity;
       if (a >= 1e-8) {
         return [0.5, 0.5, 0.5, a];
       }
@@ -383,9 +540,6 @@ function roughRepresentativeFillRgba(entity: Entity): [
   }
   return [0, 0, 0, 0];
 }
-
-/** 将 TexImageSource 转为 RGBA；支持 ImageBitmap、HTMLImageElement 等。 */
-type ImageRgbaData = { width: number; height: number; data: Uint8Array };
 
 // `src` 通常是稳定复用的 ImageBitmap/Canvas/OffscreenCanvas 对象；用 WeakMap 避免内存泄漏。
 // 注意：如果 `src` 是可变视频帧，这个缓存可能导致取到的仍是首次转换的帧。
@@ -500,6 +654,12 @@ export class VelloPipeline extends System {
   private fillLayers = this.query(
     (q) => q.addedChangedOrRemoved.with(FillLayers).trackWrites,
   );
+  private strokeLayers = this.query(
+    (q) => q.addedChangedOrRemoved.with(StrokeLayers).trackWrites,
+  );
+  private materialDirty = this.query(
+    (q) => q.addedChangedOrRemoved.with(MaterialDirty).trackWrites,
+  );
   private fillTextures = this.query(
     (q) => q.addedChangedOrRemoved.with(FillTexture).trackWrites,
   );
@@ -588,6 +748,7 @@ export class VelloPipeline extends System {
             ComputedTextMetrics,
             FillLayers,
             FillTexture,
+            StrokeLayers,
             FractionalIndex,
             SizeAttenuation,
             StrokeAttenuation,
@@ -751,38 +912,13 @@ export class VelloPipeline extends System {
       };
 
       if (entity.has(Renderable)) {
-        if (entity.has(Stroke)) {
-          const {
-            width,
-            color,
-            linecap,
-            linejoin,
-            miterlimit,
-            dasharray,
-            dashoffset,
-            alignment,
-          } = entity.read(Stroke);
-          if (width > 0 && color !== 'none') {
-            const { r, g, b, opacity } =
-              d3.rgb(color)?.rgb() ?? d3.rgb(0, 0, 0, 1);
-            baseOpts.stroke = {
-              width,
-              color: [r / 255, g / 255, b / 255, opacity],
-              linecap: linecap ?? 'butt',
-              linejoin: linejoin ?? 'miter',
-              miterLimit: miterlimit ?? 4,
-              dasharray: dasharray ?? [],
-              dashoffset: dashoffset ?? 0,
-              alignment: alignment ?? 'center',
-            };
-          }
+        const strokePaint = resolveVelloStrokePaint(api, entity);
+        if (strokePaint) {
+          baseOpts.stroke = strokePaint;
         }
 
         if (entity.has(Opacity)) {
-          const { opacity, fillOpacity, strokeOpacity } = entity.read(Opacity);
-          baseOpts.opacity = opacity;
-          baseOpts.fillOpacity = fillOpacity;
-          baseOpts.strokeOpacity = strokeOpacity;
+          baseOpts.opacity = entity.read(Opacity).opacity;
         }
 
         if (entity.has(Marker)) {
@@ -830,6 +966,7 @@ export class VelloPipeline extends System {
             ry: r,
           };
           const fills = buildVelloWasmFills(
+            api,
             entity,
             [cx - r, cy - r],
             2 * r,
@@ -872,6 +1009,7 @@ export class VelloPipeline extends System {
           const { cx, cy, rx, ry } = entity.read(Ellipse);
           const opts: Record<string, unknown> = { ...baseOpts, cx, cy, rx, ry };
           const fills = buildVelloWasmFills(
+            api,
             entity,
             [cx - rx, cy - ry],
             2 * rx,
@@ -942,7 +1080,7 @@ export class VelloPipeline extends System {
             fillBlur: fillBlur ?? 0,
             dropShadow: dropShadow ?? undefined,
           };
-          const fills = buildVelloWasmFills(entity, [x, y], width, height);
+          const fills = buildVelloWasmFills(api, entity, [x, y], width, height);
           if (fills.length) opts.fills = fills;
           if (entity.has(Rough)) {
             const {
@@ -986,6 +1124,7 @@ export class VelloPipeline extends System {
               const { minX, minY, maxX, maxY } =
                 entity.read(ComputedBounds).geometryBounds;
               const fills = buildVelloWasmFills(
+                api,
                 entity,
                 [minX, minY],
                 maxX - minX,
@@ -1061,6 +1200,7 @@ export class VelloPipeline extends System {
               const { minX, minY, maxX, maxY } =
                 entity.read(ComputedBounds).geometryBounds;
               const fills = buildVelloWasmFills(
+                api,
                 entity,
                 [minX, minY],
                 maxX - minX,
@@ -1084,12 +1224,10 @@ export class VelloPipeline extends System {
               stampNoiseFactor: brush.stampNoiseFactor,
               stampRotationFactor: brush.stampRotationFactor,
             };
-            if (entity.has(Stroke)) {
-              const { width, color } = entity.read(Stroke);
-              opts.strokeWidth = width;
-              const { r, g, b, opacity } =
-                d3.rgb(color)?.rgb() ?? d3.rgb(0, 0, 0, 1);
-              opts.stroke = [r / 255, g / 255, b / 255, opacity];
+            const strokePaint = resolveVelloStrokePaint(api, entity);
+            if (strokePaint) {
+              opts.strokeWidth = strokePaint.width;
+              opts.stroke = strokePaint.color;
             }
             const stampLayer = velloGetEnabledFillLayers(entity).find(
               (l) => l.type === 'image',
@@ -1101,7 +1239,7 @@ export class VelloPipeline extends System {
                 if (imageData) {
                   opts.imageWidth = imageData.width;
                   opts.imageHeight = imageData.height;
-                  opts.imageData = imageData.data;
+                  opts.imageData = toWasmRgbaBytes(imageData.data);
                 } else {
                   opts.brushStamp = src;
                 }
@@ -1181,7 +1319,7 @@ export class VelloPipeline extends System {
           const fillGeom = Text.getGeometryBounds(text, metrics);
           const fillW = Math.max(0, fillGeom.maxX - fillGeom.minX);
           const fillH = Math.max(0, fillGeom.maxY - fillGeom.minY);
-          const fills = buildVelloWasmFills(entity, [
+          const fills = buildVelloWasmFills(api, entity, [
             fillGeom.minX,
             fillGeom.minY,
           ], fillW, fillH);
@@ -1334,6 +1472,20 @@ export class VelloPipeline extends System {
     });
 
     // Handle some special cases.
+    this.materialDirty.addedChangedOrRemoved.forEach((entity) => {
+      if (!entity.has(Renderable)) {
+        return;
+      }
+      const camera = getSceneRoot(entity);
+      if (!this.pendingRenderables.has(camera)) {
+        this.pendingRenderables.set(camera, []);
+      }
+      this.pendingRenderables.get(camera)!.push({
+        type: 'add',
+        entity,
+      });
+    });
+
     [
       ...this.strokes.addedChangedOrRemoved,
       ...this.markers.addedChangedOrRemoved,
@@ -1381,6 +1533,7 @@ export class VelloPipeline extends System {
           !toRender &&
           (!!this.fillLayers.addedChangedOrRemoved.length ||
             !!this.fillTextures.addedChangedOrRemoved.length ||
+            !!this.strokeLayers.addedChangedOrRemoved.length ||
             !!this.strokes.addedChangedOrRemoved.length ||
             !!this.opacities.addedChangedOrRemoved.length ||
             !!this.innerShadows.addedChangedOrRemoved.length ||
@@ -1393,7 +1546,8 @@ export class VelloPipeline extends System {
             !!this.strokeAttenuations.addedChangedOrRemoved.length ||
             !!this.markers.addedChangedOrRemoved.length ||
             !!this.filters.addedChangedOrRemoved.length ||
-            !!this.clipModes.addedChangedOrRemoved.length)
+            !!this.clipModes.addedChangedOrRemoved.length ||
+            !!this.materialDirty.addedChangedOrRemoved.length)
         ) {
           toRender = true;
         }

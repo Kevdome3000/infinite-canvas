@@ -18,6 +18,7 @@ export * from './hierarchy';
 export * from './renderable';
 export * from './math';
 export * from './geometry';
+export * from './geometry3d';
 export * from './pen';
 export * from './html';
 export * from './animation';

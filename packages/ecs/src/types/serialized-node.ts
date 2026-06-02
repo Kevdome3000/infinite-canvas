@@ -158,6 +158,10 @@ export type SerializedFillLayerItem =
     /** 位图 / SVG 等资源 URL（与历史 `fill` 为 URL 时语义一致） */
     type: 'image';
     value: string;
+    /** CSS `object-fit`；缺省 `fill`（铺满几何框，与历史栅格行为一致） */
+    objectFit?: 'fill' | 'contain' | 'cover' | 'none' | 'scale-down';
+    /** CSS `object-position`；缺省 `50% 50%` */
+    objectPosition?: string;
     opacity?: number | string;
     enabled?: boolean;
     blendMode?: FillLayerBlendMode;
@@ -190,7 +194,7 @@ export interface StrokeAttributes {
    */
   strokes?: SerializedStrokeLayerItem[];
   /** @deprecated 由 migrate 合并入 `strokes` */
-  stroke?: Stroke['color'];
+  stroke?: string;
   strokeWidth: Stroke['width'];
   strokeAlignment: Stroke['alignment'];
   strokeLinecap: Stroke['linecap'];
@@ -201,7 +205,7 @@ export interface StrokeAttributes {
   /** 虚线端帽（Figma）；未写时等价于 `none` */
   strokeDashCap?: Stroke['dashcap'];
   /** @deprecated 由 migrate 合并入 `strokes[].opacity` */
-  strokeOpacity?: Opacity['strokeOpacity'];
+  strokeOpacity?: number;
 }
 
 /** Wider hit target for thin stroked lines / paths (Konva `hitStrokeWidth`). */
@@ -385,6 +389,12 @@ export interface FilterAttributes {
   filter?: string;
 }
 
+/** Spline-style 3D extrusion of a rect layer (canvas x/y/width/height). */
+export interface Extrude3DAttributes {
+  /** `true` uses default depth; number sets depth in canvas world units. */
+  extrude3d?: boolean | number;
+}
+
 export interface GSerializedNode
   extends BaseSerializeNode<'g'>,
   Partial<FillAttributes>,
@@ -410,6 +420,7 @@ export interface RectSerializedNode
   Partial<AttenuationAttributes>,
   Partial<WireframeAttributes>,
   Partial<FilterAttributes>,
+  Partial<Extrude3DAttributes>,
   Partial<BindedAttributes> { }
 
 export interface RoughRectSerializedNode
@@ -490,9 +501,9 @@ export interface BrushAttributes {
   /** 与 {@link StrokeAttributes#strokes} 一致；历史 `stroke` / `strokeOpacity` 由 migrate 合并 */
   strokes?: SerializedStrokeLayerItem[];
   /** @deprecated 由 migrate 合并入 `strokes` */
-  stroke?: Stroke['color'];
+  stroke?: string;
   /** @deprecated 由 migrate 合并入 `strokes[].opacity` */
-  strokeOpacity?: Opacity['strokeOpacity'];
+  strokeOpacity?: number;
 }
 export interface BrushSerializedNode
   extends BaseSerializeNode<'brush'>,

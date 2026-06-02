@@ -7,6 +7,8 @@ import {
   ComputedRough,
   Ellipse,
   FillLayers,
+  StrokeLayers,
+  GeometryDirty,
   FractionalIndex,
   getRoughOptions,
   Line,
@@ -26,6 +28,7 @@ import { getWatercolorFillContoursFromEntity } from '../utils/watercolor-rough';
 import { safeAddComponent } from '../history';
 import { SerializedNode } from '../types/serialized-node';
 import { getFirstSolidFillLayerValue } from '../utils/fillLayers';
+import { resolveGpuStrokeColor } from '../utils/strokeLayers';
 
 /**
  * 重算 {@link ComputedRough}（Rough 线段在仅 {@link Line} 端点变化时不会触发 `Rough` 的 changed）。
@@ -42,8 +45,9 @@ export function refreshComputedRoughForEntity(entity: Entity): void {
   const fill = getFirstSolidFillLayerValue(entity) ?? 'none';
   const strokeComponent = entity.has(Stroke)
     ? entity.read(Stroke)
-    : { color: 'none', width: 0, dasharray: [], dashoffset: 0 };
-  const { color, width, dasharray, dashoffset } = strokeComponent;
+    : { width: 0, dasharray: [0, 0] as [number, number], dashoffset: 0 };
+  const { width, dasharray, dashoffset } = strokeComponent;
+  const color = resolveGpuStrokeColor(entity) ?? 'none';
 
   const roughOptions = getRoughOptions({
     // @ts-ignore
@@ -129,6 +133,7 @@ export function refreshComputedRoughForEntity(entity: Entity): void {
     fillPoints,
     fillPathPoints,
   });
+  safeAddComponent(entity, GeometryDirty);
 }
 
 export class ComputeRough extends System {
@@ -136,14 +141,13 @@ export class ComputeRough extends System {
     (q) =>
       q.addedOrChanged
         .with(Rough)
-        .and.withAny(Circle, Ellipse, Rect, Line, Polyline, Path, FillLayers, Stroke)
+        .and.withAny(Circle, Ellipse, Rect, Line, Polyline, Path, FillLayers, Stroke, StrokeLayers)
         .trackWrites,
   );
 
   constructor() {
     super();
-    this.query((q) => q.current.with(ComputedRough).write);
-    this.query((q) => q.using(Canvas, FractionalIndex, ComputedPoints).read);
+    this.query((q) => q.using(ComputedRough, GeometryDirty).write.and.using(Canvas, FractionalIndex, ComputedPoints).read);
   }
 
   execute() {

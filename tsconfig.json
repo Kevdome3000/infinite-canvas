@@ -21,7 +21,8 @@
     "skipLibCheck": true,
     "baseUrl": "src",
     "resolveJsonModule": true,
-    "downlevelIteration": true
+    "downlevelIteration": true,
+    "noEmit": true
   },
   "include": ["src/**/*"]
 }

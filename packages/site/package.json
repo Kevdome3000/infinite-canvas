@@ -35,6 +35,7 @@
     "@infinite-canvas-tutorial/lasso": "workspace:*",
     "@infinite-canvas-tutorial/lottie": "workspace:*",
     "@infinite-canvas-tutorial/mermaid": "workspace:*",
+    "@infinite-canvas-tutorial/filter": "workspace:*",
     "@infinite-canvas-tutorial/particle": "workspace:*",
     "@infinite-canvas-tutorial/sam": "workspace:*",
     "@infinite-canvas-tutorial/upscaler": "workspace:*",

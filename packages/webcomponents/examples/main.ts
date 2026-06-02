@@ -14,7 +14,6 @@ import {
   PreStartUp,
   ComputeZIndex,
   Screenshot,
-  Canvas,
   Theme,
   Grid,
   Camera,
@@ -43,12 +42,18 @@ import {
   SerializedNode,
   registerCubeLutFromText,
   GPUResource,
+  DefaultRenderer3DPlugin,
+  Camera3D,
+  Mesh3D,
+  Material3D,
+  Transform3D,
 } from '../../ecs';
 import { Event, UIPlugin } from '../src';
 import '../src/spectrum';
 import { LaserPointerPlugin } from '../../plugin-laser-pointer/src';
 import { EraserPlugin } from '../../plugin-eraser/src';
 import { LassoPlugin } from '../../plugin-lasso/src';
+import { FilterPlugin } from '@infinite-canvas-tutorial/filter';
 import { YogaPlugin } from '../../plugin-yoga/src';
 import { loadAnimation } from '../../plugin-lottie/src';
 import { InitVello, VelloPipeline, registerFont } from '../../plugin-vello/src';
@@ -308,17 +313,18 @@ async function openCanvas(id?: string) {
       Task.SHOW_PROPERTIES_PANEL,
     ],
     propertiesPanelSectionsOpen: {
-      fillSection: true,
-      strokeSection: true,
+      fillSection: false,
+      strokeSection: false,
       shape: false,
       transform: false,
       layout: false,
-      flexItem: true,
-      effects: false,
-      multiSelectAlignment: true,
-      multiSelectEffects: true,
+      flexItem: false,
+      effects: true,
+      multiSelectAlignment: false,
+      multiSelectEffects: false,
       exportSection: true,
       iconFont: true,
+      typographySection: true,
     },
     penbarVisible: true,
     taskbarVisible: true,
@@ -345,17 +351,283 @@ async function openCanvas(id?: string) {
     // layersCropping: ['parent-1'],
   });
 
-  fetch('/applecycling.json').then(res => res.json()).then(data => {
-    const animation = loadAnimation(data, {
-      loop: true,
-      autoplay: true,
-    });
+  const nodes = [
+    {
+      id: 'baseline-1',
+      type: 'line',
+      x1: 0,
+      y1: 50,
+      x2: 300,
+      y2: 50,
+      stroke: 'red',
+      strokeWidth: 1,
+      zIndex: 0,
+    },
+    {
+      id: 'text-1',
+      type: 'text',
+      fills: [{ type: 'solid', value: 'black', opacity: 1 }],
+      content: 'Abcdefghijklmnop (top)',
+      anchorX: 50,
+      anchorY: 50,
+      fontSize: 16,
+      fontFamily: 'Gaegu',
+      textBaseline: 'top',
+      textAlign: 'center',
+      zIndex: 1,
+    },
+    {
+      id: 'baseline-2',
+      type: 'line',
+      x1: 0,
+      y1: 100,
+      x2: 300,
+      y2: 100,
+      stroke: 'red',
+      strokeWidth: 1,
+      zIndex: 3,
+    },
+    {
+      id: 'text-2',
+      type: 'text',
+      fills: [{ type: 'solid', value: 'black', opacity: 1 }],
+      content: 'Abcdefghijklmnop (hanging)',
+      anchorX: 50,
+      anchorY: 100,
+      fontSize: 16,
+      fontFamily: 'Gaegu',
+      textBaseline: 'hanging',
+      zIndex: 4,
+    },
+    {
+      id: 'baseline-3',
+      type: 'line',
+      x1: 0,
+      y1: 150,
+      x2: 300,
+      y2: 150,
+      stroke: 'red',
+      strokeWidth: 1,
+      zIndex: 5,
+    },
+    {
+      id: 'text-3',
+      type: 'text',
+      fills: [{ type: 'solid', value: 'black', opacity: 1 }],
+      content: 'Abcdefghijklmnop (middle)',
+      anchorX: 50,
+      anchorY: 150,
+      fontSize: 16,
+      fontFamily: 'Gaegu',
+      textBaseline: 'middle',
+      zIndex: 6,
+    },
+    {
+      id: 'baseline-4',
+      type: 'line',
+      x1: 0,
+      y1: 200,
+      x2: 300,
+      y2: 200,
+      stroke: 'red',
+      strokeWidth: 1,
+      zIndex: 5,
+    },
+    {
+      id: 'text-4',
+      type: 'text',
+      fills: [{ type: 'solid', value: 'black', opacity: 1 }],
+      content: 'Abcdefghijklmnop (alphabetic)',
+      anchorX: 50,
+      anchorY: 200,
+      fontSize: 16,
+      fontFamily: 'Gaegu',
+      textBaseline: 'alphabetic',
+      zIndex: 6,
+    },
+    {
+      id: 'baseline-5',
+      type: 'line',
+      x1: 0,
+      y1: 250,
+      x2: 300,
+      y2: 250,
+      stroke: 'red',
+      strokeWidth: 1,
+      zIndex: 5,
+    },
+    {
+      id: 'text-5',
+      type: 'text',
+      fills: [{ type: 'solid', value: 'black', opacity: 1 }],
+      content: 'Abcdefghijklmnop (ideographic)',
+      anchorX: 50,
+      anchorY: 250,
+      fontSize: 16,
+      fontFamily: 'Gaegu',
+      textBaseline: 'ideographic',
+      zIndex: 6,
+    },
+    {
+      id: 'baseline-6',
+      type: 'line',
+      x1: 0,
+      y1: 300,
+      x2: 300,
+      y2: 300,
+      stroke: 'red',
+      strokeWidth: 1,
+      zIndex: 5,
+    },
+    {
+      id: 'text-6',
+      type: 'text',
+      fills: [{ type: 'solid', value: 'black', opacity: 1 }],
+      content: 'Abcdefghijklmnop (bottom)',
+      anchorX: 50,
+      anchorY: 300,
+      fontSize: 16,
+      fontFamily: 'Gaegu',
+      textBaseline: 'bottom',
+      zIndex: 6,
+    },
+    {
+      id: 'baseline-7',
+      type: 'line',
+      x1: 0,
+      y1: 350,
+      x2: 300,
+      y2: 350,
+      stroke: 'red',
+      strokeWidth: 1,
+      zIndex: 7,
+    },
+    {
+      id: 'text-7',
+      type: 'text',
+      fills: [{ type: 'solid', value: 'black', opacity: 1 }],
+      content: 'Abcdefghijklmnop (bottom)',
+      anchorX: 50,
+      anchorY: 350,
+      fontSize: 16,
+      fontFamily: 'Gaegu',
+      textBaseline: 'bottom',
+      wordWrap: true,
+      wordWrapWidth: 30,
+      maxLines: 3,
+      textOverflow: 'ellipsis',
+      zIndex: 7,
+    },
+    {
+      id: 'text-8',
+      type: 'text',
+      fills: [{ type: 'solid', value: 'black', opacity: 1 }],
+      content: 'سلام ABC גבא DEF 😁🚀',
+      anchorX: 120,
+      anchorY: 350,
+      fontSize: 16,
+      fontFamily: 'Gaegu',
+      textBaseline: 'bottom',
+      zIndex: 7,
+    }
+  ];
 
-    api.runAtNextTick(() => {
-      animation.render(api);
-      animation.play();
-    });
-  });
+  api.updateNodes(nodes);
+
+  function createCubeGeometry(size = 1) {
+    const h = size / 2;
+    const faces: {
+      normal: [number, number, number];
+      verts: [number, number, number][];
+    }[] = [
+        { normal: [0, 0, 1], verts: [[-h, -h, h], [h, -h, h], [h, h, h], [-h, h, h]] },
+        { normal: [0, 0, -1], verts: [[-h, -h, -h], [-h, h, -h], [h, h, -h], [h, -h, -h]] },
+        { normal: [0, 1, 0], verts: [[-h, h, -h], [-h, h, h], [h, h, h], [h, h, -h]] },
+        { normal: [0, -1, 0], verts: [[-h, -h, -h], [h, -h, -h], [h, -h, h], [-h, -h, h]] },
+        { normal: [1, 0, 0], verts: [[h, -h, -h], [h, h, -h], [h, h, h], [h, -h, h]] },
+        { normal: [-1, 0, 0], verts: [[-h, -h, -h], [-h, -h, h], [-h, h, h], [-h, h, -h]] },
+      ];
+
+    const positions: number[] = [];
+    const normals: number[] = [];
+    const indices: number[] = [];
+    let base = 0;
+
+    for (const { normal, verts } of faces) {
+      for (const v of verts) {
+        positions.push(...v);
+        normals.push(...normal);
+      }
+      indices.push(base, base + 1, base + 2, base, base + 2, base + 3);
+      base += 4;
+    }
+
+    return {
+      positions: new Float32Array(positions),
+      normals: new Float32Array(normals),
+      indices: new Uint32Array(indices),
+    };
+  }
+
+  // api.runAtNextTick(() => {
+  //   const { positions, normals, indices } = createCubeGeometry(1);
+  //   const commands = api.getCommands();
+
+  //   // linked + orthographic：与 2D/extrude3d 共用 VP；linked + perspective：跟 2D 平移缩放 + 透视
+  //   commands.spawn(
+  //     new Camera3D({
+  //       linked: true,
+  //       // projection: 'orthographic',
+  //       projection: 'perspective',
+  //       clearColor: false,
+  //     }),
+  //   );
+
+  //   const cubeEntity = commands
+  //     .spawn(
+  //       new Mesh3D({ positions, normals, indices }),
+  //       new Material3D({
+  //         baseColor: [1, 1, 1, 1],
+  //         ambient: 0.25,
+  //         diffuse: 0.75,
+  //         specular: 0.4,
+  //         shininess: 48,
+  //       }),
+  //       new Transform3D({
+  //         translation: [100, 100, 40],
+  //         rotation: [0.3, 0.6, 0],
+  //         scale: [100, 100, 100],
+  //       }),
+  //     )
+  //     .id()
+  //     .hold();
+
+  //   commands.execute();
+
+  //   // 2D 图层：彩色铅笔效果（Lu et al. NPAR 2012 / PencilDrawing 默认参数）
+  //   const colorPencilDemo = {
+  //     id: 'color-pencil-demo',
+  //     type: 'rect',
+  //     width: 480,
+  //     height: 480,
+  //     x: 40,
+  //     y: 40,
+  //     fills: [{ type: 'image', value: '/flower.png', opacity: 1 }],
+  //     lockAspectRatio: true,
+  //     filter: 'color-pencil(2, 1, 8, 1, 1, url("/pencil0.jpg"))',
+  //   };
+  //   api.updateNodes([colorPencilDemo]);
+  //   api.selectNodes([colorPencilDemo]);
+
+  //   const t0 = performance.now();
+  //   const spinCube = (now: number) => {
+  //     const t = (now - t0) / 1000;
+  //     const transform = cubeEntity.write(Transform3D);
+  //     transform.rotation = [0.3 + t * 0.9, 0.6 + t * 1.2, t * 0.5];
+  //     requestAnimationFrame(spinCube);
+  //   };
+  //   requestAnimationFrame(spinCube);
+  // });
   // api.updateNodes([node3]);
   // api.selectNodes([node3]);
 
@@ -422,6 +694,8 @@ renderCanvasList();
 try {
   const app = new App().addPlugins(
     ...DefaultPlugins,
+    DefaultRenderer3DPlugin,
+    FilterPlugin,
     UIPlugin,
     EraserPlugin,
     LaserPointerPlugin,

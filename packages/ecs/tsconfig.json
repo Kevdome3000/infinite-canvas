@@ -1,7 +1,7 @@
 {
   "extends": "../../tsconfig.json",
-  "include": ["src/**/*", "types/**/*.d.ts"],
-  "exclude": ["node_modules"],
+  "include": ["src/**/*.ts", "types/**/*.d.ts"],
+  "exclude": ["node_modules", "src/**/*.js"],
   "compilerOptions": {
     "strict": false,
     "noImplicitAny": false,
@@ -9,6 +9,8 @@
     "exactOptionalPropertyTypes": false,
     "noUncheckedIndexedAccess": false,
     "noPropertyAccessFromIndexSignature": false,
+    "rootDir": "./src",
     "typeRoots": ["./types"]
   }
 }
+

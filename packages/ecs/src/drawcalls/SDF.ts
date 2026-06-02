@@ -42,6 +42,7 @@ import {
 } from '../utils/fillLayers';
 import {
   getFirstGradientStrokeLayerValue,
+  resolveGpuStrokeColor,
   strokePaintAlphaMultipliers,
 } from '../utils/strokeLayers';
 import { composeFillLayerTexturesOnGpu } from '../utils/fillLayerComposeGpu';
@@ -52,6 +53,7 @@ import {
 import { scheduleFillImageSvgRerasterIfNeeded } from '../utils/fillImageSvgReraster';
 import {
   getFillLayerDecodedBitmap,
+  resolveImageFillRasterOptions,
   rasterizeFillLayerImageUrlForTexture,
   resolveFillLayerImageRasterPixelSize,
   transparentFillLayerCanvas,
@@ -212,16 +214,23 @@ export class SDF extends Drawcall {
     height: number,
   ): Texture {
     if (layer.type === 'image') {
+      const rasterOpts = resolveImageFillRasterOptions(
+        this.api,
+        instance,
+        layer,
+      );
       const { width: tw, height: th } = resolveFillLayerImageRasterPixelSize(
         layer.value,
         width,
         height,
+        rasterOpts.objectFit,
       );
       const fromUrl = rasterizeFillLayerImageUrlForTexture(
         layer.value,
         tw,
         th,
         () => safeAddComponent(instance, MaterialDirty),
+        rasterOpts,
       );
       const canvas = fromUrl ?? transparentFillLayerCanvas(tw, th);
       const raw = this.device.createTexture({
@@ -241,6 +250,7 @@ export class SDF extends Drawcall {
         targetH: th,
         sourceW: sw,
         sourceH: sh,
+        rasterOptions: rasterOpts,
       });
       return this.applyRasterFilterChainIfNeeded(instance, raw, tw, th);
     }
@@ -351,6 +361,19 @@ export class SDF extends Drawcall {
       fl1 &&
       JSON.stringify(fl0) !== JSON.stringify(fl1)
     ) {
+      return false;
+    }
+    const node0 = this.api.getNodeByEntity(this.shapes[0]);
+    const node1 = this.api.getNodeByEntity(shape);
+    if (
+      JSON.stringify((node0 as { fills?: unknown })?.fills ?? null) !==
+      JSON.stringify((node1 as { fills?: unknown })?.fills ?? null)
+    ) {
+      return false;
+    }
+    const hasImageFill = (layers: typeof fl0) =>
+      layers?.some((l) => l.type === 'image') ?? false;
+    if (hasImageFill(fl0) || hasImageFill(fl1)) {
       return false;
     }
     if (getMultiFillLayers(shape) && this.instanced) {
@@ -1270,17 +1293,13 @@ export class SDF extends Drawcall {
       fill != null && fill !== '' ? fill : 'transparent',
     );
 
-    const { opacity, strokeOpacity, fillOpacity } = shape.has(Opacity)
-      ? shape.read(Opacity)
-      : { opacity: 1, strokeOpacity: 1, fillOpacity: 1 };
+    const opacity = shape.has(Opacity) ? shape.read(Opacity).opacity : 1;
 
-    const {
-      color: strokeColor,
-      width,
-      alignment,
-    } = shape.has(Stroke)
-        ? shape.read(Stroke)
-        : { color: null, width: 0, alignment: 'center' };
+    const strokeColor = resolveGpuStrokeColor(shape);
+    const width = shape.has(Stroke) ? shape.read(Stroke).width : 0;
+    const alignment = shape.has(Stroke)
+      ? shape.read(Stroke).alignment
+      : 'center';
     const {
       color: innerShadowColor,
       offsetX,
@@ -1294,7 +1313,9 @@ export class SDF extends Drawcall {
           offsetY: 0,
           blurRadius: 0,
         };
-    const { r: sr, g: sg, b: sb, opacity: so } = parseColor(strokeColor);
+    const { r: sr, g: sg, b: sb, opacity: so } = parseColor(
+      strokeColor ?? 'transparent',
+    );
     const { strokeColorAlphaMul, strokeUniformOpacityMul } =
       strokePaintAlphaMultipliers(shape);
     const {
@@ -1388,8 +1409,8 @@ export class SDF extends Drawcall {
       type;
     const u_Opacity = [
       opacity,
-      fillOpacity,
-      strokeOpacity * strokeUniformOpacityMul,
+      1,
+      strokeUniformOpacityMul,
       compressed,
     ];
     const u_InnerShadowColor = [isr / 255, isg / 255, isb / 255, iso];

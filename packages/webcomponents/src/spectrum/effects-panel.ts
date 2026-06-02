@@ -5,47 +5,49 @@ import { consume } from '@lit/context';
 import * as d3 from 'd3-color';
 import {
   AppState,
-  type AsciiEffect,
-  type BurnEffect,
-  type CrtEffect,
-  type DefaultEffectKind,
-  type Effect,
-  type FlutedGlassEffect,
+  parseColor,
+  GPUResource,
+  listRegisteredCubeLutKeys,
+  type SerializedNode,
+} from '@infinite-canvas-tutorial/ecs';
+import {
+  parseEffect,
   formatFilter,
   isSaturateOnlyAdjustment,
   createDefaultEffect,
   BLUR_DEFAULTS,
   HEATMAP_DEFAULTS,
   GEM_SMOKE_DEFAULTS,
-  type GemSmokeEffect,
-  type GlitchEffect,
-  GPUResource,
-  type HalftoneDotsEffect,
-  type HeatmapEffect,
-  type LiquidGlassEffect,
-  type LiquidMetalEffect,
-  listRegisteredCubeLutKeys,
-  parseColor,
-  parseEffect,
-  type SerializedNode,
-  type TsunamiEffect,
-  type RainEffect,
-  type RainCodropsWaterParams,
-  type RainCodropsSimParams,
-  type BlurEffect,
   RAINDROPS_WATER_DEFAULTS,
   RAINDROPS_SIM_DEFAULTS,
   RAINDROP_FX_RENDER_DEFAULTS,
   RAINDROP_FX_COMPOSE_DEFAULTS,
   RAINDROP_FX_SIM_DEFAULTS,
-  type RaindropFxBackgroundWrapMode,
   RAIN_DROPDROP_TEXTURE_DEFAULT,
   isRainFxEffect,
   isRainCodropsRainEffect,
+  type Effect,
+  type DefaultEffectKind,
+  type BurnEffect,
+  type LiquidMetalEffect,
+  type HeatmapEffect,
+  type GemSmokeEffect,
+  type HalftoneDotsEffect,
+  type CrtEffect,
+  type VignetteEffect,
+  type AsciiEffect,
+  type GlitchEffect,
+  type LiquidGlassEffect,
+  type FlutedGlassEffect,
+  type TsunamiEffect,
+  type RainEffect,
+  type RainCodropsWaterParams,
+  type RainCodropsSimParams,
+  type BlurEffect,
+  type RaindropFxBackgroundWrapMode,
   type RainFxParams,
   type RainFxSimParams,
-  VignetteEffect,
-} from '@infinite-canvas-tutorial/ecs';
+} from '@infinite-canvas-tutorial/filter';
 import { apiContext, appStateContext } from '../context';
 import { ExtendedAPI } from '../API';
 import { localized, msg, str } from '@lit/localize';
@@ -189,7 +191,8 @@ function effectKind(
     effect.type === 'blur' ||
     effect.type === 'pixelate' ||
     effect.type === 'dot' ||
-    effect.type === 'colorHalftone'
+    effect.type === 'colorHalftone' ||
+    effect.type === 'colorPencil'
   ) {
     return effect.type;
   }
@@ -489,6 +492,9 @@ export class EffectsPanel extends LitElement {
                   <sp-menu-item value="dot"
                     >${msg(str`Dot screen`)}</sp-menu-item
                   >
+                  <sp-menu-item value="colorPencil"
+                    >${msg(str`Color pencil`)}</sp-menu-item
+                  >
                   <sp-menu-item value="colorHalftone"
                     >${msg(str`Color halftone`)}</sp-menu-item
                   >
@@ -498,14 +504,14 @@ export class EffectsPanel extends LitElement {
                   <sp-menu-item value="flutedGlass"
                     >${msg(str`Fluted glass`)}</sp-menu-item
                   >
-                  <sp-menu-item value="crt">${msg(str`CRT`)}</sp-menu-item>
+                  <sp-menu-item value="crt"
+                    >${msg(str`CRT`)}</sp-menu-item
+                  >
                   <sp-menu-item value="vignette"
                     >${msg(str`Vignette`)}</sp-menu-item
                   >
                   <sp-menu-item value="ascii">${msg(str`ASCII`)}</sp-menu-item>
-                  <sp-menu-item value="glitch"
-                    >${msg(str`Glitch`)}</sp-menu-item
-                  >
+                  <sp-menu-item value="glitch">${msg(str`Glitch`)}</sp-menu-item>
                   <sp-menu-item value="liquidGlass"
                     >${msg(str`Liquid glass`)}</sp-menu-item
                   >
@@ -515,7 +521,9 @@ export class EffectsPanel extends LitElement {
                   <sp-menu-item value="rain"
                     >${msg(str`Rain`)}</sp-menu-item
                   >
-                  <sp-menu-item value="burn">${msg(str`Burn`)}</sp-menu-item>
+                  <sp-menu-item value="burn"
+                    >${msg(str`Burn`)}</sp-menu-item
+                  >
                   <sp-menu-item value="liquidMetal"
                     >${msg(str`Liquid metal`)}</sp-menu-item
                   >
@@ -531,12 +539,12 @@ export class EffectsPanel extends LitElement {
             : html`
                 <span class="hint"
                   >${kind === 'drop-shadow'
-                    ? msg(str`Drop shadow (view only — remove or edit in code)`)
-                    : kind === 'adjustment-full'
-                    ? msg(
-                        str`Color adjustment (view only — remove or edit in code)`,
-                      )
-                    : msg(str`Unsupported effect`)}</span
+            ? msg(str`Drop shadow (view only — remove or edit in code)`)
+            : kind === 'adjustment-full'
+              ? msg(
+                str`Color adjustment (view only — remove or edit in code)`,
+              )
+              : msg(str`Unsupported effect`)}</span
                 >
               `}
           <div class="row-actions">
@@ -590,14 +598,14 @@ export class EffectsPanel extends LitElement {
           .value=${effect.value}
           editable
           @change=${(e: Event & { target: HTMLInputElement }) => {
-            const v = parseFloat(e.target.value);
-            const next = [...this.effects];
-            (next[index] as typeof effect) = {
-              ...effect,
-              value: v,
-            };
-            this.commit(next);
-          }}
+          const v = parseFloat(e.target.value);
+          const next = [...this.effects];
+          (next[index] as typeof effect) = {
+            ...effect,
+            value: v,
+          };
+          this.commit(next);
+        }}
         ></sp-slider>
       `;
     }
@@ -613,11 +621,11 @@ export class EffectsPanel extends LitElement {
           .value=${effect.value}
           editable
           @change=${(e: Event & { target: HTMLInputElement }) => {
-            const v = parseFloat(e.target.value);
-            const next = [...this.effects];
-            (next[index] as typeof effect) = { ...effect, value: v };
-            this.commit(next);
-          }}
+          const v = parseFloat(e.target.value);
+          const next = [...this.effects];
+          (next[index] as typeof effect) = { ...effect, value: v };
+          this.commit(next);
+        }}
         ></sp-slider>
       `;
     }
@@ -668,7 +676,7 @@ export class EffectsPanel extends LitElement {
               ? Math.max(1, Math.min(8, Math.round(v)))
               : quality,
           });
-          }}
+        }}
         ></sp-slider>
         <sp-switch
           size="s"
@@ -691,11 +699,11 @@ export class EffectsPanel extends LitElement {
           .value=${effect.size}
           editable
           @change=${(e: Event & { target: HTMLInputElement }) => {
-            const v = parseFloat(e.target.value);
-            const next = [...this.effects];
-            (next[index] as typeof effect) = { ...effect, size: v };
-            this.commit(next);
-          }}
+          const v = parseFloat(e.target.value);
+          const next = [...this.effects];
+          (next[index] as typeof effect) = { ...effect, size: v };
+          this.commit(next);
+        }}
         ></sp-slider>
       `;
     }
@@ -710,11 +718,11 @@ export class EffectsPanel extends LitElement {
           .value=${effect.scale}
           editable
           @change=${(e: Event & { target: HTMLInputElement }) => {
-            const v = parseFloat(e.target.value);
-            const next = [...this.effects];
-            (next[index] as typeof effect) = { ...effect, scale: v };
-            this.commit(next);
-          }}
+          const v = parseFloat(e.target.value);
+          const next = [...this.effects];
+          (next[index] as typeof effect) = { ...effect, scale: v };
+          this.commit(next);
+        }}
         ></sp-slider>
         <sp-slider
           size="s"
@@ -725,11 +733,11 @@ export class EffectsPanel extends LitElement {
           .value=${effect.angle}
           editable
           @change=${(e: Event & { target: HTMLInputElement }) => {
-            const v = parseFloat(e.target.value);
-            const next = [...this.effects];
-            (next[index] as typeof effect) = { ...effect, angle: v };
-            this.commit(next);
-          }}
+          const v = parseFloat(e.target.value);
+          const next = [...this.effects];
+          (next[index] as typeof effect) = { ...effect, angle: v };
+          this.commit(next);
+        }}
         ></sp-slider>
         <sp-slider
           size="s"
@@ -740,12 +748,91 @@ export class EffectsPanel extends LitElement {
           .value=${effect.grayscale}
           editable
           @change=${(e: Event & { target: HTMLInputElement }) => {
-            const v = parseFloat(e.target.value);
-            const next = [...this.effects];
-            (next[index] as typeof effect) = {
-              ...effect,
-              grayscale: v > 0.5 ? 1 : 0,
-            };
+          const v = parseFloat(e.target.value);
+          const next = [...this.effects];
+          (next[index] as typeof effect) = {
+            ...effect,
+            grayscale: v > 0.5 ? 1 : 0,
+          };
+          this.commit(next);
+        }}
+        ></sp-slider>
+      `;
+    }
+    if (effect.type === 'colorPencil') {
+      return html`
+        <sp-slider
+          size="s"
+          label=${msg(str`Line length (ks)`)}
+          min="2"
+          max="16"
+          step="1"
+          .value=${effect.ks}
+          editable
+          @change=${(e: Event & { target: HTMLInputElement }) => {
+          const v = parseFloat(e.target.value);
+          const next = [...this.effects];
+          (next[index] as typeof effect) = { ...effect, ks: v };
+          this.commit(next);
+        }}
+        ></sp-slider>
+        <sp-slider
+          size="s"
+          label=${msg(str`Stroke width`)}
+          min="0"
+          max="4"
+          step="1"
+          .value=${effect.strokeWidth}
+          editable
+          @change=${(e: Event & { target: HTMLInputElement }) => {
+          const v = parseFloat(e.target.value);
+          const next = [...this.effects];
+          (next[index] as typeof effect) = { ...effect, strokeWidth: v };
+          this.commit(next);
+        }}
+        ></sp-slider>
+        <sp-slider
+          size="s"
+          label=${msg(str`Directions`)}
+          min="2"
+          max="16"
+          step="1"
+          .value=${effect.dirNum}
+          editable
+          @change=${(e: Event & { target: HTMLInputElement }) => {
+          const v = parseFloat(e.target.value);
+          const next = [...this.effects];
+          (next[index] as typeof effect) = { ...effect, dirNum: v };
+          this.commit(next);
+        }}
+        ></sp-slider>
+        <sp-slider
+          size="s"
+          label=${msg(str`Stroke gamma`)}
+          min="0.2"
+          max="3"
+          step="0.05"
+          .value=${effect.gammaS}
+          editable
+          @change=${(e: Event & { target: HTMLInputElement }) => {
+          const v = parseFloat(e.target.value);
+          const next = [...this.effects];
+          (next[index] as typeof effect) = { ...effect, gammaS: v };
+          this.commit(next);
+        }}
+        ></sp-slider>
+        <sp-slider
+          size="s"
+          label=${msg(str`Tone gamma`)}
+          min="0.2"
+          max="3"
+          step="0.05"
+          .value=${effect.gammaI}
+          editable
+          @change=${(e: Event & { target: HTMLInputElement }) => {
+          const v = parseFloat(e.target.value);
+          const next = [...this.effects];
+          (next[index] as typeof effect) = { ...effect, gammaI: v };
             this.commit(next);
           }}
         ></sp-slider>
@@ -882,17 +969,15 @@ export class EffectsPanel extends LitElement {
           size="s"
           ?checked=${h.originalColors !== false}
           @change=${(e: Event & { target: HTMLInputElement }) => {
-            const checked =
-              (e.target as { checked?: boolean }).checked === true;
-            const next = [...this.effects];
-            next[index] = {
-              ...h,
-              originalColors: checked,
-            } as unknown as Effect;
-            this.commit(next);
-          }}
-          >${msg(str`Original colors`)}</sp-switch
-        >
+          const checked = (e.target as { checked?: boolean }).checked === true;
+          const next = [...this.effects];
+          next[index] = {
+            ...h,
+            originalColors: checked,
+          } as unknown as Effect;
+          this.commit(next);
+        }}
+        >${msg(str`Original colors`)}</sp-switch>
       `;
     }
     if (isFlutedGlassEffect(effect)) {
@@ -992,7 +1077,10 @@ export class EffectsPanel extends LitElement {
     }
     if (isTsunamiEffect(effect)) {
       const h = effect as unknown as TsunamiEffect;
-      const num = (key: keyof Omit<TsunamiEffect, 'type'>, v: number) => {
+      const num = (
+        key: keyof Omit<TsunamiEffect, 'type'>,
+        v: number,
+      ) => {
         const next = [...this.effects];
         next[index] = {
           ...h,
@@ -1135,16 +1223,15 @@ export class EffectsPanel extends LitElement {
           size="s"
           ?checked=${h.blend > 0.5}
           @change=${(e: Event & { target: HTMLInputElement }) => {
-            const checked =
-              (e.target as { checked?: boolean }).checked === true;
-            const next = [...this.effects];
-            next[index] = {
-              ...h,
-              blend: checked ? 1 : 0,
-            } as unknown as Effect;
-            this.commit(next);
-          }}
-          >${msg(str`Luminance blend (reflection)`)}
+          const checked = (e.target as { checked?: boolean }).checked === true;
+          const next = [...this.effects];
+          next[index] = {
+            ...h,
+            blend: checked ? 1 : 0,
+          } as unknown as Effect;
+          this.commit(next);
+        }}
+        >${msg(str`Luminance blend (reflection)`)}
         </sp-switch>
       `;
     }

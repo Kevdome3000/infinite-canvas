@@ -57,6 +57,8 @@
 pnpm i
 ```
 
+运行 ECS 单元测试（`pnpm test:ecs`）需要 Node 20 与原生模块 `canvas` / `gl`，详见 [docs/running-ecs-tests.md](./docs/running-ecs-tests.md)。
+
 进入课程目录后，启动 Vite 开发服务器
 
 ```bash
@@ -153,6 +155,7 @@ pnpm run dev
 -   将画布内容导出成 PNG，JPEG 和 SVG 格式的图片
 -   在画布中渲染图片
 -   拓展 SVG 的能力，以 `stroke-alignment` 为例
+-   支持 CSS 中的 `object-fit` 和 `object-position` 让图片以不同策略适应宽高
 
 <img src="./screenshots/lesson10.png" width="300" alt="Lesson 10 - import and export images">
 

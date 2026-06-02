@@ -71,6 +71,12 @@ export {
   resolveFillLayerImageRasterPixelSize,
   getFillLayerDecodedBitmap,
   setFillLayerDecodedBitmapForUrl,
+  fillLayerImageRasterOptions,
+  resolveFillLayerOpacityFromWire,
+  resolveImageFillRasterOptions,
+  computeObjectFitDrawRect,
+  drawCanvasImageWithObjectFit,
+  parseObjectPosition,
   exportMarker,
   toSVG,
   toSVGDataURL,
@@ -180,6 +186,7 @@ export * from './utils/normalize-stroke-wire';
 export * from './utils/design-variables';
 export * from './utils/entity-design-bindings';
 export * from './types/serialized-node';
+export * from './filter';
 export type { EdgeState } from './utils/binding/connection';
 export { TexturePool } from './resources';
 
