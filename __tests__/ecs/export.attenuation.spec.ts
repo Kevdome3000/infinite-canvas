@@ -34,6 +34,7 @@ import {
   SizeAttenuation,
   StrokeAttenuation,
   Opacity,
+  GlobalTransform,
 } from '../../packages/ecs/src';
 import { NodeJSAdapter, sleep } from '../utils';
 
@@ -80,6 +81,7 @@ describe('Export Attenuation', () => {
             DropShadow,
             ZIndex,
             Opacity,
+            GlobalTransform,
           ).write,
       );
 

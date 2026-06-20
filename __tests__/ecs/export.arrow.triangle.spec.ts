@@ -34,6 +34,7 @@ import {
   Polyline,
   Marker,
   Opacity,
+  GlobalTransform,
 } from '../../packages/ecs/src';
 import { NodeJSAdapter, sleep } from '../utils';
 
@@ -80,6 +81,7 @@ describe('Export SVG', () => {
             Polyline,
             Marker,
             Opacity,
+            GlobalTransform,
           ).write,
       );
 

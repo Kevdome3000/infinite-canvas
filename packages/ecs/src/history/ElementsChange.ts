@@ -18,6 +18,16 @@ import {
 import { hasRasterPostEffects } from '../utils/filter';
 import { resolveExtrude3DDepth } from '../utils/extrude3d';
 import {
+  normalizeGeometry,
+  parseLight3DColor,
+  parseMesh3DBaseColor,
+  rebuildMesh3DNodeCompanionGeometry,
+  syncMesh3DNodeCompanionFromSource,
+} from '../utils/mesh3d-node';
+import { requestGltfMeshLoad } from '../utils/gltf/request-gltf-mesh-load';
+import { isEntityAlive } from '../systems/Transform';
+import { AnimationController, Keyframe, AnimationOptions } from '../animation';
+import {
   resolveDesignVariableValue,
   designVariableRefKeyFromWire,
   resolveFillLayerItemsForEcs,
@@ -27,6 +37,8 @@ import type {
   GSerializedNode,
   IconFontSerializedNode,
   SerializedFillLayerItem,
+  Light3DNodeSerializedNode,
+  Mesh3DNodeSerializedNode,
   SerializedNode,
   SerializedNodeAttributes,
   StrokeAttributes,
@@ -46,6 +58,7 @@ import {
   DropShadow,
   Polyline,
   Path,
+  VectorNetwork,
   ZIndex,
   Transform,
   MaterialDirty,
@@ -61,6 +74,7 @@ import {
   Embed,
   Editable,
   Filter,
+  NodeLayerBlendMode,
   Brush,
   Children,
   Parent,
@@ -73,6 +87,9 @@ import {
   IconFont,
   IconFontEllipseStrokeRasterPlaceholder,
   Extrude3D,
+  Light3D,
+  Mesh3DNode,
+  AnimationPlayer,
 } from '../components';
 import { getDescendants } from '../systems';
 import { syncEdgeBindingForEntity } from '../utils/binding/sync-edge-entity';
@@ -1397,6 +1414,28 @@ export const mutateElement = <TElement extends Mutable<SerializedNode>>(
   if ('opacity' in updates) {
     safeAddComponent(entity, Opacity, { opacity });
   }
+  if ('animation' in updates) {
+    const animation = (updates as Record<string, unknown>).animation as
+      | { keyframes: unknown[]; options: unknown }
+      | null
+      | undefined;
+    if (
+      animation &&
+      Array.isArray(animation.keyframes) &&
+      animation.keyframes.length > 0
+    ) {
+      const controller = new AnimationController(
+        animation.keyframes as Keyframe[],
+        animation.options as AnimationOptions,
+      );
+      if (!entity.has(AnimationPlayer)) {
+        entity.add(AnimationPlayer);
+      }
+      entity.write(AnimationPlayer).controller = controller;
+    } else {
+      safeRemoveComponent(entity, AnimationPlayer);
+    }
+  }
   if ('dropShadowColor' in updates) {
     safeAddComponent(entity, DropShadow, {
       color: resolveDesignVariableValue(
@@ -1797,6 +1836,31 @@ export const mutateElement = <TElement extends Mutable<SerializedNode>>(
       entity.write(Path).d = d;
     }
   }
+  if (
+    'vertices' in updates ||
+    'segments' in updates ||
+    'regions' in updates
+  ) {
+    if (entity.has(VectorNetwork)) {
+      const vn = entity.write(VectorNetwork);
+      const vnNode = element as unknown as {
+        vertices?: VectorNetwork['vertices'];
+        segments?: VectorNetwork['segments'];
+        regions?: VectorNetwork['regions'];
+      };
+      if ('vertices' in updates && vnNode.vertices) {
+        vn.vertices = vnNode.vertices;
+      }
+      if ('segments' in updates && vnNode.segments) {
+        vn.segments = vnNode.segments;
+      }
+      if ('regions' in updates) {
+        vn.regions = vnNode.regions;
+      }
+      safeAddComponent(entity, GeometryDirty);
+      safeAddComponent(entity, MaterialDirty);
+    }
+  }
   if ('x1' in updates) {
     entity.write(Line).x1 = x1;
   }
@@ -1866,6 +1930,16 @@ export const mutateElement = <TElement extends Mutable<SerializedNode>>(
     }
   }
 
+  if ('blendMode' in updates) {
+    const mode = (element as SerializedNode).blendMode;
+    if (mode != null && mode !== 'normal') {
+      safeAddComponent(entity, NodeLayerBlendMode, { mode });
+    } else if (entity.has(NodeLayerBlendMode)) {
+      safeRemoveComponent(entity, NodeLayerBlendMode);
+    }
+    safeAddComponent(entity, MaterialDirty);
+  }
+
   if ('extrude3d' in updates && entity.has(Rect)) {
     const depth = resolveExtrude3DDepth(
       (updates as { extrude3d?: boolean | number }).extrude3d,
@@ -1874,6 +1948,121 @@ export const mutateElement = <TElement extends Mutable<SerializedNode>>(
       safeRemoveComponent(entity, Extrude3D);
     } else {
       safeAddComponent(entity, Extrude3D, { depth });
+    }
+  }
+
+  if (elNode.type === 'mesh3d') {
+    const patch = updates as Partial<Mesh3DNodeSerializedNode>;
+    const touchesMesh3DNode =
+      'z' in updates ||
+      'rotation3d' in updates ||
+      'scale3d' in updates ||
+      'material3d' in updates ||
+      'camera3d' in updates ||
+      'geometry' in updates ||
+      'x' in updates ||
+      'y' in updates ||
+      'width' in updates ||
+      'height' in updates;
+    if (touchesMesh3DNode) {
+      const meshNode = entity.write(Mesh3DNode);
+      if ('geometry' in updates && patch.geometry != null) {
+        meshNode.geometry = normalizeGeometry(patch.geometry);
+      }
+      if ('z' in updates && patch.z != null) {
+        meshNode.z = patch.z;
+      }
+      if ('rotation3d' in updates && patch.rotation3d) {
+        meshNode.rotation3d = [...patch.rotation3d];
+      }
+      if ('scale3d' in updates && patch.scale3d != null) {
+        meshNode.scale3d = patch.scale3d;
+      }
+      if ('material3d' in updates && patch.material3d) {
+        const mat = patch.material3d;
+        if (mat.baseColor != null) {
+          meshNode.baseColor = parseMesh3DBaseColor(mat.baseColor);
+        }
+        if (mat.ambient != null) meshNode.ambient = mat.ambient;
+        if (mat.diffuse != null) meshNode.diffuse = mat.diffuse;
+        if (mat.specular != null) meshNode.specular = mat.specular;
+        if (mat.shininess != null) meshNode.shininess = mat.shininess;
+        if (mat.metallic != null) meshNode.metallic = mat.metallic;
+        if (mat.roughness != null) meshNode.roughness = mat.roughness;
+        if ('map' in mat) meshNode.map = mat.map ?? null;
+        if ('specularMap' in mat) {
+          meshNode.specularMap = mat.specularMap ?? null;
+        }
+        if ('bumpMap' in mat) meshNode.bumpMap = mat.bumpMap ?? null;
+        if (mat.bumpScale != null) meshNode.bumpScale = mat.bumpScale;
+      }
+      const meshEntity = meshNode.meshEntity;
+      const needsCompanionSync =
+        meshEntity &&
+        isEntityAlive(meshEntity) &&
+        ('rotation3d' in updates ||
+          'scale3d' in updates ||
+          'z' in updates ||
+          'material3d' in updates ||
+          'geometry' in updates ||
+          'x' in updates ||
+          'y' in updates ||
+          'width' in updates ||
+          'height' in updates);
+      if (needsCompanionSync) {
+        const source = entity;
+        const mesh = meshEntity;
+        const rebuildGeometry = 'geometry' in updates;
+        api.runAtNextTick(() => {
+          if (
+            !isEntityAlive(source) ||
+            !isEntityAlive(mesh) ||
+            !source.has(Mesh3DNode) ||
+            source.read(Mesh3DNode).meshEntity !== mesh
+          ) {
+            return;
+          }
+          if (rebuildGeometry) {
+            rebuildMesh3DNodeCompanionGeometry(source, mesh);
+          }
+          syncMesh3DNodeCompanionFromSource(source, mesh);
+          requestGltfMeshLoad(source);
+        });
+      }
+    }
+  }
+
+  if (elNode.type === 'light3d') {
+    const light = entity.write(Light3D);
+    const patch = updates as Partial<Light3DNodeSerializedNode>;
+    if ('lightType' in updates && patch.lightType) {
+      light.type = patch.lightType;
+    }
+    if ('color' in updates) {
+      light.color = parseLight3DColor(patch.color);
+    }
+    if ('intensity' in updates && patch.intensity != null) {
+      light.intensity = patch.intensity;
+    }
+    if ('direction' in updates && patch.direction) {
+      light.direction = [...patch.direction];
+    }
+    if ('range' in updates && patch.range != null) {
+      light.range = patch.range;
+    }
+    if ('innerConeAngle' in updates && patch.innerConeAngle != null) {
+      light.innerConeAngle = patch.innerConeAngle;
+    }
+    if ('outerConeAngle' in updates && patch.outerConeAngle != null) {
+      light.outerConeAngle = patch.outerConeAngle;
+    }
+    if (('x' in updates || 'y' in updates || 'z' in updates) && entity.has(Transform)) {
+      const t = entity.read(Transform).translation;
+      light.position = [
+        'x' in updates && patch.x != null ? patch.x : t.x,
+        'y' in updates && patch.y != null ? patch.y : t.y,
+        patch.z ?? light.position[2],
+      ];
     }
   }
 

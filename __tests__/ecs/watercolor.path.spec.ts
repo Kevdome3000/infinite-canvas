@@ -32,6 +32,7 @@ import {
   Rough,
   RoughPathSerializedNode,
   Opacity,
+  GlobalTransform,
 } from '../../packages/ecs/src';
 import { NodeJSAdapter, sleep } from '../utils';
 
@@ -74,6 +75,7 @@ describe('Watercolor', () => {
             Name,
             ZIndex,
             Opacity,
+            GlobalTransform,
           ).write,
       );
 

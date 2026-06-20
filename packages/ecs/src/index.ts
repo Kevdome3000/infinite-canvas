@@ -27,6 +27,7 @@ export {
   safeAddComponent,
   safeRemoveComponent,
 } from './history';
+export { requestTransformerRefreshForCanvas } from './utils/pick3d-bridge';
 export {
   svgSvgElementToComputedCamera,
   svgElementsToSerializedNodes,
@@ -179,6 +180,21 @@ export {
   listRegisteredCubeLutKeys,
   parseAdobeCube,
 } from './utils';
+export {
+  serializedNodesToCode,
+  buildCodeIR,
+  emitReactTailwind,
+  emitHtmlCss,
+  type CodeFramework,
+  type CodeVariablesMode,
+  type CodeComponentStructure,
+  type CodegenOptions,
+  type CodeIR,
+  type CodeNode,
+  type CodeComponentDef,
+  type StyleIR,
+  type StyleValue,
+} from './utils/codegen';
 export * from './utils/icon-font';
 export * from './utils/group-presentation';
 export * from './utils/normalize-fill-wire';
@@ -186,6 +202,7 @@ export * from './utils/normalize-stroke-wire';
 export * from './utils/design-variables';
 export * from './utils/entity-design-bindings';
 export * from './types/serialized-node';
+export * from './types/fill-layer-blend';
 export * from './filter';
 export type { EdgeState } from './utils/binding/connection';
 export { TexturePool } from './resources';

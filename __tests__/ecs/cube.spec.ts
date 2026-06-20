@@ -23,6 +23,7 @@ import {
   system,
   API,
   ComputeZIndex,
+  GlobalTransform,
 } from '../../packages/ecs/src';
 import { NodeJSAdapter, sleep } from '../utils';
 import { createCubeGeometry } from './cube-geometry';
@@ -59,6 +60,7 @@ describe('Cube', () => {
             Mesh3D,
             Material3D,
             Transform3D,
+            GlobalTransform,
           ).write,
       );
 

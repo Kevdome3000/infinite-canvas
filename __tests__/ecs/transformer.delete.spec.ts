@@ -37,6 +37,7 @@ import {
   Transformable,
   Highlighted,
   Opacity,
+  GlobalTransform,
 } from '../../packages/ecs/src';
 import { NodeJSAdapter, sleep } from '../utils';
 
@@ -87,6 +88,7 @@ describe('Transformer', () => {
             Transformable,
             Highlighted,
             Opacity,
+            GlobalTransform,
           ).write,
       );
 

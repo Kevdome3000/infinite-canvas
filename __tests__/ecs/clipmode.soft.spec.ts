@@ -33,6 +33,7 @@ import {
   ClipMode,
   RectSerializedNode,
   Opacity,
+  GlobalTransform,
 } from '../../packages/ecs/src';
 import { NodeJSAdapter, sleep } from '../utils';
 
@@ -77,6 +78,7 @@ describe('ClipMode', () => {
             ZIndex,
             ClipMode,
             Opacity,
+            GlobalTransform,
           ).write,
       );
 

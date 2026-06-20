@@ -36,6 +36,7 @@ import {
   Path,
   Opacity,
   ComputedBounds,
+  GlobalTransform,
 } from '../../packages/ecs/src';
 import { decompose } from '../../packages/ecs/src/utils/math';
 import { NodeJSAdapter, sleep } from '../utils';
@@ -105,6 +106,7 @@ describe('Transformer resize with rotation', () => {
           Selected,
           Path,
           Opacity,
+          GlobalTransform,
         ).write,
       );
 

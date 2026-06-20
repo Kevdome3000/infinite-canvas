@@ -33,6 +33,7 @@ import {
   Group,
   GSerializedNode,
   Opacity,
+  GlobalTransform,
 } from '../../packages/ecs/src';
 import { NodeJSAdapter, sleep } from '../utils';
 
@@ -76,6 +77,7 @@ describe('Group', () => {
             ZIndex,
             Group,
             Opacity,
+            GlobalTransform,
           ).write,
       );
 

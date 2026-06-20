@@ -35,6 +35,7 @@ import {
   Binding,
   Flex,
   Opacity,
+  GlobalTransform,
 } from '../../packages/ecs/src';
 import { NodeJSAdapter, sleep, createMouseEvent } from '../utils';
 
@@ -80,6 +81,7 @@ describe('Draw arrow', () => {
             ToBeDeleted,
             Flex,
             Opacity,
+            GlobalTransform,
           ).write,
       );
 

@@ -32,6 +32,7 @@ import {
   VectorNetwork,
   VectorNetworkSerializedNode,
   Opacity,
+  GlobalTransform,
 } from '../../packages/ecs/src';
 import { NodeJSAdapter, sleep } from '../utils';
 
@@ -74,6 +75,7 @@ describe('Rect', () => {
             DropShadow,
             ZIndex,
             Opacity,
+            GlobalTransform,
           ).write,
       );
 

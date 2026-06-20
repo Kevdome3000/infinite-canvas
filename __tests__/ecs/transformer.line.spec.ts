@@ -35,6 +35,7 @@ import {
   Line,
   LineSerializedNode,
   Opacity,
+  GlobalTransform,
 } from '../../packages/ecs/src';
 import { NodeJSAdapter, sleep } from '../utils';
 
@@ -80,6 +81,7 @@ describe('Transformer', () => {
             Polyline,
             Line,
             Opacity,
+            GlobalTransform,
           ).write,
       );
 

@@ -463,10 +463,11 @@ pnpm run dev
 -   参考 Web Animation API 实现声明式 Keyframe 与控制器
 -   实现路径、笔迹、形变等动画效果
 -   支持 Lottie 等格式
+-   动画与时间线面板
 
-|               Morph               |                      Dashoffset animation                       |
-| :-------------------------------: | :-------------------------------------------------------------: |
-| ![morph](./screenshots/morph.gif) | ![animation-dashoffset](./screenshots/animation-dashoffset.gif) |
+|               Morph               |                      Dashoffset animation                       |             Timeline panel              |
+| :-------------------------------: | :-------------------------------------------------------------: | :-------------------------------------: |
+| ![morph](./screenshots/morph.gif) | ![animation-dashoffset](./screenshots/animation-dashoffset.gif) | ![timeline](./screenshots/timeline.png) |
 
 ## 课程 37 - 基于 Radiance Cascades 的 GI [🔗](https://infinitecanvas.cc/zh/guide/lesson-037)
 
@@ -493,6 +494,18 @@ pnpm run dev
 | Iconfont(lucide, material and pixelarticons) |                  Iconfont with filters                   |
 | :------------------------------------------: | :------------------------------------------------------: |
 |   ![iconfont](./screenshots/iconfont.png)    | ![iconfont with filters](./screenshots/liquid-metal.png) |
+
+## 课程 39 - 渲染 3D 图形 [🔗](https://infinitecanvas.cc/zh/guide/lesson-039)
+
+-   独立的 3D 渲染管线
+-   与 2D 画布的相机同步，支持正交和透视投影
+-   使用 Gizmo 为 3D 图形添加平移、旋转交互
+-   基于 raycast 的拾取
+-   光照
+
+|               Gizmo               |               Textured earth               |
+| :-------------------------------: | :----------------------------------------: |
+| ![gizmo](./screenshots/gizmo.gif) | ![textured earth](./screenshots/earth.png) |
 
 [在线体验]: app.infinitecanvas.cc
 [infinitecanvas]: https://infinitecanvas.tools/

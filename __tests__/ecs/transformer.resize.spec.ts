@@ -33,6 +33,7 @@ import {
   Selected,
   Rect,
   Opacity,
+  GlobalTransform,
 } from '../../packages/ecs/src';
 import { NodeJSAdapter, sleep, createMouseEvent } from '../utils';
 
@@ -76,6 +77,7 @@ describe('Transformer', () => {
             Selected,
             Ellipse,
             Opacity,
+            GlobalTransform,
           ).write,
       );
 

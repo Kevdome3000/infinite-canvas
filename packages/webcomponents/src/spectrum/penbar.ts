@@ -471,6 +471,17 @@ export class Penbar extends LitElement {
             `,
       )}
           ${when(
+        penbarAll.includes(Pen.VECTOR_NETWORK),
+        () => html`
+              <sp-action-button value="${Pen.VECTOR_NETWORK}">
+                <sp-icon-annotate-pen slot="icon"></sp-icon-annotate-pen>
+                <sp-tooltip self-managed placement="right">
+                  ${msg(str`Vector pen`)}
+                </sp-tooltip>
+              </sp-action-button>
+            `,
+      )}
+          ${when(
         penbarAll.includes(Pen.BRUSH),
         () => html`
               <overlay-trigger placement="right">

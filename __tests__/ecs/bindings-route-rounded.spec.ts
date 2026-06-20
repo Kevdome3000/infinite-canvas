@@ -36,6 +36,7 @@ import {
   EdgeStyle,
   Path,
   Opacity,
+  GlobalTransform,
 } from '../../packages/ecs/src';
 import { NodeJSAdapter, sleep } from '../utils';
 
@@ -82,6 +83,7 @@ describe('Bindings', () => {
             Path,
             Marker,
             Opacity,
+            GlobalTransform,
           ).write,
       );
 

@@ -34,6 +34,7 @@ import {
   Rect,
   Locked,
   Opacity,
+  GlobalTransform,
 } from '../../packages/ecs/src';
 import { NodeJSAdapter, sleep, createMouseEvent } from '../utils';
 
@@ -78,6 +79,7 @@ describe('Locked', () => {
             Ellipse,
             Locked,
             Opacity,
+            GlobalTransform,
           ).write,
       );
 

@@ -30,6 +30,12 @@ export enum Pen {
   LASER_POINTER = 'laser-pointer',
 }
 
+export enum VectorNetworkEditMode {
+  MOVE = 'move',
+  BEND = 'bend',
+  CUT = 'cut',
+}
+
 export class Canvas {
   /**
    * The canvas element. Pass in HTMLCanvasElement in the browser environment, OffscreenCanvas in the WebWorker environment,

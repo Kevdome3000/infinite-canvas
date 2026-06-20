@@ -30,6 +30,7 @@ import {
   ComputeZIndex,
   Pen,
   Opacity,
+  GlobalTransform,
 } from '../../packages/ecs/src';
 import { NodeJSAdapter, sleep, createMouseEvent } from '../utils';
 
@@ -70,6 +71,7 @@ describe('Draw pentagon', () => {
             Name,
             ZIndex,
             Opacity,
+            GlobalTransform,
           ).write,
       );
 

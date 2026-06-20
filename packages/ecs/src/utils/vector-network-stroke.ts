@@ -360,8 +360,8 @@ export function vectorNetworkToFlatStrokePointsWithMeta(
       const piece = tessellateOrientedWithVertexIds(
         vertices,
         segments[next.seg],
-        current,
         next.other,
+        current,
       );
       prependWithoutDuplicateJoinWithVertexIds(
         chain,

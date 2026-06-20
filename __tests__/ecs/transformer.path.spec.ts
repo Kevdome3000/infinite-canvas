@@ -34,6 +34,7 @@ import {
   PathSerializedNode,
   Path,
   Opacity,
+  GlobalTransform,
 } from '../../packages/ecs/src';
 import { NodeJSAdapter, sleep } from '../utils';
 
@@ -78,6 +79,7 @@ describe('Transformer', () => {
             Selected,
             Path,
             Opacity,
+            GlobalTransform,
           ).write,
       );
 

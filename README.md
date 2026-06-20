@@ -460,10 +460,11 @@ If you want to use it in your own project, you can refer to:
 -   How to implement declarative keyframes and controllers aligned with the Web Animations API
 -   How to implement path, stroke, and morphing effects
 -   How formats like Lottie fit in
+-   Timeline panel
 
-|               Morph               |                      Dashoffset animation                       |
-| :-------------------------------: | :-------------------------------------------------------------: |
-| ![morph](./screenshots/morph.gif) | ![animation-dashoffset](./screenshots/animation-dashoffset.gif) |
+|               Morph               |                      Dashoffset animation                       |             Timeline panel              |
+| :-------------------------------: | :-------------------------------------------------------------: | :-------------------------------------: |
+| ![morph](./screenshots/morph.gif) | ![animation-dashoffset](./screenshots/animation-dashoffset.gif) | ![timeline](./screenshots/timeline.png) |
 
 ## Lesson 37 - Global illumination with radiance cascades [🔗](https://infinitecanvas.cc/guide/lesson-037)
 
@@ -490,6 +491,18 @@ If you want to use it in your own project, you can refer to:
 | Iconfont(lucide, material and pixelarticons) |                  Iconfont with filters                   |
 | :------------------------------------------: | :------------------------------------------------------: |
 |   ![iconfont](./screenshots/iconfont.png)    | ![iconfont with filters](./screenshots/liquid-metal.png) |
+
+## Lesson 39 - 3D mesh rendering [🔗](https://infinitecanvas.cc/guide/lesson-039)
+
+-   3D mesh pipeline
+-   Linked with 2D camera, orthographic and perspective
+-   3D Gizmo
+-   Picking with raycast
+-   Lighting: ambient, spot, directional lights
+
+|               Gizmo               |               Textured earth               |
+| :-------------------------------: | :----------------------------------------: |
+| ![gizmo](./screenshots/gizmo.gif) | ![textured earth](./screenshots/earth.png) |
 
 [Online App]: app.infinitecanvas.cc
 [infinitecanvas]: https://infinitecanvas.tools/

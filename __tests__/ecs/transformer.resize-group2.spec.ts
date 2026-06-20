@@ -35,6 +35,7 @@ import {
   Group,
   GSerializedNode,
   Opacity,
+  GlobalTransform,
 } from '../../packages/ecs/src';
 import { NodeJSAdapter, sleep, createMouseEvent } from '../utils';
 
@@ -79,6 +80,7 @@ describe('Transformer', () => {
             Ellipse,
             Group,
             Opacity,
+            GlobalTransform,
           ).write,
       );
 

@@ -495,10 +495,21 @@ export class Device_GL implements SwapChain, Device {
     height: number,
     platformFramebuffer?: PlatformFramebuffer,
   ): void {
+    const w = Math.max(1, width);
+    const h = Math.max(1, height);
     const texture = this.scTexture as Texture_GL;
-    texture.width = width;
-    texture.height = height;
+    texture.width = w;
+    texture.height = h;
     this.scPlatformFramebuffer = nullify(platformFramebuffer);
+
+    // Keep the canvas backing store in sync with configured swap-chain size.
+    // WebGPU uses configureSwapChain dimensions directly; WebGL default-FB and
+    // MeshPipeline RT sizing read from HTMLCanvasElement.width/height.
+    const canvas = this.gl.canvas as HTMLCanvasElement | OffscreenCanvas;
+    if (canvas && (canvas.width !== w || canvas.height !== h)) {
+      canvas.width = w;
+      canvas.height = h;
+    }
   }
 
   getDevice(): Device {
@@ -1026,10 +1037,7 @@ export class Device_GL implements SwapChain, Device {
       depthStencilResolveTo,
     } = descriptor;
 
-    const skipBlit =
-      colorResolveTo &&
-      colorResolveTo.length === 1 &&
-      colorResolveTo[0] === this.scTexture;
+    const skipBlit = this.computeSkipBlit(colorResolveTo, colorAttachment as (RenderTarget_GL | null)[]);
     this.setRenderPassParametersBegin(colorAttachment.length, skipBlit);
     for (let i = 0; i < colorAttachment.length; i++) {
       this.setRenderPassParametersColor(
@@ -1082,11 +1090,69 @@ export class Device_GL implements SwapChain, Device {
     throw new Error('submitComputeImmediate requires WebGPU');
   }
 
-  submitRenderPassImmediate(
-    _descriptor: RenderPassDescriptor,
-    _draw: (pass: RenderPass) => void,
+  /** Snapshot pass attachment bookkeeping so an immediate offscreen pass cannot leak into the render graph. */
+  private saveRenderPassAttachmentState() {
+    return {
+      descriptor: this.currentRenderPassDescriptor,
+      stack: this.currentRenderPassDescriptorStack.slice(),
+      colorAttachments: this.currentColorAttachments.slice(),
+      colorAttachmentLevels: this.currentColorAttachmentLevels.slice(),
+      colorResolveTos: this.currentColorResolveTos.slice(),
+      colorResolveToLevels: this.currentColorResolveToLevels.slice(),
+      depthStencilAttachment: this.currentDepthStencilAttachment,
+      depthStencilResolveTo: this.currentDepthStencilResolveTo,
+      sampleCount: this.currentSampleCount,
+      resolveColorAttachmentsChanged: this.resolveColorAttachmentsChanged,
+      resolveDepthStencilAttachmentsChanged:
+        this.resolveDepthStencilAttachmentsChanged,
+      currentPassToScreen: this.currentPassToScreen,
+    };
+  }
+
+  private restoreRenderPassAttachmentState(
+    state: ReturnType<Device_GL['saveRenderPassAttachmentState']>,
   ): void {
-    throw new Error('submitRenderPassImmediate requires WebGPU');
+    this.currentRenderPassDescriptor = state.descriptor;
+    this.currentRenderPassDescriptorStack = state.stack.slice();
+    this.currentColorAttachments = state.colorAttachments.slice();
+    this.currentColorAttachmentLevels = state.colorAttachmentLevels.slice();
+    this.currentColorResolveTos = state.colorResolveTos.slice();
+    this.currentColorResolveToLevels = state.colorResolveToLevels.slice();
+    this.currentDepthStencilAttachment = state.depthStencilAttachment;
+    this.currentDepthStencilResolveTo = state.depthStencilResolveTo;
+    this.currentSampleCount = state.sampleCount;
+    this.resolveColorAttachmentsChanged = state.resolveColorAttachmentsChanged;
+    this.resolveDepthStencilAttachmentsChanged =
+      state.resolveDepthStencilAttachmentsChanged;
+    this.currentPassToScreen = state.currentPassToScreen;
+
+    const gl = this.gl;
+    if (isWebGL2(gl)) {
+      gl.bindFramebuffer(GL.DRAW_FRAMEBUFFER, null);
+      gl.bindFramebuffer(GL.READ_FRAMEBUFFER, null);
+    } else {
+      gl.bindFramebuffer(GL.FRAMEBUFFER, null);
+    }
+  }
+
+  submitRenderPassImmediate(
+    descriptor: RenderPassDescriptor,
+    draw: (pass: RenderPass) => void,
+  ): void {
+    const saved = this.saveRenderPassAttachmentState();
+    this.currentRenderPassDescriptor = null;
+    this.currentRenderPassDescriptorStack = [];
+
+    const pass = this.createRenderPass(descriptor);
+    draw(pass);
+    this.submitPass(pass);
+
+    this.restoreRenderPassAttachmentState(saved);
+    // Immediate offscreen passes bind resolve read FBOs; restoring the saved
+    // `resolve*AttachmentsChanged = false` would skip rebind on the next graph
+    // endPass blit (layer-blend backdrop), yielding empty resolve → white screen.
+    this.resolveColorAttachmentsChanged = true;
+    this.resolveDepthStencilAttachmentsChanged = true;
   }
 
   copySubTexture2D(
@@ -1519,11 +1585,15 @@ export class Device_GL implements SwapChain, Device {
     this.currentSampleCount = sampleCount;
   }
 
+  /** True when the active pass draws to the default framebuffer (skipBlit). */
+  private currentPassToScreen = false;
+
   private setRenderPassParametersBegin(
     numColorAttachments: number,
     toScreen = false,
   ): void {
     const gl = this.gl;
+    this.currentPassToScreen = toScreen;
     if (!toScreen) {
       if (isWebGL2(gl)) {
         gl.bindFramebuffer(GL.DRAW_FRAMEBUFFER, this.renderPassDrawFramebuffer);
@@ -1588,7 +1658,14 @@ export class Device_GL implements SwapChain, Device {
         }
       }
     } else {
-      gl.bindFramebuffer(GL.FRAMEBUFFER, null);
+      // Direct-to-screen passes (global filter final pass, or main pass without
+      // filters). Restore default-FB draw buffer state after offscreen passes.
+      if (isWebGL2(gl)) {
+        gl.bindFramebuffer(GL.DRAW_FRAMEBUFFER, null);
+        gl.drawBuffers([GL.BACK]);
+      } else {
+        gl.bindFramebuffer(GL.FRAMEBUFFER, null);
+      }
     }
     this.currentColorAttachments.length = numColorAttachments;
   }
@@ -1604,26 +1681,26 @@ export class Device_GL implements SwapChain, Device {
     const gl = this.gl;
     const gl2 = isWebGL2(gl);
 
+    // Always (re)bind offscreen attachments. skipBlit passes skip binding but still
+    // update currentColorAttachments; a later offscreen pass must not skip bind.
+    if (
+      !skipBlit &&
+      (gl2 || i === 0 || this.WEBGL_draw_buffers)
+    ) {
+      this.bindFramebufferAttachment(
+        gl2 ? GL.DRAW_FRAMEBUFFER : GL.FRAMEBUFFER,
+        (gl2 ? GL.COLOR_ATTACHMENT0 : GL.COLOR_ATTACHMENT0_WEBGL) + i,
+        colorAttachment,
+        attachmentLevel,
+      );
+    }
+
     if (
       this.currentColorAttachments[i] !== colorAttachment ||
       this.currentColorAttachmentLevels[i] !== attachmentLevel
     ) {
       this.currentColorAttachments[i] = colorAttachment;
       this.currentColorAttachmentLevels[i] = attachmentLevel;
-
-      // WebGL1: FBO color 0 is core; WEBGL_draw_buffers is only for MRT.
-      if (
-        !skipBlit &&
-        (gl2 || i === 0 || this.WEBGL_draw_buffers)
-      ) {
-        this.bindFramebufferAttachment(
-          gl2 ? GL.DRAW_FRAMEBUFFER : GL.FRAMEBUFFER,
-          (gl2 ? GL.COLOR_ATTACHMENT0 : GL.COLOR_ATTACHMENT0_WEBGL) + i,
-          colorAttachment,
-          attachmentLevel,
-        );
-      }
-
       this.resolveColorAttachmentsChanged = true;
     }
 
@@ -1647,16 +1724,16 @@ export class Device_GL implements SwapChain, Device {
   ): void {
     const gl = this.gl;
 
+    if (!skipBlit && !this.inBlitRenderPass) {
+      this.bindFramebufferDepthStencilAttachment(
+        isWebGL2(gl) ? GL.DRAW_FRAMEBUFFER : GL.FRAMEBUFFER,
+        depthStencilAttachment as RenderTarget_GL | null,
+      );
+    }
+
     if (this.currentDepthStencilAttachment !== depthStencilAttachment) {
       this.currentDepthStencilAttachment =
         depthStencilAttachment as RenderTarget_GL | null;
-
-      if (!skipBlit && !this.inBlitRenderPass) {
-        this.bindFramebufferDepthStencilAttachment(
-          isWebGL2(gl) ? GL.DRAW_FRAMEBUFFER : GL.FRAMEBUFFER,
-          this.currentDepthStencilAttachment,
-        );
-      }
       this.resolveDepthStencilAttachmentsChanged = true;
     }
 
@@ -1701,8 +1778,13 @@ export class Device_GL implements SwapChain, Device {
     this.setScissorRectEnabled(false);
 
     if (isWebGL2(gl)) {
-      // @see https://developer.mozilla.org/en-US/docs/Web/API/WebGL2RenderingContext/clearBuffer
-      gl.clearBufferfv(gl.COLOR, slot, [r, g, b, a]);
+      if (this.currentPassToScreen) {
+        gl.clearColor(r, g, b, a);
+        gl.clear(gl.COLOR_BUFFER_BIT);
+      } else {
+        // @see https://developer.mozilla.org/en-US/docs/Web/API/WebGL2RenderingContext/clearBuffer
+        gl.clearBufferfv(gl.COLOR, slot, [r, g, b, a]);
+      }
     } else {
       gl.clearColor(r, g, b, a);
       gl.clear(gl.COLOR_BUFFER_BIT);
@@ -1723,7 +1805,12 @@ export class Device_GL implements SwapChain, Device {
         this.currentMegaState.depthWrite = true;
       }
       if (isWebGL2(gl)) {
-        gl.clearBufferfv(gl.DEPTH, 0, [depthClearValue]);
+        if (this.currentPassToScreen) {
+          gl.clearDepth(depthClearValue);
+          gl.clear(gl.DEPTH_BUFFER_BIT);
+        } else {
+          gl.clearBufferfv(gl.DEPTH, 0, [depthClearValue]);
+        }
       } else {
         gl.clearDepth(depthClearValue);
         gl.clear(gl.DEPTH_BUFFER_BIT);
@@ -1737,7 +1824,12 @@ export class Device_GL implements SwapChain, Device {
         this.currentMegaState.stencilWrite = true;
       }
       if (isWebGL2(gl)) {
-        gl.clearBufferiv(gl.STENCIL, 0, [stencilClearValue]);
+        if (this.currentPassToScreen) {
+          gl.clearStencil(stencilClearValue);
+          gl.clear(gl.STENCIL_BUFFER_BIT);
+        } else {
+          gl.clearBufferiv(gl.STENCIL, 0, [stencilClearValue]);
+        }
       } else {
         gl.clearStencil(stencilClearValue);
         gl.clear(gl.STENCIL_BUFFER_BIT);
@@ -2192,6 +2284,11 @@ export class Device_GL implements SwapChain, Device {
   }
 
   private validatePipelineFormats(pipeline: RenderPipeline_GL): void {
+    // submitBlitRenderPass binds its own framebuffer without createRenderPass.
+    if (this.inBlitRenderPass) {
+      return;
+    }
+
     for (let i = 0; i < this.currentColorAttachments.length; i++) {
       const attachment = this.currentColorAttachments[i];
       if (attachment === null) continue;
@@ -2482,13 +2579,65 @@ export class Device_GL implements SwapChain, Device {
     // No need to do anything; it will be forced to compile when used naturally.
   }
 
+  /**
+   * Resolve straight to the swap-chain: draw during exec on the default
+   * framebuffer and skip the endPass blit. Required when antialias is enabled
+   * because the canvas backbuffer is multisampled and cannot be a blit target.
+   *
+   * Single color RT passes that resolve to the swap chain should keep
+   * `skipBlit` so WebGL1 / headless-gl draw directly to the canvas instead of
+   * {@link submitBlitRenderPass} (GLES3-only blit shaders). Intermediate passes
+   * that do not resolve to the swap chain still blit/store via offscreen FBOs.
+   *
+   * MRT passes ({@link colorAttachment} length > 1) must blit when resolving to
+   * the swap chain.
+   */
+  private computeSkipBlit(
+    colorResolveTo: (Texture | null)[],
+    colorAttachment: (RenderTarget_GL | null)[],
+  ): boolean {
+    const resolvesToScreen =
+      colorResolveTo.length === 1 && colorResolveTo[0] === this.scTexture;
+    if (!resolvesToScreen) {
+      return false;
+    }
+    const offscreenColorAttachmentCount = colorAttachment.filter(
+      (a) => a !== null,
+    ).length;
+    return offscreenColorAttachmentCount <= 1;
+  }
+
+  /**
+   * `glBlitFramebuffer` cannot resolve to the default multisampled canvas FBO
+   * ({@link contextAttributes.antialias}) or from multisampled attachments.
+   */
+  private shouldUseShaderColorBlit(
+    resolveFrom: RenderTarget_GL,
+    resolveTo: Texture_GL | null,
+  ): boolean {
+    if (resolveTo === null) {
+      return false;
+    }
+    if (!isWebGL2(this.gl)) {
+      return true;
+    }
+    if (resolveTo === this.scTexture && this.contextAttributes.antialias) {
+      return true;
+    }
+    if (resolveFrom.sampleCount > 1) {
+      return true;
+    }
+    return false;
+  }
+
   private endPass(): void {
     const gl = this.gl;
     const gl2 = isWebGL2(gl);
 
-    const skipBlit =
-      this.currentColorResolveTos.length === 1 &&
-      this.currentColorResolveTos[0] === this.scTexture;
+    const skipBlit = this.computeSkipBlit(
+      this.currentColorResolveTos,
+      this.currentColorAttachments,
+    );
 
     let didUnbindDraw = false;
 
@@ -2508,7 +2657,12 @@ export class Device_GL implements SwapChain, Device {
 
           this.setScissorRectEnabled(false);
 
-          if (!skipBlit) {
+          const useShaderBlit = this.shouldUseShaderColorBlit(
+            colorResolveFrom,
+            colorResolveTo,
+          );
+
+          if (!skipBlit && !useShaderBlit) {
             if (gl2) {
               gl.bindFramebuffer(
                 gl.READ_FRAMEBUFFER,
@@ -2528,7 +2682,7 @@ export class Device_GL implements SwapChain, Device {
           }
           didBindRead = true;
 
-          if (!skipBlit) {
+          if (!skipBlit && !useShaderBlit) {
             // Special case: Blitting to the on-screen.
             if (colorResolveTo === this.scTexture) {
               gl.bindFramebuffer(
@@ -2552,7 +2706,9 @@ export class Device_GL implements SwapChain, Device {
           }
 
           if (!skipBlit) {
-            if (gl2) {
+            if (useShaderBlit) {
+              this.submitBlitRenderPass(colorResolveFrom, colorResolveTo);
+            } else if (gl2) {
               gl.blitFramebuffer(
                 0,
                 0,
@@ -2567,7 +2723,6 @@ export class Device_GL implements SwapChain, Device {
               );
               gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, null);
             } else {
-              // need an extra render pass in WebGL1
               this.submitBlitRenderPass(colorResolveFrom, colorResolveTo);
             }
           }
@@ -2745,6 +2900,8 @@ export class Device_GL implements SwapChain, Device {
     resolveFrom: RenderTarget_GL,
     resolveTo: Texture_GL,
   ) {
+    const gl = this.gl;
+
     if (!this.blitRenderPipeline) {
       this.blitProgram = this.createProgram({
         vertex: {
@@ -2798,51 +2955,61 @@ void main() {
         inputLayout: this.blitInputLayout,
         megaStateDescriptor: copyMegaState(defaultMegaState),
       });
-
-      this.blitBindings = this.createBindings({
-        samplerBindings: [
-          {
-            sampler: null,
-            texture: resolveFrom.texture,
-          },
-        ],
-        uniformBufferBindings: [],
-      });
-
-      this.blitProgram.setUniformsLegacy({
-        u_Texture: resolveFrom,
-      });
     }
 
-    // save currentRenderPassDescriptor since we're already in a render pass
-    const currentRenderPassDescriptor = this.currentRenderPassDescriptor;
-    this.currentRenderPassDescriptor = null;
+    assert(resolveFrom.texture !== null);
 
-    this.inBlitRenderPass = true;
-
-    const blitRenderPass = this.createRenderPass({
-      colorAttachment: [resolveFrom],
-      colorResolveTo: [resolveTo],
-      colorClearColor: [TransparentWhite],
+    if (this.blitBindings) {
+      this.blitBindings.destroy();
+    }
+    this.blitBindings = this.createBindings({
+      samplerBindings: [
+        {
+          sampler: null,
+          texture: resolveFrom.texture,
+        },
+      ],
+      uniformBufferBindings: [],
+    });
+    this.blitProgram.setUniformsLegacy({
+      u_Texture: resolveFrom.texture,
     });
 
-    const { width, height } = this.getCanvas() as HTMLCanvasElement;
-    blitRenderPass.setPipeline(this.blitRenderPipeline);
-    blitRenderPass.setBindings(this.blitBindings);
-    blitRenderPass.setVertexInput(
+    const currentRenderPassDescriptor = this.currentRenderPassDescriptor;
+    this.currentRenderPassDescriptor = null;
+    this.inBlitRenderPass = true;
+
+    // Render *to* resolveTo while sampling resolveFrom. Binding resolveFrom as
+    // the draw attachment would form a WebGL feedback loop.
+    if (resolveTo === this.scTexture) {
+      gl.bindFramebuffer(GL.FRAMEBUFFER, this.scPlatformFramebuffer);
+    } else {
+      gl.bindFramebuffer(GL.FRAMEBUFFER, this.resolveColorDrawFramebuffer);
+      gl.framebufferTexture2D(
+        GL.FRAMEBUFFER,
+        GL.COLOR_ATTACHMENT0,
+        GL.TEXTURE_2D,
+        resolveTo.gl_texture,
+        0,
+      );
+    }
+
+    this.setScissorRectEnabled(false);
+    this.setViewport(0, 0, resolveTo.width, resolveTo.height);
+    this.setPipeline(this.blitRenderPipeline);
+    this.setBindings(this.blitBindings);
+    this.setVertexInput(
       this.blitInputLayout,
       [{ buffer: this.blitVertexBuffer }],
       null,
     );
-    blitRenderPass.setViewport(0, 0, width, height);
 
-    // disable blending for blit
-    this.gl.disable(this.gl.BLEND);
-    blitRenderPass.draw(3, 0);
-    this.gl.enable(this.gl.BLEND);
+    gl.disable(gl.BLEND);
+    this.draw(3, 0);
+    gl.enable(gl.BLEND);
 
-    // restore
-    this.currentRenderPassDescriptor = currentRenderPassDescriptor;
+    gl.bindFramebuffer(GL.FRAMEBUFFER, null);
     this.inBlitRenderPass = false;
+    this.currentRenderPassDescriptor = currentRenderPassDescriptor;
   }
 }

@@ -37,6 +37,7 @@ import {
   EdgeStyle,
   Polyline,
   Opacity,
+  GlobalTransform,
 } from '../../packages/ecs/src';
 import { NodeJSAdapter, sleep } from '../utils';
 
@@ -83,6 +84,7 @@ describe('Bindings', () => {
             Polyline,
             Marker,
             Opacity,
+            GlobalTransform,
           ).write,
       );
 

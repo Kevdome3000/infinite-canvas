@@ -21,6 +21,7 @@ import {
   Parent,
   Path,
   Pen,
+  VectorNetworkEditMode,
   Polyline,
   RBush,
   Rect,
@@ -67,7 +68,28 @@ import {
   Filter,
   IconFontEllipseStrokeRasterPlaceholder,
   DEFAULT_THEME_COLORS,
+  Camera3D,
+  Canvas3DScope,
+  Extrude3D,
+  Light3D,
+  Mesh3D,
+  Mesh3DNode,
+  Mesh3DNodeTarget,
+  Material3D,
+  Transform3D,
+  Selected3D,
 } from '../components';
+import { is3DGizmoDragging } from '../utils/pick3d-bridge';
+import { entityIsDeclarative3DNode } from '../utils/mesh3d-node';
+import {
+  buildPickSceneForViewport,
+  probePick3DAtViewport,
+} from '../utils/pick3d-probe';
+import {
+  filterEntitiesForCanvas,
+  findCamera2DForCanvas,
+  findCamera3DForCanvas,
+} from '../utils/canvas3d-scope';
 import { Commands } from '../commands';
 import {
   calculateOffset,
@@ -84,7 +106,9 @@ import {
   snapToGrid,
 } from '../utils';
 import { API } from '../API';
-import { getOBB, hitTest } from './RenderTransformer';
+import { getOBB, hitTest, findHoveredVectorNetworkSegmentIndex, findSnapTargetVertexIndex } from './RenderTransformer';
+import { requestTransformerRefreshForCanvas } from '../utils/pick3d-bridge';
+import { splitSegmentAt, deleteVertex, breakVertex, mergeVertices } from '../utils/vector-network-topology';
 import { updateGlobalTransform } from './Transform';
 import { safeAddComponent } from '../history';
 import { updateComputedPoints } from './ComputePoints';
@@ -128,6 +152,14 @@ export interface SelectOBB {
   resizingAnchorName: AnchorName;
   activeControlPointIndex?: number;
   activeSegmentMidpointIndex?: number;
+  activeSegmentIndex?: number;
+  /** Snapshot for dragging a whole vector-network segment. */
+  segmentDragSnapshot?: {
+    pointerLocal: [number, number];
+    startVertex: [number, number];
+    endVertex: [number, number];
+  };
+  activeTangentHandleIndex?: number;
   nodes: SerializedNode[];
 
   /** Consistent with 'ComputedBounds.selectionOBB' for transformer / resize math */
@@ -245,6 +277,22 @@ export class Select extends System {
 
   private readonly cameras = this.query((q) => q.current.with(Camera).read);
 
+  private readonly cameras3D = this.query((q) => q.current.with(Camera3D).read);
+
+  private readonly canvases = this.query((q) => q.current.with(Canvas).read);
+
+  private readonly cameras2DFor3D = this.query(
+    (q) => q.current.with(Camera, ComputedCamera).read,
+  );
+
+  private readonly meshes3D = this.query(
+    (q) => q.current.with(Mesh3D, Material3D, Transform3D).read,
+  );
+
+  private readonly selected3D = this.query(
+    (q) => q.current.with(Selected3D, Transform3D).read,
+  );
+
   private selections = new Map<number, SelectOBB>();
 
   constructor() {
@@ -315,9 +363,96 @@ export class Select extends System {
             IconFont,
             IconFontEllipseStrokeRasterPlaceholder,
             Filter,
+            Mesh3DNode,
+            Mesh3DNodeTarget,
+            Light3D,
+            Extrude3D,
+            Selected3D,
           ).write,
     );
     this.query((q) => q.using(ComputedCamera, FractionalIndex, RBush).read);
+    this.query((q) =>
+      q.using(Camera3D, Canvas3DScope, Mesh3D, Material3D, Transform3D, Selected3D).read,
+    );
+  }
+
+  /**
+   * Skip 2D marquee when the pointer hits a 3D mesh or gizmo (Pick3D runs later same frame).
+   */
+  private shouldSuppress2DBrushSelection(
+    canvas: Entity,
+    viewportX: number,
+    viewportY: number,
+  ): boolean {
+    if (is3DGizmoDragging()) {
+      return true;
+    }
+    const probe = this.probePick3DAt(canvas, viewportX, viewportY);
+    return probe != null && probe.kind !== 'none';
+  }
+
+  /** Skip 2D move when a 3D gizmo handle is active (axis drag is handled by Pick3D). */
+  private shouldSuppress2DMove(
+    canvas: Entity,
+    viewportX: number,
+    viewportY: number,
+  ): boolean {
+    if (is3DGizmoDragging()) {
+      return true;
+    }
+    const probe = this.probePick3DAt(canvas, viewportX, viewportY);
+    return probe?.kind === 'gizmo';
+  }
+
+  private probePick3DAt(
+    canvas: Entity,
+    viewportX: number,
+    viewportY: number,
+  ) {
+    const canvasCount = this.canvases.current.length || 1;
+    const cameraEntity = findCamera3DForCanvas(
+      this.cameras3D.current,
+      canvas,
+      canvasCount,
+    );
+    if (!cameraEntity) {
+      return null;
+    }
+
+    const camera = cameraEntity.read(Camera3D);
+    const { width, height } = canvas.read(Canvas);
+    if (width <= 0 || height <= 0) {
+      return null;
+    }
+
+    const cam2d = camera.linked
+      ? findCamera2DForCanvas(this.cameras2DFor3D.current, canvas)
+      : undefined;
+    const pickScene = buildPickSceneForViewport(
+      camera,
+      width,
+      height,
+      width,
+      height,
+      cam2d,
+    );
+    if (!pickScene) {
+      return null;
+    }
+
+    return probePick3DAtViewport(
+      viewportX,
+      viewportY,
+      width,
+      height,
+      camera,
+      pickScene,
+      filterEntitiesForCanvas(this.meshes3D.current, canvas, canvasCount),
+      this.selected3D.current.filter(
+        (entity) =>
+          filterEntitiesForCanvas([entity], canvas, canvasCount).length > 0,
+      ),
+    );
   }
 
   private getTopmostEntity(
@@ -482,7 +617,10 @@ export class Select extends System {
 
     const { selecteds } = camera.read(Transformable);
     selecteds.forEach((selected) => {
-      if (!selected.has(Highlighted)) {
+      if (
+        !entityIsDeclarative3DNode(selected) &&
+        !selected.has(Highlighted)
+      ) {
         selected.add(Highlighted);
       }
     });
@@ -1085,6 +1223,33 @@ export class Select extends System {
     const camera = api.getCamera();
     camera.write(Transformable).status = TransformableStatus.MOVING;
 
+    if (
+      selection.activeTangentHandleIndex !== undefined &&
+      selection.activeTangentHandleIndex >= 0
+    ) {
+      this.handleVectorNetworkTangentMoving(
+        api,
+        canvasX,
+        canvasY,
+        selection,
+      );
+      return;
+    }
+
+    if (
+      selection.activeSegmentIndex !== undefined &&
+      selection.activeSegmentIndex >= 0 &&
+      selection.segmentDragSnapshot
+    ) {
+      this.handleVectorNetworkSegmentMoving(
+        api,
+        canvasX,
+        canvasY,
+        selection,
+      );
+      return;
+    }
+
     const activeControlPointIndex = selection.activeControlPointIndex;
     if (activeControlPointIndex === undefined || activeControlPointIndex < 0) {
       return;
@@ -1096,12 +1261,83 @@ export class Select extends System {
     }
 
     const node = api.getNodeById(layersSelected[0]);
+    if (!node) {
+      return;
+    }
+
+    const editMode = api.getAppState().vectorNetworkEditMode;
+
+    // Vector network editing: drag a vertex and let every segment that shares
+    // it follow. Writes go through updateNodeVectorNetwork so the geometry
+    // re-normalizes (node.x === geometry left) and history records the change.
+    if (node.type === 'vector-network') {
+      if (editMode !== VectorNetworkEditMode.MOVE) {
+        return;
+      }
+      const selectedVN = api.getEntity(node);
+      if (!selectedVN?.has(VectorNetwork)) {
+        return;
+      }
+      const vnMatrix = selectedVN.read(GlobalTransform)
+        .matrix as unknown as mat3;
+      const inverseVN = mat3.invert(mat3.create(), vnMatrix);
+      if (!inverseVN) {
+        return;
+      }
+      const localVN = vec2.transformMat3(
+        vec2.create(),
+        [canvasX, canvasY],
+        inverseVN,
+      );
+      const vn = selectedVN.read(VectorNetwork);
+      const vertices = vn.vertices.map((v) => ({ ...v }));
+      const segments = vn.segments.map((s) => ({
+        ...s,
+        tangentStart: s.tangentStart ? { ...s.tangentStart } : undefined,
+        tangentEnd: s.tangentEnd ? { ...s.tangentEnd } : undefined,
+      }));
+      const regions = vn.regions?.map((r) => ({
+        fillRule: r.fillRule,
+        loops: r.loops.map((loop) => [...loop]),
+      }));
+      if (activeControlPointIndex >= vertices.length) {
+        return;
+      }
+      const snapTargetIndex = findSnapTargetVertexIndex(
+        api,
+        vertices,
+        vnMatrix,
+        activeControlPointIndex,
+        canvasX,
+        canvasY,
+      );
+      const nextX =
+        snapTargetIndex >= 0 ? vertices[snapTargetIndex].x : localVN[0];
+      const nextY =
+        snapTargetIndex >= 0 ? vertices[snapTargetIndex].y : localVN[1];
+      const prev = vertices[activeControlPointIndex];
+      if (prev.x === nextX && prev.y === nextY) {
+        return;
+      }
+      const nextVertices = vertices.map((v, i) =>
+        i === activeControlPointIndex
+          ? { ...v, x: nextX, y: nextY }
+          : { ...v },
+      );
+      api.updateNodeVectorNetwork(node, {
+        vertices: nextVertices,
+        segments,
+        regions,
+      } as VectorNetwork);
+      updateGlobalTransform(selectedVN);
+      return;
+    }
+
     if (
-      !node ||
-      (node.type !== 'polyline' &&
-        node.type !== 'rough-polyline' &&
-        node.type !== 'path' &&
-        node.type !== 'rough-path')
+      node.type !== 'polyline' &&
+      node.type !== 'rough-polyline' &&
+      node.type !== 'path' &&
+      node.type !== 'rough-path'
     ) {
       return;
     }
@@ -1212,6 +1448,8 @@ export class Select extends System {
 
     const camera = api.getCamera();
 
+    this.mergeSnappedVectorNetworkVertexIfNeeded(api, selection);
+
     api.setNodes(api.getNodes());
     api.record();
 
@@ -1228,6 +1466,337 @@ export class Select extends System {
 
     camera.write(Transformable).status = TransformableStatus.MOVED;
     this.saveSelectedOBB(api, selection);
+  }
+
+  private mergeSnappedVectorNetworkVertexIfNeeded(
+    api: API,
+    selection: SelectOBB,
+  ) {
+    const activeControlPointIndex = selection.activeControlPointIndex;
+    if (activeControlPointIndex === undefined || activeControlPointIndex < 0) {
+      return;
+    }
+    if (
+      selection.activeTangentHandleIndex !== undefined &&
+      selection.activeTangentHandleIndex >= 0
+    ) {
+      return;
+    }
+    if (
+      selection.activeSegmentIndex !== undefined &&
+      selection.activeSegmentIndex >= 0
+    ) {
+      return;
+    }
+    if (api.getAppState().vectorNetworkEditMode !== VectorNetworkEditMode.MOVE) {
+      return;
+    }
+
+    const layersSelected = api.getAppState().layersSelected;
+    if (layersSelected.length !== 1) {
+      return;
+    }
+
+    const node = api.getNodeById(layersSelected[0]);
+    if (!node || node.type !== 'vector-network') {
+      return;
+    }
+
+    const selected = api.getEntity(node);
+    if (!selected?.has(VectorNetwork)) {
+      return;
+    }
+
+    const { x: canvasX, y: canvasY } = api.viewport2Canvas({
+      x: selection.pointerMoveViewportX,
+      y: selection.pointerMoveViewportY,
+    });
+    const vnMatrix = selected.read(GlobalTransform).matrix as unknown as mat3;
+    const vn = selected.read(VectorNetwork);
+    const snapTargetIndex = findSnapTargetVertexIndex(
+      api,
+      vn.vertices,
+      vnMatrix,
+      activeControlPointIndex,
+      canvasX,
+      canvasY,
+    );
+    if (snapTargetIndex < 0) {
+      return;
+    }
+
+    const network = {
+      vertices: vn.vertices.map((v) => ({ ...v })),
+      segments: vn.segments.map((s) => ({
+        ...s,
+        tangentStart: s.tangentStart ? { ...s.tangentStart } : undefined,
+        tangentEnd: s.tangentEnd ? { ...s.tangentEnd } : undefined,
+      })),
+      regions: vn.regions?.map((r) => ({
+        fillRule: r.fillRule,
+        loops: r.loops.map((loop) => [...loop]),
+      })),
+    };
+    const result = mergeVertices(
+      network,
+      activeControlPointIndex,
+      snapTargetIndex,
+    );
+    if (!result) {
+      return;
+    }
+
+    api.updateNodeVectorNetwork(node, result as VectorNetwork);
+    const mergedIndex =
+      snapTargetIndex > activeControlPointIndex
+        ? snapTargetIndex - 1
+        : snapTargetIndex;
+    selection.activeControlPointIndex = mergedIndex;
+    this.setVectorNetworkSelectedVertex(
+      api.getCamera(),
+      api.getCanvas(),
+      mergedIndex,
+    );
+    updateGlobalTransform(selected);
+  }
+
+  private handleVectorNetworkSegmentMoving(
+    api: API,
+    canvasX: number,
+    canvasY: number,
+    selection: SelectOBB,
+  ) {
+    const activeSegmentIndex = selection.activeSegmentIndex;
+    const snapshot = selection.segmentDragSnapshot;
+    if (
+      activeSegmentIndex === undefined ||
+      activeSegmentIndex < 0 ||
+      !snapshot
+    ) {
+      return;
+    }
+
+    if (api.getAppState().vectorNetworkEditMode !== VectorNetworkEditMode.MOVE) {
+      return;
+    }
+
+    const layersSelected = api.getAppState().layersSelected;
+    if (layersSelected.length !== 1) {
+      return;
+    }
+
+    const node = api.getNodeById(layersSelected[0]);
+    if (!node || node.type !== 'vector-network') {
+      return;
+    }
+
+    const selected = api.getEntity(node);
+    if (!selected?.has(VectorNetwork)) {
+      return;
+    }
+
+    const inverse = mat3.invert(
+      mat3.create(),
+      selected.read(GlobalTransform).matrix as unknown as mat3,
+    );
+    if (!inverse) {
+      return;
+    }
+
+    const local = vec2.transformMat3(
+      vec2.create(),
+      [canvasX, canvasY],
+      inverse,
+    );
+    const deltaX = local[0] - snapshot.pointerLocal[0];
+    const deltaY = local[1] - snapshot.pointerLocal[1];
+    if (deltaX === 0 && deltaY === 0) {
+      return;
+    }
+
+    const vn = selected.read(VectorNetwork);
+    const seg = vn.segments[activeSegmentIndex];
+    if (!seg) {
+      return;
+    }
+
+    const nextVertices = vn.vertices.map((v, i) => {
+      if (i === seg.start) {
+        return {
+          ...v,
+          x: snapshot.startVertex[0] + deltaX,
+          y: snapshot.startVertex[1] + deltaY,
+        };
+      }
+      if (i === seg.end) {
+        return {
+          ...v,
+          x: snapshot.endVertex[0] + deltaX,
+          y: snapshot.endVertex[1] + deltaY,
+        };
+      }
+      return { ...v };
+    });
+
+    api.updateNodeVectorNetwork(node, {
+      vertices: nextVertices,
+      segments: vn.segments.map((s) => ({ ...s })),
+      regions: vn.regions?.map((r) => ({ ...r })),
+    } as VectorNetwork);
+    updateGlobalTransform(selected);
+  }
+
+  private beginVectorNetworkSegmentDrag(
+    api: API,
+    selection: SelectOBB,
+    canvasX: number,
+    canvasY: number,
+  ) {
+    const activeSegmentIndex = selection.activeSegmentIndex;
+    if (activeSegmentIndex === undefined || activeSegmentIndex < 0) {
+      return;
+    }
+
+    const layersSelected = api.getAppState().layersSelected;
+    if (layersSelected.length !== 1) {
+      return;
+    }
+
+    const node = api.getNodeById(layersSelected[0]);
+    if (!node || node.type !== 'vector-network') {
+      return;
+    }
+
+    const selected = api.getEntity(node);
+    if (!selected?.has(VectorNetwork)) {
+      return;
+    }
+
+    const inverse = mat3.invert(
+      mat3.create(),
+      selected.read(GlobalTransform).matrix as unknown as mat3,
+    );
+    if (!inverse) {
+      return;
+    }
+
+    const local = vec2.transformMat3(
+      vec2.create(),
+      [canvasX, canvasY],
+      inverse,
+    );
+    const vn = selected.read(VectorNetwork);
+    const seg = vn.segments[activeSegmentIndex];
+    if (!seg) {
+      return;
+    }
+
+    const startV = vn.vertices[seg.start];
+    const endV = vn.vertices[seg.end];
+    selection.segmentDragSnapshot = {
+      pointerLocal: [local[0], local[1]],
+      startVertex: [startV.x, startV.y],
+      endVertex: [endV.x, endV.y],
+    };
+  }
+
+  private handleVectorNetworkTangentMoving(
+    api: API,
+    canvasX: number,
+    canvasY: number,
+    selection: SelectOBB,
+  ) {
+    const activeTangentHandleIndex = selection.activeTangentHandleIndex;
+    if (activeTangentHandleIndex === undefined || activeTangentHandleIndex < 0) {
+      return;
+    }
+
+    const layersSelected = api.getAppState().layersSelected;
+    if (layersSelected.length !== 1) {
+      return;
+    }
+
+    const node = api.getNodeById(layersSelected[0]);
+    if (!node || node.type !== 'vector-network') {
+      return;
+    }
+
+    const selected = api.getEntity(node);
+    const camera = api.getCamera();
+    const { vnTangentMeta } = camera.read(Transformable);
+    const meta = vnTangentMeta?.[activeTangentHandleIndex];
+    if (!selected?.has(VectorNetwork) || !meta) {
+      return;
+    }
+
+    const inverse = mat3.invert(
+      mat3.create(),
+      selected.read(GlobalTransform).matrix as unknown as mat3,
+    );
+    if (!inverse) {
+      return;
+    }
+
+    const local = vec2.transformMat3(
+      vec2.create(),
+      [canvasX, canvasY],
+      inverse,
+    );
+    const vn = selected.read(VectorNetwork);
+    const vertices = vn.vertices.map((v) => ({ ...v }));
+    const segments = vn.segments.map((s) => ({
+      ...s,
+      tangentStart: s.tangentStart ? { ...s.tangentStart } : undefined,
+      tangentEnd: s.tangentEnd ? { ...s.tangentEnd } : undefined,
+    }));
+    const seg = segments[meta.segmentIndex];
+    const anchorVertexIndex =
+      meta.end === 'start' ? seg.start : seg.end;
+    const anchor = vertices[anchorVertexIndex];
+    if (!seg || !anchor) {
+      return;
+    }
+
+    const tangent = {
+      x: local[0] - anchor.x,
+      y: local[1] - anchor.y,
+    };
+    if (meta.end === 'start') {
+      seg.tangentStart = tangent;
+    } else {
+      seg.tangentEnd = tangent;
+    }
+
+    api.updateNodeVectorNetwork(node, {
+      vertices,
+      segments,
+      regions: vn.regions?.map((r) => ({
+        fillRule: r.fillRule,
+        loops: r.loops.map((loop) => [...loop]),
+      })),
+    } as VectorNetwork);
+    updateGlobalTransform(selected);
+    requestTransformerRefreshForCanvas(api.getCanvas());
+  }
+
+  private setVectorNetworkSelectedVertex(
+    camera: Entity,
+    canvas: Entity,
+    index: number,
+  ) {
+    const transformable = camera.write(Transformable);
+    if (transformable.selectedControlPointIndex !== index) {
+      transformable.selectedControlPointIndex = index;
+      requestTransformerRefreshForCanvas(canvas);
+    }
+  }
+
+  private clearVectorNetworkSelectedVertex(camera: Entity, canvas: Entity) {
+    const transformable = camera.write(Transformable);
+    if (transformable.selectedControlPointIndex !== -1) {
+      transformable.selectedControlPointIndex = -1;
+      requestTransformerRefreshForCanvas(canvas);
+    }
   }
 
   private insertControlPointFromMidpoint(
@@ -1250,7 +1819,49 @@ export class Select extends System {
     }
 
     const node = api.getNodeById(layersSelected[0]);
-    if (!node || (node.type !== 'polyline' && node.type !== 'rough-polyline')) {
+    if (!node) {
+      return;
+    }
+
+    if (node.type === 'vector-network') {
+      const selected = api.getEntity(node);
+      if (!selected?.has(VectorNetwork)) {
+        return;
+      }
+      const vn = selected.read(VectorNetwork);
+      const network = {
+        vertices: vn.vertices.map((v) => ({ ...v })),
+        segments: vn.segments.map((s) => ({
+          ...s,
+          tangentStart: s.tangentStart ? { ...s.tangentStart } : undefined,
+          tangentEnd: s.tangentEnd ? { ...s.tangentEnd } : undefined,
+        })),
+        regions: vn.regions?.map((r) => ({
+          fillRule: r.fillRule,
+          loops: r.loops.map((loop) => [...loop]),
+        })),
+      };
+      const newVertexIndex = splitSegmentAt(
+        network,
+        activeSegmentMidpointIndex,
+        0.5,
+      );
+      if (newVertexIndex < 0) {
+        return;
+      }
+      api.updateNodeVectorNetwork(node, network as VectorNetwork);
+      updateGlobalTransform(selected);
+      selection.activeControlPointIndex = newVertexIndex;
+      selection.activeSegmentMidpointIndex = undefined;
+      this.setVectorNetworkSelectedVertex(
+        api.getCamera(),
+        api.getCanvas(),
+        newVertexIndex,
+      );
+      return;
+    }
+
+    if (node.type !== 'polyline' && node.type !== 'rough-polyline') {
       return;
     }
 
@@ -1291,6 +1902,65 @@ export class Select extends System {
     selection.activeSegmentMidpointIndex = undefined;
   }
 
+  private breakVectorNetworkAtVertex(
+    api: API,
+    input: Input,
+    selection: SelectOBB,
+    camera: Entity,
+    canvas: Entity,
+  ) {
+    const activeControlPointIndex = selection.activeControlPointIndex;
+    if (activeControlPointIndex === undefined || activeControlPointIndex < 0) {
+      return;
+    }
+
+    const layersSelected = api.getAppState().layersSelected;
+    if (layersSelected.length !== 1) {
+      return;
+    }
+
+    const node = api.getNodeById(layersSelected[0]);
+    if (!node || node.type !== 'vector-network') {
+      return;
+    }
+
+    const selected = api.getEntity(node);
+    if (!selected?.has(VectorNetwork)) {
+      return;
+    }
+
+    const vn = selected.read(VectorNetwork);
+    const network = {
+      vertices: vn.vertices.map((v) => ({ ...v })),
+      segments: vn.segments.map((s) => ({
+        ...s,
+        tangentStart: s.tangentStart ? { ...s.tangentStart } : undefined,
+        tangentEnd: s.tangentEnd ? { ...s.tangentEnd } : undefined,
+      })),
+      regions: vn.regions?.map((r) => ({
+        fillRule: r.fillRule,
+        loops: r.loops.map((loop) => [...loop]),
+      })),
+    };
+    const result = breakVertex(network, activeControlPointIndex);
+    if (result) {
+      input.event?.stopPropagation();
+      api.updateNodeVectorNetwork(node, result as VectorNetwork);
+      updateGlobalTransform(selected);
+      api.record();
+    }
+
+    api.setAppState({ vectorNetworkEditMode: VectorNetworkEditMode.MOVE });
+    selection.activeSegmentMidpointIndex = undefined;
+    selection.activeTangentHandleIndex = undefined;
+    this.setVectorNetworkSelectedVertex(
+      camera,
+      canvas,
+      activeControlPointIndex,
+    );
+    requestTransformerRefreshForCanvas(canvas);
+  }
+
   private deleteActiveControlPoint(api: API, input: Input, selection: SelectOBB) {
     const activeControlPointIndex = selection.activeControlPointIndex;
     if (activeControlPointIndex === undefined || activeControlPointIndex < 0) {
@@ -1303,7 +1973,52 @@ export class Select extends System {
     }
 
     const node = api.getNodeById(layersSelected[0]);
-    if (!node || (node.type !== 'polyline' && node.type !== 'rough-polyline')) {
+    if (!node) {
+      return;
+    }
+
+    if (node.type === 'vector-network') {
+      const selected = api.getEntity(node);
+      if (!selected?.has(VectorNetwork)) {
+        return;
+      }
+      const vn = selected.read(VectorNetwork);
+      if (vn.vertices.length <= 2) {
+        return;
+      }
+      input.event.stopPropagation();
+      const network = {
+        vertices: vn.vertices.map((v) => ({ ...v })),
+        segments: vn.segments.map((s) => ({
+          ...s,
+          tangentStart: s.tangentStart ? { ...s.tangentStart } : undefined,
+          tangentEnd: s.tangentEnd ? { ...s.tangentEnd } : undefined,
+        })),
+        regions: vn.regions?.map((r) => ({
+          fillRule: r.fillRule,
+          loops: r.loops.map((loop) => [...loop]),
+        })),
+      };
+      const result = deleteVertex(network, activeControlPointIndex);
+      api.updateNodeVectorNetwork(node, result as VectorNetwork);
+      updateGlobalTransform(selected);
+      api.record();
+      selection.activeControlPointIndex = Math.min(
+        activeControlPointIndex,
+        result.vertices.length - 1,
+      );
+      selection.activeSegmentMidpointIndex = undefined;
+      selection.activeTangentHandleIndex = undefined;
+      this.setVectorNetworkSelectedVertex(
+        api.getCamera(),
+        api.getCanvas(),
+        selection.activeControlPointIndex,
+      );
+      requestTransformerRefreshForCanvas(api.getCanvas());
+      return;
+    }
+
+    if (node.type !== 'polyline' && node.type !== 'rough-polyline') {
       return;
     }
 
@@ -1415,7 +2130,10 @@ export class Select extends System {
 
     const { selecteds } = camera.read(Transformable);
     selecteds.forEach((selected) => {
-      if (!selected.has(Highlighted)) {
+      if (
+        !entityIsDeclarative3DNode(selected) &&
+        !selected.has(Highlighted)
+      ) {
         selected.add(Highlighted);
       }
     });
@@ -1519,7 +2237,10 @@ export class Select extends System {
 
     const { selecteds } = camera.read(Transformable);
     selecteds.forEach((selected) => {
-      if (!selected.has(Highlighted)) {
+      if (
+        !entityIsDeclarative3DNode(selected) &&
+        !selected.has(Highlighted)
+      ) {
         selected.add(Highlighted);
       }
     });
@@ -1588,6 +2309,8 @@ export class Select extends System {
           }
           return;
         }
+        // Vector-network pen: DrawVectorNetwork handles input; keep current selection.
+        return;
       }
 
       const { layersCropping, layersLassoing } = api.getAppState();
@@ -1610,6 +2333,7 @@ export class Select extends System {
           resizingAnchorName: AnchorName.INSIDE,
           activeControlPointIndex: undefined,
           activeSegmentMidpointIndex: undefined,
+          activeSegmentIndex: undefined,
           controlPointDirty: false,
           nodes: api.getNodes().map((node) => ({
             ...node,
@@ -1655,31 +2379,74 @@ export class Select extends System {
 
       const selection = this.selections.get(camera.__id);
 
+      if (
+        selection.editing?.has(Editable) &&
+        !selection.editing.read(Editable).isEditing
+      ) {
+        selection.editing = undefined;
+      }
+
+      const { selecteds } = camera.read(Transformable);
+      if (
+        selecteds.length === 1 &&
+        selecteds[0].has(VectorNetwork) &&
+        (!selecteds[0].has(Editable) || !selecteds[0].read(Editable).isEditing)
+      ) {
+        const transformable = camera.write(Transformable);
+        let needsRefresh = false;
+        if (transformable.hoveredSegmentIndex !== -1) {
+          transformable.hoveredSegmentIndex = -1;
+          needsRefresh = true;
+        }
+        if (transformable.hoveredControlPointIndex !== -1) {
+          transformable.hoveredControlPointIndex = -1;
+          needsRefresh = true;
+        }
+        if (transformable.selectedControlPointIndex !== -1) {
+          transformable.selectedControlPointIndex = -1;
+          needsRefresh = true;
+        }
+        if (needsRefresh) {
+          requestTransformerRefreshForCanvas(canvas);
+        }
+      }
+
       if (input.doubleClickTrigger && pen === Pen.SELECT) {
-        const { selecteds } = camera.read(Transformable);
         if (selecteds.length === 1) {
           const selected = selecteds[0];
           if (!selected.has(Locked)) {
             const node = api.getNodeByEntity(selected);
             if (
               node &&
-              selected.hasSomeOf(Polyline, Path) &&
-              !(
-                hasFullOrPartialEdgeBinding(selected) &&
-                selected.has(Polyline)
-              )
+              ((selected.hasSomeOf(Polyline, Path) &&
+                !(
+                  hasFullOrPartialEdgeBinding(selected) &&
+                  selected.has(Polyline)
+                )) || selected.has(VectorNetwork))
             ) {
               const t = node.type;
               if (
                 t === 'polyline' ||
                 t === 'rough-polyline' ||
                 t === 'path' ||
-                t === 'rough-path'
+                t === 'rough-path' ||
+                t === 'vector-network'
               ) {
+                if (selected.has(Editable) && selected.read(Editable).isEditing) {
+                  return;
+                }
                 safeAddComponent(selected, Editable);
                 selected.write(Editable).isEditing = true;
                 api.updateNode(node, { isEditing: true });
+                api.setAppState({
+                  vectorNetworkEditMode: VectorNetworkEditMode.MOVE,
+                });
                 selection.editing = selected;
+                const transformable = camera.write(Transformable);
+                transformable.selectedControlPointIndex = -1;
+                transformable.hoveredSegmentIndex = -1;
+                transformable.hoveredControlPointIndex = -1;
+                requestTransformerRefreshForCanvas(canvas);
                 return;
               }
             }
@@ -1689,6 +2456,17 @@ export class Select extends System {
 
       if (input.pointerDownTrigger) {
         const [x, y] = input.pointerViewport;
+
+        if (selection.editing?.has(VectorNetwork)) {
+          const hit = hitTest(api, { x, y });
+          const anchor = hit?.anchor;
+          if (
+            anchor === AnchorName.OUTSIDE ||
+            anchor === AnchorName.INSIDE
+          ) {
+            this.clearVectorNetworkSelectedVertex(camera, canvas);
+          }
+        }
 
         if (selection.editing) {
           if (selection.mode === SelectionMode.IDLE) {
@@ -1713,8 +2491,12 @@ export class Select extends System {
         }
 
         if (selection.mode === SelectionMode.IDLE) {
-          selection.mode = SelectionMode.READY_TO_BRUSH;
-          api.selectNodes([]);
+          if (this.shouldSuppress2DBrushSelection(canvas, x, y)) {
+            // 3D pick / gizmo drag — do not start 2D marquee (Pick3D runs after Select).
+          } else {
+            selection.mode = SelectionMode.READY_TO_BRUSH;
+            api.selectNodes([]);
+          }
 
           if (layersCropping.length > 0) {
             api.applyCrop();
@@ -1734,7 +2516,7 @@ export class Select extends System {
           // Prioritize tap-to-select when clicking another shape.
           if (hitUnselectedTarget || input.shiftKey) {
             selection.mode = SelectionMode.SELECT;
-          } else {
+          } else if (!this.shouldSuppress2DMove(canvas, x, y)) {
             if (layersCropping.length > 0) {
               cursor.value = 'move';
             } else {
@@ -1796,8 +2578,65 @@ export class Select extends System {
         } else if (
           selection.mode === SelectionMode.READY_TO_MOVE_CONTROL_POINT
         ) {
+          const editMode = api.getAppState().vectorNetworkEditMode;
+          const selectedId = api.getAppState().layersSelected[0];
+          const node = selectedId ? api.getNodeById(selectedId) : undefined;
+
+          if (node?.type === 'vector-network') {
+            if (
+              editMode === VectorNetworkEditMode.CUT &&
+              selection.activeControlPointIndex !== undefined &&
+              selection.activeSegmentMidpointIndex === undefined &&
+              selection.activeTangentHandleIndex === undefined
+            ) {
+              this.breakVectorNetworkAtVertex(
+                api,
+                input,
+                selection,
+                camera,
+                canvas,
+              );
+            } else if (
+              selection.activeControlPointIndex !== undefined &&
+              selection.activeSegmentMidpointIndex === undefined &&
+              selection.activeTangentHandleIndex === undefined
+            ) {
+              this.setVectorNetworkSelectedVertex(
+                camera,
+                canvas,
+                selection.activeControlPointIndex,
+              );
+            }
+            if (
+              editMode === VectorNetworkEditMode.BEND &&
+              selection.activeTangentHandleIndex === undefined &&
+              selection.activeSegmentMidpointIndex === undefined
+            ) {
+              return;
+            }
+          }
+
           const { x: canvasX, y: canvasY } = api.viewport2Canvas({ x, y });
-          this.insertControlPointFromMidpoint(api, canvasX, canvasY, selection);
+          if (
+            node?.type === 'vector-network' &&
+            editMode === VectorNetworkEditMode.MOVE &&
+            selection.activeSegmentIndex !== undefined &&
+            selection.activeSegmentIndex >= 0 &&
+            selection.activeSegmentMidpointIndex === undefined
+          ) {
+            this.beginVectorNetworkSegmentDrag(api, selection, canvasX, canvasY);
+          }
+          if (
+            selection.activeSegmentMidpointIndex !== undefined &&
+            selection.activeSegmentMidpointIndex >= 0
+          ) {
+            this.insertControlPointFromMidpoint(
+              api,
+              canvasX,
+              canvasY,
+              selection,
+            );
+          }
           selection.mode = SelectionMode.MOVE_CONTROL_POINT;
         }
 
@@ -1826,7 +2665,10 @@ export class Select extends System {
             }
           }
 
-          if (api.getAppState().layersSelected.length > 0) {
+          if (
+            api.getAppState().layersSelected.length > 0 &&
+            !this.shouldSuppress2DMove(canvas, x, y)
+          ) {
             selection.mode = SelectionMode.MOVE;
           }
         }
@@ -1883,29 +2725,81 @@ export class Select extends System {
               y,
             }) || {};
 
+            const selected = selecteds.length === 1 ? selecteds[0] : undefined;
+            const vectorNetworkEditing =
+              selected?.has(VectorNetwork) &&
+              (pen === Pen.SELECT &&
+                selected.has(Editable) &&
+                selected.read(Editable).isEditing);
+            if (vectorNetworkEditing) {
+              const transformable = camera.write(Transformable);
+              const editMode = api.getAppState().vectorNetworkEditMode;
+              const allowSegmentHover =
+                editMode === VectorNetworkEditMode.MOVE ||
+                editMode === VectorNetworkEditMode.CUT;
+              const nextSegmentHovered =
+                allowSegmentHover && selected
+                  ? findHoveredVectorNetworkSegmentIndex(api, selected, x, y)
+                  : -1;
+              const nextControlHovered =
+                anchor === AnchorName.CONTROL ? index : -1;
+              let needsRefresh = false;
+              if (transformable.hoveredSegmentIndex !== nextSegmentHovered) {
+                transformable.hoveredSegmentIndex = nextSegmentHovered;
+                needsRefresh = true;
+              }
+              if (transformable.hoveredControlPointIndex !== nextControlHovered) {
+                transformable.hoveredControlPointIndex = nextControlHovered;
+                needsRefresh = true;
+              }
+              if (needsRefresh) {
+                requestTransformerRefreshForCanvas(canvas);
+              }
+            }
+
             if (selection.mode !== SelectionMode.BRUSH) {
               if (anchor) {
                 if (anchor === AnchorName.CONTROL) {
                   cursor.value = 'crosshair';
                   selection.activeControlPointIndex = index;
                   selection.activeSegmentMidpointIndex = undefined;
+                  selection.activeSegmentIndex = undefined;
+                  selection.activeTangentHandleIndex = undefined;
+                  selection.mode = SelectionMode.READY_TO_MOVE_CONTROL_POINT;
+                  toHighlight = undefined;
+                } else if (anchor === AnchorName.TANGENT) {
+                  cursor.value = 'crosshair';
+                  selection.activeTangentHandleIndex = index;
+                  selection.activeControlPointIndex = undefined;
+                  selection.activeSegmentMidpointIndex = undefined;
+                  selection.activeSegmentIndex = undefined;
                   selection.mode = SelectionMode.READY_TO_MOVE_CONTROL_POINT;
                   toHighlight = undefined;
                 } else if (anchor === AnchorName.CENTER) {
                   cursor.value = 'move';
                   selection.activeControlPointIndex = undefined;
                   selection.activeSegmentMidpointIndex = undefined;
+                  selection.activeSegmentIndex = undefined;
                   selection.mode = SelectionMode.READY_TO_MOVE_PIVOT;
                   toHighlight = undefined;
                 } else if (anchor === AnchorName.SEGMENT_MIDPOINT) {
                   cursor.value = 'crosshair';
                   selection.activeControlPointIndex = undefined;
                   selection.activeSegmentMidpointIndex = index;
+                  selection.activeSegmentIndex = undefined;
+                  selection.mode = SelectionMode.READY_TO_MOVE_CONTROL_POINT;
+                  toHighlight = undefined;
+                } else if (anchor === AnchorName.SEGMENT) {
+                  cursor.value = 'move';
+                  selection.activeControlPointIndex = undefined;
+                  selection.activeSegmentMidpointIndex = undefined;
+                  selection.activeSegmentIndex = index;
                   selection.mode = SelectionMode.READY_TO_MOVE_CONTROL_POINT;
                   toHighlight = undefined;
                 } else {
                   selection.activeControlPointIndex = undefined;
                   selection.activeSegmentMidpointIndex = undefined;
+                  selection.activeSegmentIndex = undefined;
                   if (layersLassoing.length > 0) {
                     if (anchor === AnchorName.INSIDE) {
                       cursor.value = LASSO_CURSOR;
@@ -1979,6 +2873,15 @@ export class Select extends System {
           }
 
           if (toHighlight) {
+            if (
+              entityIsDeclarative3DNode(toHighlight) ||
+              this.shouldSuppress2DBrushSelection(canvas, x, y)
+            ) {
+              toHighlight = undefined;
+            }
+          }
+
+          if (toHighlight) {
             const node = api.getNodeByEntity(toHighlight);
             if (node) {
               api.highlightNodes([node]);
@@ -2022,9 +2925,17 @@ export class Select extends System {
           selection.mode === SelectionMode.READY_TO_BRUSH ||
           selection.mode === SelectionMode.BRUSH
         ) {
+          if (is3DGizmoDragging()) {
+            this.hideBrush(selection);
+            selection.mode = SelectionMode.IDLE;
+            return;
+          }
           this.handleBrushing(api, x, y);
           selection.mode = SelectionMode.BRUSH;
         } else if (selection.mode === SelectionMode.MOVE) {
+          if (is3DGizmoDragging()) {
+            return;
+          }
           if (layersCropping.length > 0) {
             cursor.value = 'move';
           } else {
@@ -2113,6 +3024,8 @@ export class Select extends System {
           selection.mode === SelectionMode.READY_TO_MOVE_CONTROL_POINT
         ) {
           this.handleControlPointMoved(api, selection);
+          selection.segmentDragSnapshot = undefined;
+          selection.activeSegmentIndex = undefined;
           selection.mode = SelectionMode.READY_TO_MOVE_CONTROL_POINT;
         }
 
@@ -2368,10 +3281,10 @@ export class Select extends System {
        */
       const skipGeometryDeltaForEdge =
         selection.mode === SelectionMode.ROTATE &&
-        selected.hasSomeOf(Polyline, Path, Line);
+        selected.hasSomeOf(Polyline, Path, Line, VectorNetwork);
       if (
         !skipGeometryDeltaForEdge &&
-        selected.hasSomeOf(Polyline, Path, Line)
+        selected.hasSomeOf(Polyline, Path, Line, VectorNetwork)
       ) {
         const signW = Math.sign(width) || 1;
         const signH = Math.sign(height) || 1;

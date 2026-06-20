@@ -19,6 +19,8 @@ import {
   Last,
   PropagateTransforms,
   ComputeVisibility,
+  ComputeCamera,
+  CameraSync,
   ExportSVG,
   Select,
 } from '../systems';
@@ -49,11 +51,16 @@ import {
   GPUResource,
   VelloCanvasSurface,
   Camera3D,
+  Canvas3DScope,
   Extrude3D,
   Extrude3DTarget,
   Mesh3D,
+  Mesh3DNode,
+  Mesh3DNodeTarget,
   Material3D,
+  Light3D,
   Transform3D,
+  Selected3D,
   Name,
   ToBeDeleted,
   SizeAttenuation,
@@ -69,6 +76,7 @@ import {
   LockAspectRatio,
   Editable,
   Filter,
+  NodeLayerBlendMode,
   Locked,
   ClipMode,
   Flex,
@@ -91,11 +99,16 @@ function createRendererPlugin(options: RendererPluginOptions = {}): Plugin {
     component(GPUResource);
     component(VelloCanvasSurface);
     component(Camera3D);
+    component(Canvas3DScope);
     component(Extrude3D);
     component(Extrude3DTarget);
     component(Mesh3D);
+    component(Mesh3DNode);
+    component(Mesh3DNodeTarget);
     component(Material3D);
+    component(Light3D);
     component(Transform3D);
+    component(Selected3D);
     component(Renderable);
     component(Name);
     component(LockAspectRatio);
@@ -129,6 +142,7 @@ function createRendererPlugin(options: RendererPluginOptions = {}): Plugin {
     component(TextDecoration);
     component(Marker);
     component(Filter);
+    component(NodeLayerBlendMode);
     component(ClipMode);
 
     /**
@@ -162,6 +176,9 @@ function createRendererPlugin(options: RendererPluginOptions = {}): Plugin {
 
     // system((s) => s.after(PropagateTransforms))(ComputeVisibility);
     system((s) => s.after(PropagateTransforms, Sort))(ComputeBounds);
+
+    // Linked Camera3D sync; PenPlugin/Renderer3DPlugin schedule Select/Pick3D after this.
+    system((s) => s.after(ComputeCamera).before(Last))(CameraSync);
 
     system(Last)(SetCursor);
 

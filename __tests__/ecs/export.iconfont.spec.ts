@@ -38,6 +38,7 @@ import {
   IconFontSerializedNode,
   Path,
   Opacity,
+  GlobalTransform,
 } from '../../packages/ecs/src';
 import { NodeJSAdapter, sleep } from '../utils';
 
@@ -129,6 +130,7 @@ describe('Export SVG', () => {
             IconFont,
             Path,
             Opacity,
+            GlobalTransform,
           ).write,
       );
 

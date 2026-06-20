@@ -168,6 +168,10 @@ export const en = defineConfig({
                 text: 'Lesson 038 - From design to code',
                 link: 'lesson-038',
               },
+              {
+                text: 'Lesson 039 - 3D Mesh Rendering',
+                link: 'lesson-039',
+              },
             ],
           },
         ],
@@ -231,6 +235,7 @@ export const en = defineConfig({
               { text: 'Mermaid', link: 'mermaid' },
               { text: 'D2', link: 'd2' },
               { text: 'Drawio', link: 'drawio' },
+              { text: 'Figma', link: 'figma' },
               { text: 'Yoga', link: 'yoga' },
               { text: 'Vello', link: 'vello' },
             ],
@@ -314,6 +319,10 @@ export const en = defineConfig({
               {
                 text: 'Fill rule',
                 link: 'fill-rule',
+              },
+              {
+                text: 'Vector Network cube (drag edge)',
+                link: 'vector-network-cube',
               },
               {
                 text: 'Text',
@@ -407,6 +416,10 @@ export const en = defineConfig({
               {
                 text: 'Declarative gradient',
                 link: 'declarative-gradient',
+              },
+              {
+                text: 'Node-level mix-blend-mode',
+                link: 'blend-mode',
               },
               {
                 text: 'Pattern',
@@ -512,6 +525,31 @@ export const en = defineConfig({
                   },
                 ],
               },
+              {
+                text: '3D Mesh Rendering',
+                items: [
+                  {
+                    text: 'Cube (Orthographic)',
+                    link: 'cube',
+                  },
+                  {
+                    text: 'Cube (Perspective)',
+                    link: 'cube-perspective',
+                  },
+                  {
+                    text: 'Lighting',
+                    link: 'lighting',
+                  },
+                  {
+                    text: 'Textured Earth',
+                    link: 'earth',
+                  },
+                  {
+                    text: 'glTF model',
+                    link: 'gltf-duck',
+                  },
+                ],
+              }
             ],
           },
         ],

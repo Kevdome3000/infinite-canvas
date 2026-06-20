@@ -32,7 +32,8 @@ import {
   UI,
   RectSerializedNode,
   Flex,
-  Opacity
+  Opacity,
+  GlobalTransform
 } from '../../packages/ecs/src';
 import { NodeJSAdapter, sleep } from '../utils';
 
@@ -77,6 +78,7 @@ describe('ZIndex', () => {
             UI,
             Flex,
             Opacity,
+            GlobalTransform,
           ).write,
       );
 

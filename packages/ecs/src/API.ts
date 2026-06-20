@@ -1,7 +1,7 @@
-import { Entity } from '@lastolivegames/becsy';
+import { Entity, type ComponentType } from '@lastolivegames/becsy';
 import { IPointData } from '@pixi/math';
 import { mat3, vec2 } from 'gl-matrix';
-import { updateGlobalTransform } from './systems/Transform';
+import { isEntityAlive, updateGlobalTransform } from './systems/Transform';
 import { updateComputedPoints } from './systems/ComputePoints';
 import { isNil, path2Absolute } from '@antv/util';
 import {
@@ -11,6 +11,7 @@ import {
   StoreIncrementEvent,
 } from './history/Store';
 import { Commands, EntityCommands } from './commands';
+import type { Bundle } from './components';
 import { AppState, getDefaultAppState } from './context';
 import {
   BitmapFont,
@@ -47,14 +48,15 @@ import {
   decompose,
   transformPath,
   mat3WithoutTranslation,
+  transformVectorNetworkGeometry,
   buildDesignVariableRefreshPatch,
   expandSerializedNodesForSvgExport,
+  serializedNodesToCode,
+  type CodegenOptions,
 } from './utils';
 import type { AnimationGifQuality } from './utils/animationExportCodec';
 export type { AnimationGifQuality } from './utils/animationExportCodec';
-import {
-  getRegisteredIconifyIconFamilies as getRegisteredIconifyIconFamiliesList,
-} from './utils/icon-font';
+import { getRegisteredIconifyIconFamilies as getRegisteredIconifyIconFamiliesList } from './utils/icon-font';
 import type {
   BrushSerializedNode,
   FillAttributes,
@@ -65,6 +67,7 @@ import type {
   SerializedNode,
   StrokeAttributes,
   TextSerializedNode,
+  VectorNetworkSerializedNode,
 } from './types/serialized-node';
 import {
   firstEnabledFillPresentation,
@@ -75,12 +78,14 @@ import {
   migrateLegacyStrokeWireInPlace,
 } from './utils/normalize-stroke-wire';
 import { getEnabledFillLayers } from './utils/fillLayers';
+import { set3DMeshGizmoSelectedForCanvas } from './utils/pick3d-bridge';
 import { v4 as uuidv4 } from 'uuid';
 import {
   AABB,
   Brush,
   Camera,
   Canvas,
+  Canvas3DScope,
   CheckboardStyle,
   Children,
   Circle,
@@ -100,6 +105,7 @@ import {
   Line,
   Locked,
   Mat3,
+  Mesh3DNode,
   OBB,
   Parent,
   Path,
@@ -109,6 +115,7 @@ import {
   RBush,
   Rect,
   Selected,
+  Selected3D,
   Stroke,
   Text,
   Theme,
@@ -124,7 +131,12 @@ import {
   ZIndex,
 } from './components';
 import { AnimationController, AnimationOptions, Keyframe } from './animation';
-import { History, mutateElement, safeAddComponent, safeRemoveComponent } from './history';
+import {
+  History,
+  mutateElement,
+  safeAddComponent,
+  safeRemoveComponent,
+} from './history';
 import {
   drawDotsGrid,
   drawLinesGrid,
@@ -264,6 +276,17 @@ export const pendingAPICallings: (() => any)[] = [];
  */
 export const pendingAPICallingsAfterDelete: (() => any)[] = [];
 
+export interface Mesh3DLayer {
+  id: string;
+  name: string;
+  sourceNodeId?: string;
+  vertexCount: number;
+}
+
+export type Mesh3DLayerRegistration = Mesh3DLayer & {
+  entity: Entity;
+};
+
 /**
  * Expose the API to the outside world.
  *
@@ -277,6 +300,9 @@ export class API {
    */
   #landmarkAnimationID: number;
   #idEntityMap: Map<string, EntityCommands> = new Map();
+  #mesh3DLayers: Mesh3DLayer[] = [];
+  #mesh3DLayerEntities: Map<string, Entity> = new Map();
+  #selectedMesh3DLayerIds: string[] = [];
   #history = new History();
   #store = new Store(this);
 
@@ -307,7 +333,10 @@ export class API {
       }
 
       // 保持向后兼容：如果设置了 onchange，当有任何变化时都会触发
-      if (this.onchange && (!event.elementsChange.isEmpty() || !event.appStateChange.isEmpty())) {
+      if (
+        this.onchange &&
+        (!event.elementsChange.isEmpty() || !event.appStateChange.isEmpty())
+      ) {
         this.onchange(snapshot);
       }
     });
@@ -315,6 +344,16 @@ export class API {
 
   getCommands() {
     return this.commands;
+  }
+
+  /**
+   * Spawn 3D ECS entities scoped to this canvas (multi-canvas safe).
+   */
+  spawn3D(...bundles: (ComponentType<any> | Bundle)[]) {
+    return this.commands.spawn(
+      ...bundles,
+      new Canvas3DScope({ canvas: this.#canvas }),
+    );
   }
 
   getAppState() {
@@ -363,9 +402,7 @@ export class API {
       Object.prototype.hasOwnProperty.call(patch, 'themePreference')
     ) {
       const nextThemeMode =
-        patch.themeMode !== undefined
-          ? patch.themeMode
-          : oldAppState.themeMode;
+        patch.themeMode !== undefined ? patch.themeMode : oldAppState.themeMode;
       const mergedTheme = mergeThemeState(
         { ...oldAppState.theme, mode: oldAppState.themeMode },
         {
@@ -461,7 +498,8 @@ export class API {
 
     const shouldRefreshDesignVariableBindings =
       variablesActuallyChanged ||
-      (themeModeChanged && Object.keys(nextAppState.variables ?? {}).length > 0);
+      (themeModeChanged &&
+        Object.keys(nextAppState.variables ?? {}).length > 0);
 
     if (shouldRefreshDesignVariableBindings) {
       this.runAtNextTick(() => {
@@ -483,6 +521,157 @@ export class API {
 
   getNodes() {
     return this.stateManagement.getNodes();
+  }
+
+  getMesh3DLayers() {
+    return this.#mesh3DLayers;
+  }
+
+  getSelectedMesh3DLayerIds() {
+    return this.#selectedMesh3DLayerIds;
+  }
+
+  setMesh3DLayers(layers: Mesh3DLayerRegistration[]) {
+    const nextLayers = layers.map(({ entity: _entity, ...layer }) => layer);
+    const changed =
+      JSON.stringify(nextLayers) !== JSON.stringify(this.#mesh3DLayers);
+
+    this.#mesh3DLayers = nextLayers;
+    this.#mesh3DLayerEntities = new Map(
+      layers.map((layer) => [layer.id, layer.entity]),
+    );
+
+    const validIds = new Set(nextLayers.map((layer) => layer.id));
+    const selected = this.#selectedMesh3DLayerIds.filter((id) =>
+      validIds.has(id),
+    );
+    if (selected.length !== this.#selectedMesh3DLayerIds.length) {
+      this.setSelectedMesh3DLayerIds(selected);
+    }
+
+    return changed;
+  }
+
+  setSelectedMesh3DLayerIds(ids: string[]) {
+    const selected = ids.filter(
+      (id, index, self) => self.indexOf(id) === index,
+    );
+    const changed =
+      selected.length !== this.#selectedMesh3DLayerIds.length ||
+      selected.some((id, i) => id !== this.#selectedMesh3DLayerIds[i]);
+
+    this.#selectedMesh3DLayerIds = selected;
+    return changed;
+  }
+
+  getMesh3DLayerIdByEntity(entity: Entity) {
+    for (const [id, layerEntity] of this.#mesh3DLayerEntities.entries()) {
+      if (layerEntity === entity) {
+        return id;
+      }
+    }
+  }
+
+  private clear2DSelectionComponents(ids = this.getAppState().layersSelected) {
+    ids.forEach((id) => {
+      const entity = this.#idEntityMap.get(id)?.id();
+      if (entity && entity.has(Selected)) {
+        entity.remove(Selected);
+      }
+      if (entity) {
+        safeRemoveComponent(entity, Highlighted);
+      }
+    });
+  }
+
+  clearSelectedMesh3DLayers() {
+    this.#selectedMesh3DLayerIds.forEach((id) => {
+      const entity = this.#mesh3DLayerEntities.get(id);
+      if (entity?.has(Selected3D)) {
+        entity.remove(Selected3D);
+      }
+    });
+    return this.setSelectedMesh3DLayerIds([]);
+  }
+
+  /** Layer panel / app state only — no ECS {@link Selected} or {@link Selected3D} writes. */
+  syncMesh3DLayerAppState(entity: Entity) {
+    const id = this.getMesh3DLayerIdByEntity(entity);
+    const layer = this.#mesh3DLayers.find((item) => item.id === id);
+    if (!id || !layer) {
+      return false;
+    }
+
+    this.setSelectedMesh3DLayerIds([id]);
+    const prevAppState = this.getAppState();
+    this.setAppState({
+      ...prevAppState,
+      layersSelected: layer.sourceNodeId ? [layer.sourceNodeId] : [],
+      layersHighlighted: [],
+    });
+    return true;
+  }
+
+  /** Clear 3D layer panel selection in app state only (companion {@link Selected3D} is managed by Pick3D). */
+  clearMesh3DLayerAppState() {
+    this.setSelectedMesh3DLayerIds([]);
+    const prevAppState = this.getAppState();
+    this.setAppState({
+      ...prevAppState,
+      layersSelected: prevAppState.layersSelected.filter((id) => {
+        const node = this.getNodeById(id);
+        return node?.type !== 'mesh3d';
+      }),
+      layersHighlighted: prevAppState.layersHighlighted.filter((id) => {
+        const node = this.getNodeById(id);
+        return node?.type !== 'mesh3d';
+      }),
+    });
+  }
+
+  selectMesh3DLayer(id: string) {
+    const entity = this.#mesh3DLayerEntities.get(id);
+    const layer = this.#mesh3DLayers.find((item) => item.id === id);
+    if (!entity || !layer) {
+      return false;
+    }
+
+    const prevAppState = this.getAppState();
+    this.clear2DSelectionComponents(prevAppState.layersSelected);
+
+    this.#selectedMesh3DLayerIds.forEach((selectedId) => {
+      const selectedEntity = this.#mesh3DLayerEntities.get(selectedId);
+      if (
+        selectedEntity &&
+        selectedEntity !== entity &&
+        selectedEntity.has(Selected3D)
+      ) {
+        selectedEntity.remove(Selected3D);
+      }
+    });
+
+    if (!entity.has(Selected3D)) {
+      entity.add(Selected3D, {
+        mode: 'transform',
+        activeAxis: 'none',
+        activePartKind: null,
+        dragging: false,
+      });
+    }
+
+    const selectedChanged = this.setSelectedMesh3DLayerIds([id]);
+    this.setAppState({
+      ...prevAppState,
+      layersSelected: layer.sourceNodeId ? [layer.sourceNodeId] : [],
+      layersHighlighted: [],
+    });
+
+    return selectedChanged;
+  }
+
+  selectMesh3DLayerByEntity(entity: Entity) {
+    const id = this.getMesh3DLayerIdByEntity(entity);
+    return id ? this.selectMesh3DLayer(id) : false;
   }
 
   /**
@@ -654,9 +843,8 @@ export class API {
         entity.has(Rect) &&
         (node.type === 'rect' || node.type === 'rough-rect')
       ) {
-        (out as { cornerRadius?: number }).cornerRadius = entity.read(
-          Rect,
-        ).cornerRadius;
+        (out as { cornerRadius?: number }).cornerRadius =
+          entity.read(Rect).cornerRadius;
       }
       return out;
     });
@@ -826,7 +1014,13 @@ export class API {
   /**
    * Search entites within a bounding box. Use rbush under the hood to accelerate the search.
    */
-  elementsFromBBox(minX: number, minY: number, maxX: number, maxY: number, shouldFilterLocked = true) {
+  elementsFromBBox(
+    minX: number,
+    minY: number,
+    maxX: number,
+    maxY: number,
+    shouldFilterLocked = true,
+  ) {
     if (!this.#camera.has(RBush)) {
       return [];
     }
@@ -842,13 +1036,22 @@ export class API {
     // Sort by fractional index
     return rBushNodes
       .map((node) => node.entity)
-      .filter((entity) => entity.__valid && (!shouldFilterLocked || !entity.has(Locked)))
+      .filter(
+        (entity) =>
+          entity.__valid && (!shouldFilterLocked || !entity.has(Locked)),
+      )
       .sort(sortByFractionalIndex)
       .reverse();
   }
 
   elementsFromPoint(point: IPointData, shouldFilterLocked = true) {
-    const entities = this.elementsFromBBox(point.x, point.y, point.x, point.y, shouldFilterLocked);
+    const entities = this.elementsFromBBox(
+      point.x,
+      point.y,
+      point.x,
+      point.y,
+      shouldFilterLocked,
+    );
 
     const results: Entity[] = [];
     entities.forEach((entity) => {
@@ -859,7 +1062,11 @@ export class API {
 
       const matrix = Mat3.toGLMat3(entity.read(GlobalTransform).matrix);
       const invMatrix = mat3.invert(mat3.create(), matrix);
-      const [x, y] = vec2.transformMat3(vec2.create(), [point.x, point.y], invMatrix);
+      const [x, y] = vec2.transformMat3(
+        vec2.create(),
+        [point.x, point.y],
+        invMatrix,
+      );
 
       let isIntersected = false;
       const hasFill =
@@ -877,24 +1084,31 @@ export class API {
 
       if (entity.has(Circle)) {
         const { cx, cy, r } = entity.read(Circle);
-        const distance = distanceBetweenPoints(x, y, cx, cy)
+        const distance = distanceBetweenPoints(x, y, cx, cy);
         if (hasFill && hasStroke) {
           isIntersected = distance <= r + offset;
         } else if (hasFill) {
           isIntersected = distance <= r;
         } else if (hasStroke) {
-          isIntersected = (
-            distance >= r + offset - halfStrokeWidth && distance <= r + offset + halfStrokeWidth
-          );
+          isIntersected =
+            distance >= r + offset - halfStrokeWidth &&
+            distance <= r + offset + halfStrokeWidth;
         }
       } else if (entity.has(Ellipse)) {
         const { cx, cy, rx, ry } = entity.read(Ellipse);
         if (hasFill && hasStroke) {
-          isIntersected = isPointInEllipse(x, y, cx, cy, rx + offset, ry + offset);
+          isIntersected = isPointInEllipse(
+            x,
+            y,
+            cx,
+            cy,
+            rx + offset,
+            ry + offset,
+          );
         } else if (hasFill) {
           isIntersected = isPointInEllipse(x, y, cx, cy, rx, ry);
         } else if (hasStroke) {
-          isIntersected = (
+          isIntersected =
             !isPointInEllipse(
               x,
               y,
@@ -902,8 +1116,7 @@ export class API {
               cy,
               rx + offset - halfStrokeWidth * 2,
               ry + offset - halfStrokeWidth * 2,
-            ) && isPointInEllipse(x, y, cx, cy, rx + offset, ry + offset)
-          );
+            ) && isPointInEllipse(x, y, cx, cy, rx + offset, ry + offset);
         }
       } else if (entity.has(Line)) {
         if (Line.hitTestProvider && hasStroke) {
@@ -951,11 +1164,10 @@ export class API {
             stroke: strokeForHit,
           });
         } else {
-          const ctx = DOMAdapter.get().createCanvas(100, 100).getContext('2d');
+          const ctx = DOMAdapter.get().createCanvas(100, 100).getContext('2d') as CanvasRenderingContext2D;
           const path = new Path2D(d);
           if (hasStroke) {
-            ctx.strokeStyle =
-              resolveGpuStrokeColor(entity) ?? 'transparent';
+            ctx.strokeStyle = resolveGpuStrokeColor(entity) ?? 'transparent';
             ctx.lineWidth = lineHitStrokeWidth;
             ctx.lineCap = stroke.linecap;
             ctx.lineJoin = stroke.linejoin;
@@ -1214,6 +1426,201 @@ export class API {
     return controller;
   }
 
+  // -------------------------------------------------------------------------
+  // Animation editor API
+  //
+  // Editor-facing helpers used by the Animation panel (per-element keyframes)
+  // and the Timeline panel (scene-wide tracks + scrubbable playhead). Reads are
+  // sourced from the authoritative `AnimationPlayer` controller on each entity;
+  // edits go through `updateNode({ animation })` so they participate in history,
+  // serialization, and appState propagation like any other node mutation.
+  // -------------------------------------------------------------------------
+
+  /** @returns the live {@link AnimationController} attached to a node, if any. */
+  getNodeAnimationController(id: SerializedNode['id']): AnimationController | null {
+    const node = this.getNodeById(id);
+    if (!node) {
+      return null;
+    }
+    const entity = this.getEntity(node);
+    if (!entity || !entity.has(AnimationPlayer)) {
+      return null;
+    }
+    return entity.read(AnimationPlayer).controller ?? null;
+  }
+
+  /** @returns serializable `{ keyframes, options }` for a node, or `null`. */
+  getNodeAnimation(
+    id: SerializedNode['id'],
+  ): { keyframes: Keyframe[]; options: AnimationOptions } | null {
+    const controller = this.getNodeAnimationController(id);
+    if (!controller) {
+      return null;
+    }
+    const { keyframes, options } = controller.serialize();
+    return {
+      keyframes: keyframes as Keyframe[],
+      options: options as AnimationOptions,
+    };
+  }
+
+  /**
+   * Replace (or remove, when `animation` is `null`) a node's animation. Goes
+   * through {@link updateNode} so undo/redo and serialization work.
+   */
+  setNodeAnimation(
+    id: SerializedNode['id'],
+    animation: { keyframes: Keyframe[]; options: AnimationOptions } | null,
+  ) {
+    const node = this.getNodeById(id);
+    if (!node) {
+      return;
+    }
+    this.updateNode(node, { animation: animation ?? undefined });
+  }
+
+  /** Remove a node's animation entirely. */
+  removeNodeAnimation(id: SerializedNode['id']) {
+    this.setNodeAnimation(id, null);
+  }
+
+  /** Merge a partial options patch into a node's animation (duration, delay, …). */
+  updateNodeAnimationOptions(
+    id: SerializedNode['id'],
+    patch: Partial<AnimationOptions>,
+  ) {
+    const current = this.getNodeAnimation(id);
+    if (!current) {
+      return;
+    }
+    this.setNodeAnimation(id, {
+      keyframes: current.keyframes,
+      options: { ...current.options, ...patch },
+    });
+  }
+
+  /** Replace a node's keyframes, keeping its existing options. */
+  setNodeAnimationKeyframes(id: SerializedNode['id'], keyframes: Keyframe[]) {
+    const current = this.getNodeAnimation(id);
+    if (!current) {
+      return;
+    }
+    this.setNodeAnimation(id, { keyframes, options: current.options });
+  }
+
+  /** Insert a new keyframe into a node's animation. */
+  addNodeAnimationKeyframe(id: SerializedNode['id'], keyframe: Keyframe) {
+    const current = this.getNodeAnimation(id);
+    if (!current) {
+      return;
+    }
+    this.setNodeAnimationKeyframes(id, [...current.keyframes, { ...keyframe }]);
+  }
+
+  /** Patch a keyframe (by index) of a node's animation. */
+  updateNodeAnimationKeyframe(
+    id: SerializedNode['id'],
+    index: number,
+    patch: Partial<Keyframe>,
+  ) {
+    const current = this.getNodeAnimation(id);
+    if (!current || index < 0 || index >= current.keyframes.length) {
+      return;
+    }
+    const keyframes = current.keyframes.map((kf, i) =>
+      i === index ? { ...kf, ...patch } : { ...kf },
+    );
+    this.setNodeAnimationKeyframes(id, keyframes);
+  }
+
+  /** Remove a keyframe (by index) of a node's animation. Keeps ≥1 keyframe. */
+  removeNodeAnimationKeyframe(id: SerializedNode['id'], index: number) {
+    const current = this.getNodeAnimation(id);
+    if (!current || current.keyframes.length <= 1) {
+      return;
+    }
+    const keyframes = current.keyframes.filter((_, i) => i !== index);
+    this.setNodeAnimationKeyframes(id, keyframes);
+  }
+
+  /**
+   * @returns one descriptor per animated node in the scene, for the bottom
+   * Timeline panel. `delay`/`duration`/`totalDuration` are in milliseconds.
+   */
+  getAnimatedTracks(): {
+    id: SerializedNode['id'];
+    name: string;
+    properties: string[];
+    delay: number;
+    duration: number;
+    totalDuration: number;
+  }[] {
+    const tracks: ReturnType<API['getAnimatedTracks']> = [];
+    for (const node of this.getNodes()) {
+      const controller = this.getNodeAnimationController(node.id);
+      if (!controller) {
+        continue;
+      }
+      const options = controller.getOptions();
+      tracks.push({
+        id: node.id,
+        name: (node as { name?: string }).name || node.id,
+        properties: controller.getAnimatedProperties(),
+        delay: options.delay,
+        duration: controller.getDuration() - options.delay,
+        totalDuration: controller.getDuration(),
+      });
+    }
+    return tracks;
+  }
+
+  /** @returns the longest active track end-time (ms) across the scene. */
+  getSceneAnimationDuration(): number {
+    let max = 0;
+    for (const node of this.getNodes()) {
+      const controller = this.getNodeAnimationController(node.id);
+      if (controller) {
+        max = Math.max(max, controller.getDuration());
+      }
+    }
+    return max;
+  }
+
+  // --- Timeline transport (drives the scene playhead via appState) ---
+
+  /** Enter/leave the deterministic scrub mode used by the Animation editor. */
+  setAnimationEditing(editing: boolean) {
+    this.setAppState({ animationEditing: editing });
+  }
+
+  /** Set the global playhead time (ms) and pause so the frame is sampled there. */
+  setAnimationCurrentTime(time: number) {
+    this.setAppState({
+      animationCurrentTime: Math.max(0, time),
+      animationPlaying: false,
+    });
+  }
+
+  playAnimation() {
+    this.setAppState({ animationEditing: true, animationPlaying: true });
+  }
+
+  pauseAnimation() {
+    this.setAppState({ animationPlaying: false });
+  }
+
+  toggleAnimationPlaying() {
+    if (this.getAppState().animationPlaying) {
+      this.pauseAnimation();
+    } else {
+      this.playAnimation();
+    }
+  }
+
+  setAnimationLoop(loop: boolean) {
+    this.setAppState({ animationLoop: loop });
+  }
+
   private getSceneGraphBounds() {
     const rbush = this.#camera.read(RBush).value;
 
@@ -1313,6 +1720,71 @@ export class API {
   /**
    * Select nodes.
    */
+  /** Remove {@link Selected3D} from a declarative mesh3d companion mesh (deferred: runs in {@link Deleter}). */
+  #deselectMesh3DCompanion(source: Entity): void {
+    this.runAtNextTick(() => this.#deselectMesh3DCompanionDeferred(source));
+  }
+
+  #deselectMesh3DCompanionDeferred(source: Entity): void {
+    if (!source.has(Mesh3DNode)) {
+      return;
+    }
+    const mesh = source.read(Mesh3DNode).meshEntity;
+    if (!mesh || !isEntityAlive(mesh) || !mesh.has(Selected3D)) {
+      return;
+    }
+    try {
+      mesh.remove(Selected3D);
+    } catch {
+      /* companion already deleted */
+    }
+  }
+
+  /** Attach {@link Selected3D} once the companion mesh exists (after {@link EnsureMesh3DNodes}). */
+  #selectMesh3DCompanion(source: Entity): void {
+    this.runAtNextTick(() => this.#selectMesh3DCompanionDeferred(source, 0));
+  }
+
+  #selectMesh3DCompanionDeferred(source: Entity, attempt = 0): void {
+    if (!source.has(Mesh3DNode) || !source.has(Selected)) {
+      return;
+    }
+    const mesh = source.read(Mesh3DNode).meshEntity;
+    if (!mesh || !isEntityAlive(mesh)) {
+      if (attempt < 120) {
+        this.runAtNextTick(() =>
+          this.#selectMesh3DCompanionDeferred(source, attempt + 1),
+        );
+      }
+      return;
+    }
+    if (!mesh.has(Selected3D)) {
+      mesh.add(Selected3D, {
+        mode: 'transform',
+        activeAxis: 'none',
+        activePartKind: null,
+        dragging: false,
+      });
+    }
+    set3DMeshGizmoSelectedForCanvas(this.#canvas, true);
+  }
+
+  #scheduleSyncMesh3DGizmoBridge(): void {
+    this.runAtNextTick(() => this.#syncMesh3DGizmoBridge());
+  }
+
+  #syncMesh3DGizmoBridge(): void {
+    const has3DSelection = this.getAppState().layersSelected.some((id) => {
+      const entity = this.#idEntityMap.get(id)?.id();
+      if (!entity?.has(Mesh3DNode)) {
+        return false;
+      }
+      const mesh = entity.read(Mesh3DNode).meshEntity;
+      return !!(mesh && isEntityAlive(mesh) && mesh.has(Selected3D));
+    });
+    set3DMeshGizmoSelectedForCanvas(this.#canvas, has3DSelection);
+  }
+
   selectNodes(
     nodes: SerializedNode[],
     preserveSelection = false,
@@ -1322,16 +1794,15 @@ export class API {
     const prevSelectedIds = prevAppState.layersSelected;
 
     if (!preserveSelection) {
+      this.clearSelectedMesh3DLayers();
       prevSelectedIds.forEach((id) => {
         const entity = this.#idEntityMap.get(id)?.id();
-        if (entity && entity.has(Selected)) {
-          entity.remove(Selected);
-        }
-        // 与 handleSelectedMoved 等路径写入的 Highlighted 同步清理，否则取消选中后仍残留描边高亮
         if (entity) {
-          safeRemoveComponent(entity, Highlighted);
+          this.#deselectMesh3DCompanion(entity);
         }
       });
+      // 与 handleSelectedMoved 等路径写入的 Highlighted 同步清理，否则取消选中后仍残留描边高亮
+      this.clear2DSelectionComponents(prevSelectedIds);
     }
 
     // remove duplicates
@@ -1363,6 +1834,10 @@ export class API {
       if (entity && !entity.has(Selected)) {
         entity.add(Selected, { camera: this.#camera });
       }
+      // Deferred in Deleter; #selectMesh3DCompanionDeferred no-ops for non-mesh3d nodes.
+      if (entity) {
+        this.#selectMesh3DCompanion(entity);
+      }
     });
   }
 
@@ -1375,6 +1850,7 @@ export class API {
       }
       if (entity) {
         safeRemoveComponent(entity, Highlighted);
+        this.#deselectMesh3DCompanion(entity);
       }
     });
 
@@ -1388,6 +1864,7 @@ export class API {
         (id) => !deselectIds.includes(id),
       ),
     });
+    this.#scheduleSyncMesh3DGizmoBridge();
   }
 
   highlightNodes(
@@ -1395,6 +1872,13 @@ export class API {
     preserveSelection = false,
     updateAppState = true,
   ) {
+    const isDeclarative3DNode = (id: string) => {
+      const node = this.getNodeById(id);
+      return node?.type === 'mesh3d' || node?.type === 'light3d';
+    };
+
+    nodes = nodes.filter((node) => node.type !== 'mesh3d' && node.type !== 'light3d');
+
     if (!preserveSelection) {
       this.getAppState().layersHighlighted.forEach((id) => {
         const entity = this.#idEntityMap.get(id)?.id();
@@ -1421,6 +1905,10 @@ export class API {
 
     layersHighlighted.forEach((id) => {
       const entity = this.#idEntityMap.get(id)?.id();
+      if (!entity || isDeclarative3DNode(id)) {
+        safeRemoveComponent(entity, Highlighted);
+        return;
+      }
       safeAddComponent(entity, Highlighted);
     });
   }
@@ -1481,13 +1969,15 @@ export class API {
     const node = this.getNodeById(lassoingNodeId);
     // Delete all children
     const children = this.getChildren(node);
-    this.deleteNodesById(children.map((child) => this.getNodeByEntity(child).id));
+    this.deleteNodesById(
+      children.map((child) => this.getNodeByEntity(child).id),
+    );
     this.setAppState({
       layersLassoing: [],
       penbarLasso: {
         ...this.getAppState().penbarLasso,
         mode: undefined,
-      }
+      },
     });
     this.selectNodes([node]);
     this.record();
@@ -1518,6 +2008,7 @@ export class API {
           lookupNodes: this.#mergeSceneWithBatchForEdgeLookup([node]),
           variables: this.getAppState().variables,
           themeMode: this.getAppState().themeMode,
+          canvas: this.#canvas,
         },
       );
       this.#idEntityMap.set(node.id, idEntityMap.get(node.id));
@@ -1529,6 +2020,9 @@ export class API {
         if (!entity.has(Children)) {
           cameraEntityCommands.appendChild(this.commands.entity(entity));
         }
+        // PropagateTransforms already ran this frame; new nodes need a world matrix
+        // before the render pass (SmoothPolyline, transformer anchors, etc.).
+        updateGlobalTransform(entity);
       });
 
       this.commands.execute();
@@ -1537,7 +2031,13 @@ export class API {
         this.setNodes([...nodes, ...this.#refExpandedWireForBatch([node])]);
       }
     } else {
-      const updated = mutateElement(entity, node, diff ?? node, skipOverrideKeys, this);
+      const updated = mutateElement(
+        entity,
+        node,
+        diff ?? node,
+        skipOverrideKeys,
+        this,
+      );
       const index = nodes.findIndex((n) => n.id === updated.id);
 
       this.commands.execute();
@@ -1575,10 +2075,10 @@ export class API {
         this.commands,
         this.#idEntityMap,
         {
-          lookupNodes:
-            this.#mergeSceneWithBatchForEdgeLookup(nonExistentNodes),
+          lookupNodes: this.#mergeSceneWithBatchForEdgeLookup(nonExistentNodes),
           variables: this.getAppState().variables,
           themeMode: this.getAppState().themeMode,
+          canvas: this.#canvas,
         },
       );
       nonExistentNodes.forEach((node) => {
@@ -1592,6 +2092,9 @@ export class API {
         if (!entity.has(Children)) {
           cameraEntityCommands.appendChild(this.commands.entity(entity));
         }
+        // PropagateTransforms already ran this frame; new nodes need a world matrix
+        // before the render pass (SmoothPolyline, transformer anchors, etc.).
+        updateGlobalTransform(entity);
       });
 
       this.commands.execute();
@@ -1611,7 +2114,37 @@ export class API {
     }
   }
 
-  updateNodeVectorNetwork(node: SerializedNode, vectorNetwork: VectorNetwork) { }
+  updateNodeVectorNetwork(node: SerializedNode, vectorNetwork: VectorNetwork) {
+    const vertices = vectorNetwork.vertices ?? [];
+    const segments = vectorNetwork.segments ?? [];
+    const { regions } = vectorNetwork;
+
+    // Re-normalize the geometry so its bounding box top-left sits at the local
+    // origin (0,0), mirroring the deserialize convention (see
+    // utils/deserialize/entity.ts). The node translation absorbs the offset so
+    // the geometry keeps its world position, and Transformer resize math keeps
+    // relying on node.x === geometry left.
+    const { minX, minY, maxX, maxY } = VectorNetwork.getGeometryBounds({
+      vertices,
+      segments,
+    });
+
+    const normalizedVertices = vertices.map((vertex) => ({
+      ...vertex,
+      x: vertex.x - minX,
+      y: vertex.y - minY,
+    }));
+
+    this.updateNode(node, {
+      x: (node.x ?? 0) + minX,
+      y: (node.y ?? 0) + minY,
+      width: maxX - minX,
+      height: maxY - minY,
+      vertices: normalizedVertices,
+      segments,
+      ...(regions !== undefined ? { regions } : {}),
+    } as Partial<SerializedNode>);
+  }
 
   updateNodeOBB(
     node: SerializedNode,
@@ -1654,8 +2187,10 @@ export class API {
     }
 
     if ((node as { display?: string }).display === 'flex') {
-      if (!isNil(width)) (diff as { flexHugWidth?: boolean }).flexHugWidth = false;
-      if (!isNil(height)) (diff as { flexHugHeight?: boolean }).flexHugHeight = false;
+      if (!isNil(width))
+        (diff as { flexHugWidth?: boolean }).flexHugWidth = false;
+      if (!isNil(height))
+        (diff as { flexHugHeight?: boolean }).flexHugHeight = false;
     }
 
     if (delta) {
@@ -1716,11 +2251,39 @@ export class API {
           [x2, y2],
           geomDelta,
         );
-        const { minX, minY } = Line.getGeometryBounds({ x1: newX1, y1: newY1, x2: newX2, y2: newY2 });
+        const { minX, minY } = Line.getGeometryBounds({
+          x1: newX1,
+          y1: newY1,
+          x2: newX2,
+          y2: newY2,
+        });
         (diff as LineSerializedNode).x1 = newX1 - minX;
         (diff as LineSerializedNode).y1 = newY1 - minY;
         (diff as LineSerializedNode).x2 = newX2 - minX;
         (diff as LineSerializedNode).y2 = newY2 - minY;
+      } else if (node.type === 'vector-network') {
+        const oldNetwork = oldNode as VectorNetworkSerializedNode;
+        const transformed = transformVectorNetworkGeometry(
+          {
+            vertices: (oldNetwork.vertices ?? []).map((v) => ({ ...v })),
+            segments: (oldNetwork.segments ?? []).map((s) => ({
+              ...s,
+              tangentStart: s.tangentStart ? { ...s.tangentStart } : undefined,
+              tangentEnd: s.tangentEnd ? { ...s.tangentEnd } : undefined,
+            })),
+            regions: oldNetwork.regions?.map((region) => ({
+              fillRule: region.fillRule,
+              loops: region.loops.map((loop) => [...loop]),
+            })),
+          },
+          geomDelta,
+        );
+        (diff as VectorNetworkSerializedNode).vertices = transformed.vertices;
+        (diff as VectorNetworkSerializedNode).segments = transformed.segments;
+        if (transformed.regions !== undefined) {
+          (diff as VectorNetworkSerializedNode).regions =
+            transformed.regions as VectorNetworkSerializedNode['regions'];
+        }
       } else if (node.type === 'brush') {
         const shiftedPoints = deserializeBrushPoints(
           (oldNode as BrushSerializedNode)?.points,
@@ -1809,8 +2372,14 @@ export class API {
         const parent = this.getNodeByEntity(parentEntity);
         if (parent && parent.clipMode && parent.clipMode === 'clip') {
           // Union node's bounds with parent's clip bounds
-          const { minX, minY, maxX, maxY } = entity.read(ComputedBounds).renderWorldBounds;
-          const { minX: parentMinX, minY: parentMinY, maxX: parentMaxX, maxY: parentMaxY } = parentEntity.read(ComputedBounds).renderWorldBounds;
+          const { minX, minY, maxX, maxY } =
+            entity.read(ComputedBounds).renderWorldBounds;
+          const {
+            minX: parentMinX,
+            minY: parentMinY,
+            maxX: parentMaxX,
+            maxY: parentMaxY,
+          } = parentEntity.read(ComputedBounds).renderWorldBounds;
           const isectMinX = Math.max(minX, parentMinX);
           const isectMinY = Math.max(minY, parentMinY);
           const isectMaxX = Math.min(maxX, parentMaxX);
@@ -1846,9 +2415,7 @@ export class API {
     }
     const nodes = ids
       .map((id) => this.getNodeById(id))
-      .filter(
-        (n): n is SerializedNode => !!n && n.locked !== true,
-      );
+      .filter((n): n is SerializedNode => !!n && n.locked !== true);
     if (nodes.length < 2) {
       return;
     }
@@ -1920,9 +2487,7 @@ export class API {
     }
     const nodes = ids
       .map((id) => this.getNodeById(id))
-      .filter(
-        (n): n is SerializedNode => !!n && n.locked !== true,
-      );
+      .filter((n): n is SerializedNode => !!n && n.locked !== true);
     if (nodes.length < 2) {
       return;
     }
@@ -2049,14 +2614,8 @@ export class API {
     const obb = {
       x: translation[0],
       y: translation[1],
-      width: Math.max(
-        Math.abs((oldNode.width ?? 0) * scale[0]),
-        epsilon,
-      ),
-      height: Math.max(
-        Math.abs((oldNode.height ?? 0) * scale[1]),
-        epsilon,
-      ),
+      width: Math.max(Math.abs((oldNode.width ?? 0) * scale[0]), epsilon),
+      height: Math.max(Math.abs((oldNode.height ?? 0) * scale[1]), epsilon),
       rotation,
       scaleX: oldAttrs.scaleX * (Math.sign(wSign) || 1),
       scaleY: oldAttrs.scaleY * (Math.sign(hSign) || 1),
@@ -2067,13 +2626,7 @@ export class API {
       obb.scaleX = Math.sign(oldAttrs.scaleX || 1) * signW;
       obb.scaleY = Math.sign(oldAttrs.scaleY || 1) * signH;
     }
-    this.updateNodeOBB(
-      node,
-      obb,
-      node.lockAspectRatio,
-      undefined,
-      oldNode,
-    );
+    this.updateNodeOBB(node, obb, node.lockAspectRatio, undefined, oldNode);
     updateGlobalTransform(entity);
     updateComputedPoints(entity);
   }
@@ -2167,7 +2720,11 @@ export class API {
 
   reparentNode(node: SerializedNode, parent: SerializedNode) {
     // Modify x,y to be relative to the parent
-    this.updateNode(node, { parentId: parent.id, x: (node.x ?? 0) - (parent.x ?? 0), y: (node.y ?? 0) - (parent.y ?? 0) });
+    this.updateNode(node, {
+      parentId: parent.id,
+      x: (node.x ?? 0) - (parent.x ?? 0),
+      y: (node.y ?? 0) - (parent.y ?? 0),
+    });
   }
 
   /**
@@ -2258,7 +2815,7 @@ export class API {
 
     const parentIds = new Set(targets.map((n) => n.parentId ?? '__ROOT__'));
     const commonParentId =
-      parentIds.size === 1 ? (targets[0].parentId ?? undefined) : undefined;
+      parentIds.size === 1 ? targets[0].parentId ?? undefined : undefined;
 
     const zIndex = Math.max(...targets.map((n) => n.zIndex ?? 0), 0);
     const groupNode: GSerializedNode = {
@@ -2362,11 +2919,7 @@ export class API {
   }
 
   export(options: ExportOptions) {
-    const {
-      format,
-      download = true,
-      nodes = [],
-    } = options;
+    const { format, download = true, nodes = [] } = options;
     if (format === ExportFormat.SVG) {
       safeAddComponent(this.#canvas, VectorScreenshotRequest, {
         canvas: this.#canvas,
@@ -2422,7 +2975,9 @@ export class API {
       );
       const timeStartRaw = options.timeStart;
       const timeStart =
-        timeStartRaw != null && Number.isFinite(timeStartRaw) ? timeStartRaw : 0;
+        timeStartRaw != null && Number.isFinite(timeStartRaw)
+          ? timeStartRaw
+          : 0;
       const gq = options.gifQuality;
       const gifQuality: AnimationGifQuality =
         gq === 'medium' || gq === 'low' || gq === 'high' ? gq : 'high';
@@ -2457,12 +3012,15 @@ export class API {
   /**
    * Render nodes or the whole scene to SVG.
    */
-  async renderToSVG(nodes: SerializedNode[], options: Partial<{
-    grid: boolean;
-    padding?: number;
-    /** 默认 `resolved`；`css-var` 会注入 `:root` 变量并输出 `var(--token)` */
-    designVariablesExport?: DesignVariablesSvgExportMode;
-  }> = {}) {
+  async renderToSVG(
+    nodes: SerializedNode[],
+    options: Partial<{
+      grid: boolean;
+      padding?: number;
+      /** 默认 `resolved`；`css-var` 会注入 `:root` 变量并输出 `var(--token)` */
+      designVariablesExport?: DesignVariablesSvgExportMode;
+    }> = {},
+  ) {
     const canvas = this.#canvas;
     const {
       grid: gridEnabled,
@@ -2531,10 +3089,43 @@ export class API {
     return $namespace;
   }
 
-  async renderToCanvas(node: SerializedNode, options: { canvas?: HTMLCanvasElement, width?: number, height?: number } = {}): Promise<HTMLCanvasElement> {
-    let { canvas, width = node.width ?? 0, height = node.height ?? 0 } = options;
+  /**
+   * Transpile nodes (or the whole scene) to framework code (design-to-code).
+   *
+   * 确定性转译，对照 {@link renderToSVG}：默认 `react-tailwind` + `resolved`。变量与 `reusable`/
+   * `ref` 组件结构会被保留并映射为目标框架的 token / 组件。
+   */
+  exportCode(
+    nodes?: SerializedNode[],
+    options: CodegenOptions = {},
+  ): string {
+    const api = this.#canvas.read(Canvas).api;
+    const source = nodes && nodes.length ? nodes : api.getNodes();
+    return serializedNodesToCode(source, {
+      variables: api.getAppState().variables,
+      themeMode: api.getAppState().themeMode,
+      ...options,
+    });
+  }
+
+  async renderToCanvas(
+    node: SerializedNode,
+    options: {
+      canvas?: HTMLCanvasElement;
+      width?: number;
+      height?: number;
+    } = {},
+  ): Promise<HTMLCanvasElement> {
+    let {
+      canvas,
+      width = node.width ?? 0,
+      height = node.height ?? 0,
+    } = options;
     if (!canvas) {
-      canvas = DOMAdapter.get().createCanvas(width, height) as HTMLCanvasElement;
+      canvas = DOMAdapter.get().createCanvas(
+        width,
+        height,
+      ) as HTMLCanvasElement;
     }
 
     const ctx = canvas.getContext('2d')!;
@@ -2565,12 +3156,20 @@ export class API {
     const opacity = (node as { opacity?: number }).opacity ?? 1;
 
     if (node.type === 'rect' || node.type === 'rough-rect') {
-      const { x, y, width, height, strokeWidth, strokeLinecap, strokeLinejoin } = node;
+      const {
+        x,
+        y,
+        width,
+        height,
+        strokeWidth,
+        strokeLinecap,
+        strokeLinejoin,
+      } = node;
       const fill = fillFromFills;
       ctx.save();
       if (isDataUrl(fill) || isUrl(fill)) {
         ctx.globalAlpha = opacity * fillOpacity;
-        const image = await DOMAdapter.get().createImage(fill) as ImageBitmap;
+        const image = (await DOMAdapter.get().createImage(fill)) as ImageBitmap;
         ctx.drawImage(image, x ?? 0, y ?? 0, width ?? 0, height ?? 0);
       } else {
         ctx.globalAlpha = opacity * fillOpacity;
@@ -2585,12 +3184,28 @@ export class API {
       ctx.stroke();
       ctx.restore();
     } else if (node.type === 'ellipse' || node.type === 'rough-ellipse') {
-      const { x, y, width, height, strokeWidth, strokeLinecap, strokeLinejoin } = node;
+      const {
+        x,
+        y,
+        width,
+        height,
+        strokeWidth,
+        strokeLinecap,
+        strokeLinejoin,
+      } = node;
       const fill = fillFromFills;
       ctx.save();
       ctx.globalAlpha = opacity * fillOpacity;
       ctx.fillStyle = fill;
-      ctx.ellipse((x ?? 0) + (width ?? 0) / 2, (y ?? 0) + (height ?? 0) / 2, (width ?? 0) / 2, (height ?? 0) / 2, 0, 0, 2 * Math.PI);
+      ctx.ellipse(
+        (x ?? 0) + (width ?? 0) / 2,
+        (y ?? 0) + (height ?? 0) / 2,
+        (width ?? 0) / 2,
+        (height ?? 0) / 2,
+        0,
+        0,
+        2 * Math.PI,
+      );
       ctx.fill();
       ctx.globalAlpha = opacity * strokeOpacity;
       ctx.strokeStyle = strokeFromStrokes;
@@ -2612,7 +3227,14 @@ export class API {
         } else if (command === 'L') {
           ctx.lineTo(data[0], data[1]);
         } else if (command === 'C') {
-          ctx.bezierCurveTo(data[0], data[1], data[2], data[3], data[4], data[5]);
+          ctx.bezierCurveTo(
+            data[0],
+            data[1],
+            data[2],
+            data[3],
+            data[4],
+            data[5],
+          );
         }
       });
       ctx.closePath();
@@ -2640,7 +3262,8 @@ export class API {
       ctx.stroke();
       ctx.restore();
     } else if (node.type === 'line' || node.type === 'rough-line') {
-      const { x1, y1, x2, y2, strokeWidth, strokeLinecap, strokeLinejoin } = node;
+      const { x1, y1, x2, y2, strokeWidth, strokeLinecap, strokeLinejoin } =
+        node;
       ctx.save();
       ctx.globalAlpha = opacity * strokeOpacity;
       ctx.strokeStyle = strokeFromStrokes;
@@ -2653,7 +3276,13 @@ export class API {
       ctx.restore();
     }
 
-    await Promise.all(this.getChildren(node).map(child => this.renderToCanvas(this.getNodeByEntity(child), { canvas })).filter(Boolean));
+    await Promise.all(
+      this.getChildren(node)
+        .map((child) =>
+          this.renderToCanvas(this.getNodeByEntity(child), { canvas }),
+        )
+        .filter(Boolean),
+    );
 
     return canvas;
   }
@@ -2750,16 +3379,17 @@ export class API {
    * @see https://docs.excalidraw.com/docs/codebase/json-schema
    */
   exportIcDocument(source?: string) {
-    return buildIcDocumentFromState(this.getAppState(), this.getNodes(), source);
+    return buildIcDocumentFromState(
+      this.getAppState(),
+      this.getNodes(),
+      source,
+    );
   }
 
   /**
    * 自 `.ic` 文档或 JSON 字符串恢复场景（会先清空当前场景根节点）。
    */
-  importIcDocument(
-    doc: unknown,
-    options?: { recordHistory?: boolean },
-  ) {
+  importIcDocument(doc: unknown, options?: { recordHistory?: boolean }) {
     applyIcDocumentToApi(this, parseIcDocumentJson(doc), options);
   }
 

@@ -34,6 +34,7 @@ import {
   Text,
   TextDecoration,
   Line,
+  GlobalTransform,
 } from '../../packages/ecs/src';
 import { NodeJSAdapter, sleep } from '../utils';
 
@@ -79,7 +80,8 @@ describe('Export SVG', () => {
             ZIndex,
             Text,
             TextDecoration,
-            Line
+            Line,
+            GlobalTransform,
           ).write,
       );
 

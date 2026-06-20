@@ -33,6 +33,7 @@ import {
   Selected,
   Pen,
   Opacity,
+  GlobalTransform,
 } from '../../packages/ecs/src';
 import { NodeJSAdapter, sleep } from '../utils';
 
@@ -76,6 +77,7 @@ describe('Transformer when rotate', () => {
             ZIndex,
             Selected,
             Opacity,
+            GlobalTransform,
           ).write,
       );
 

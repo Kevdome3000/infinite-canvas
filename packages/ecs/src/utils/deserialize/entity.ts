@@ -37,6 +37,7 @@ import {
   HTMLContainer,
   Embed,
   Filter,
+  NodeLayerBlendMode,
   Binding,
   Binded,
   PartialBinding,
@@ -47,9 +48,14 @@ import {
   Group,
   IconFont,
   ColumnLayout,
-  Extrude3D
+  Extrude3D,
+  Light3D,
+  Mesh3DNode,
+  Canvas3DScope,
+  AnimationPlayer,
 } from '../../components';
 import type {
+  AnimationAttributes,
   AttenuationAttributes,
   BrushSerializedNode,
   ColumnLayoutSerializedNode,
@@ -60,6 +66,8 @@ import type {
   FilterAttributes,
   Extrude3DAttributes,
   GSerializedNode,
+  Light3DNodeSerializedNode,
+  Mesh3DNodeSerializedNode,
   HtmlSerializedNode,
   IconFontSerializedNode,
   InnerShadowAttributes,
@@ -81,6 +89,11 @@ import type {
   FlexboxLayoutAttributes,
 } from '../../types/serialized-node';
 import { resolveExtrude3DDepth } from '../extrude3d';
+import {
+  normalizeGeometry,
+  parseLight3DColor,
+  parseMesh3DBaseColor,
+} from '../mesh3d-node';
 import {
   isDataUrl,
   isUrl,
@@ -141,7 +154,7 @@ import { setFillLayerDecodedBitmapForUrl } from '../fill-layer-image-url-raster'
 import { hasRasterPostEffects } from '../filter';
 
 export function inferXYWidthHeight(node: SerializedNode) {
-  if (node.type === 'g') {
+  if (node.type === 'g' || node.type === 'light3d') {
     return node;
   }
 
@@ -977,6 +990,8 @@ export type SerializedNodesToEntitiesOptions = {
   variables?: DesignVariablesMap;
   /** 用于多主题设计变量条目的条件匹配 */
   themeMode?: ThemeMode;
+  /** Owning canvas for declarative 3D nodes (`mesh3d`, `light3d`). */
+  canvas?: Entity;
 };
 
 export function serializedNodesToEntities(
@@ -1145,6 +1160,23 @@ export function serializedNodesToEntities(
       }
     }
 
+    if (type === 'mesh3d') {
+      const meshAttrs = attributes as Mesh3DNodeSerializedNode;
+      const scale =
+        typeof meshAttrs.scale3d === 'number'
+          ? meshAttrs.scale3d
+          : (meshAttrs.scale3d?.[0] ?? 100);
+      attributes.width ??= scale;
+      attributes.height ??= scale;
+    }
+
+    if (type === 'light3d') {
+      attributes.x ??= 0;
+      attributes.y ??= 0;
+      attributes.width ??= 0;
+      attributes.height ??= 0;
+    }
+
     // Make sure the entity has a width and height
     inferXYWidthHeight(attributes);
 
@@ -1201,6 +1233,62 @@ export function serializedNodesToEntities(
           ),
         ),
       );
+    } else if (type === 'mesh3d') {
+      const attrs = attributes as Mesh3DNodeSerializedNode;
+      const mat = attrs.material3d ?? {};
+      entityCommands.insert(
+        new Rect({
+          x: 0,
+          y: 0,
+          width: absoluteWidth,
+          height: absoluteHeight,
+          cornerRadius: 0,
+        }),
+      );
+      entityCommands.insert(
+        new Mesh3DNode({
+          geometry: normalizeGeometry(attrs.geometry),
+          z: attrs.z ?? 0,
+          rotation3d: attrs.rotation3d ?? [0, 0, 0],
+          scale3d: attrs.scale3d ?? 100,
+          baseColor: parseMesh3DBaseColor(mat.baseColor),
+          ambient: mat.ambient ?? 0.25,
+          diffuse: mat.diffuse ?? 0.75,
+          specular: mat.specular ?? 0.4,
+          shininess: mat.shininess ?? 48,
+          metallic: mat.metallic ?? 0,
+          roughness: mat.roughness ?? 1,
+          map: mat.map ?? null,
+          specularMap: mat.specularMap ?? null,
+          bumpMap: mat.bumpMap ?? null,
+          bumpScale: mat.bumpScale ?? 1,
+          camera3d: attrs.camera3d,
+        }),
+      );
+      if (options?.canvas) {
+        entityCommands.insert(new Canvas3DScope({ canvas: options.canvas }));
+      }
+    } else if (type === 'light3d') {
+      const attrs = attributes as Light3DNodeSerializedNode;
+      entityCommands.insert(
+        new Light3D({
+          type: attrs.lightType,
+          color: parseLight3DColor(attrs.color),
+          intensity: attrs.intensity ?? 1,
+          direction: attrs.direction ?? [-0.5, -0.7, -0.5],
+          position: [absoluteX, absoluteY, attrs.z ?? 0],
+          range: attrs.range ?? 0,
+          ...(attrs.innerConeAngle != null
+            ? { innerConeAngle: attrs.innerConeAngle }
+            : {}),
+          ...(attrs.outerConeAngle != null
+            ? { outerConeAngle: attrs.outerConeAngle }
+            : {}),
+        }),
+      );
+      if (options?.canvas) {
+        entityCommands.insert(new Canvas3DScope({ canvas: options.canvas }));
+      }
     } else if (type === 'ellipse' || type === 'rough-ellipse') {
       entityCommands.insert(
         new Ellipse({
@@ -1785,6 +1873,16 @@ export function serializedNodesToEntities(
       entityCommands.insert(new Locked());
     }
 
+    const { animation } = attributes as AnimationAttributes;
+    if (animation && Array.isArray(animation.keyframes) && animation.keyframes.length > 0) {
+      entityCommands.insert(
+        new AnimationPlayer({
+          keyframes: animation.keyframes,
+          options: animation.options,
+        }),
+      );
+    }
+
     const { filter } = attributes as FilterAttributes;
     if (filter) {
       entityCommands.insert(new Filter({ value: filter }));
@@ -1794,6 +1892,11 @@ export function serializedNodesToEntities(
           ch.insert(new MaterialDirty());
         }
       }
+    }
+
+    const { blendMode } = attributes as SerializedNode;
+    if (blendMode != null && blendMode !== 'normal') {
+      entityCommands.insert(new NodeLayerBlendMode({ mode: blendMode }));
     }
 
     const { display } = attributes as FlexboxLayoutAttributes;

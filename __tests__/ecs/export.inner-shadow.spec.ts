@@ -32,6 +32,7 @@ import {
   Screenshot,
   InnerShadow,
   Opacity,
+  GlobalTransform,
 } from '../../packages/ecs/src';
 import { NodeJSAdapter, sleep } from '../utils';
 
@@ -77,6 +78,7 @@ describe('Export SVG', () => {
             Opacity,
             ZIndex,
             Opacity,
+            GlobalTransform,
           ).write,
       );
 

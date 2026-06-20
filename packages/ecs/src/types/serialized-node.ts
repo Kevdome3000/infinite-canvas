@@ -18,6 +18,7 @@ import {
   Visibility,
 } from '../components';
 import type { FillLayerBlendMode } from './fill-layer-blend';
+import type { AnimationOptions, Keyframe } from '../animation';
 import { EdgeStyle } from '../utils';
 import { DIRECTION_EAST, DIRECTION_NORTH, DIRECTION_SOUTH, DIRECTION_WEST } from '../utils/binding/constants';
 
@@ -32,6 +33,7 @@ export interface BaseSerializeNode<Type extends string>
   Partial<NameAttributes>,
   ZIndexAttributes,
   Partial<EditableAttributes>,
+  Partial<AnimationAttributes>,
   Partial<FlexboxLayoutAttributes> {
   /**
    * Unique identifier
@@ -79,6 +81,19 @@ export interface BaseSerializeNode<Type extends string>
   locked?: boolean;
 
   /**
+   * Layer-level blend mode ("mix mode"): how this whole node composites with the
+   * backdrop drawn beneath it. Exported to SVG as the CSS `mix-blend-mode` property.
+   * Defaults to `normal`.
+   *
+   * Note: per-fill blend modes are described separately on each entry of `fills`
+   * (see {@link SerializedFillLayerItem}); this field blends the entire node.
+   *
+   * @see https://help.figma.com/hc/en-us/articles/360040667874-Apply-blend-modes-to-layers-fills-and-effects
+   * @see https://developer.mozilla.org/en-US/docs/Web/CSS/mix-blend-mode
+   */
+  blendMode?: FillLayerBlendMode;
+
+  /**
    * Extra `data-*` attributes written on the exported SVG wrapper (`<g>` or primitive element).
    * Keys without a `data-` prefix become `data-` + kebab-case (e.g. `myKey` → `data-my-key`).
    * Keys that already start with `data-` are used as-is.
@@ -89,6 +104,18 @@ export interface BaseSerializeNode<Type extends string>
 export interface EditableAttributes {
   editable?: boolean;
   isEditing?: boolean;
+}
+
+/**
+ * Declarative, JSON-serializable keyframe animation attached to a node. Mirrors the
+ * {@link AnimationController} inputs; runtime playback state is not serialized.
+ * @see packages/site/docs/guide/lesson-036.md
+ */
+export interface AnimationAttributes {
+  animation?: {
+    keyframes: Keyframe[];
+    options: AnimationOptions;
+  };
 }
 
 export interface ZIndexAttributes {
@@ -389,10 +416,65 @@ export interface FilterAttributes {
   filter?: string;
 }
 
+import type { Mesh3DNodeGeometry } from '../components/geometry3d/Mesh3DNode';
+
 /** Spline-style 3D extrusion of a rect layer (canvas x/y/width/height). */
 export interface Extrude3DAttributes {
   /** `true` uses default depth; number sets depth in canvas world units. */
   extrude3d?: boolean | number;
+}
+
+export type Camera3DNodeConfig = {
+  linked?: boolean;
+  projection?: 'perspective' | 'orthographic';
+  clearColor?: boolean;
+};
+
+export type Material3DWire = {
+  baseColor?: string | [number, number, number, number];
+  ambient?: number;
+  diffuse?: number;
+  specular?: number;
+  shininess?: number;
+  /** Metalness 0..1 (PBR metallic-roughness workflow). */
+  metallic?: number;
+  /** Perceptual roughness 0..1 (PBR metallic-roughness workflow). */
+  roughness?: number;
+  /** Base-color texture (image URL or data URL). */
+  map?: string;
+  specularMap?: string;
+  bumpMap?: string;
+  bumpScale?: number;
+};
+
+/** Declarative 3D mesh node (canvas-local coordinates). */
+export interface Mesh3DNodeSerializedNode
+  extends BaseSerializeNode<'mesh3d'>,
+  Partial<TransformAttributes> {
+  geometry?: Mesh3DNodeGeometry;
+  /** Depth in canvas world units when {@link Camera3D.linked}. */
+  z?: number;
+  rotation3d?: [number, number, number];
+  scale3d?: number | [number, number, number];
+  material3d?: Material3DWire;
+  /** Ensures a scoped {@link Camera3D} exists for this canvas. */
+  camera3d?: Camera3DNodeConfig;
+}
+
+export type Light3DNodeType = 'ambient' | 'directional' | 'point' | 'spot';
+
+/** Declarative 3D light node. */
+export interface Light3DNodeSerializedNode
+  extends BaseSerializeNode<'light3d'>,
+  Partial<Pick<TransformAttributes, 'x' | 'y'>> {
+  lightType: Light3DNodeType;
+  color?: string | [number, number, number];
+  intensity?: number;
+  direction?: [number, number, number];
+  z?: number;
+  range?: number;
+  innerConeAngle?: number;
+  outerConeAngle?: number;
 }
 
 export interface GSerializedNode
@@ -841,6 +923,8 @@ export type SerializedNode =
   | HtmlSerializedNode
   | EmbedSerializedNode
   | IconFontSerializedNode
+  | Mesh3DNodeSerializedNode
+  | Light3DNodeSerializedNode
   | RefSerializedNode
   | ColumnLayoutSerializedNode;
 
@@ -861,6 +945,8 @@ export type SerializedNodeAttributes = GSerializedNode &
   HtmlSerializedNode &
   EmbedSerializedNode &
   IconFontSerializedNode &
+  Mesh3DNodeSerializedNode &
+  Light3DNodeSerializedNode &
   RefSerializedNode &
   ColumnLayoutSerializedNode;
 

@@ -282,6 +282,10 @@ export const ko = defineConfig({
                 link: 'fill-rule',
               },
               {
+                text: 'Vector Network 큐브 (모서리 드래그)',
+                link: 'vector-network-cube',
+              },
+              {
                 text: '텍스트',
                 items: [
                   {

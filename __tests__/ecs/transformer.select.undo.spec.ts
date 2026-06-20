@@ -33,6 +33,7 @@ import {
   Selected,
   Rect,
   Opacity,
+  GlobalTransform,
 } from '../../packages/ecs/src';
 import { NodeJSAdapter, sleep, createMouseEvent } from '../utils';
 
@@ -78,6 +79,7 @@ describe('Select and Undo', () => {
             Selected,
             Ellipse,
             Opacity,
+            GlobalTransform,
           ).write,
       );
 

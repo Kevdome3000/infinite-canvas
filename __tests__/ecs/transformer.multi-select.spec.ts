@@ -33,6 +33,7 @@ import {
   Pen,
   RectSerializedNode,
   Opacity,
+  GlobalTransform,
 } from '../../packages/ecs/src';
 import { NodeJSAdapter, sleep } from '../utils';
 
@@ -75,6 +76,7 @@ describe('Transformer', () => {
             ZIndex,
             Selected,
             Opacity,
+            GlobalTransform,
           ).write,
       );
 

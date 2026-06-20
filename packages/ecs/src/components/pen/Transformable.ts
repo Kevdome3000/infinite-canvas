@@ -56,6 +56,18 @@ export class Transformable {
    */
   @field.object declare controlPoints: Entity[];
   @field.object declare segmentMidpoints: Entity[];
+  /** VectorNetwork 编辑时 hover 到的线段索引，-1 表示无 */
+  @field({ type: Type.int32, default: -1 }) declare hoveredSegmentIndex: number;
+  /** VectorNetwork 编辑时 hover 到的顶点索引，-1 表示无 */
+  @field({ type: Type.int32, default: -1 }) declare hoveredControlPointIndex: number;
+  /** VectorNetwork 编辑时点击选中的顶点索引，-1 表示无 */
+  @field({ type: Type.int32, default: -1 }) declare selectedControlPointIndex: number;
+  /** Bend 模式下显示的切线控制点 */
+  @field.object declare vnTangentHandles: Entity[];
+  @field.object declare vnTangentMeta: {
+    segmentIndex: number;
+    end: 'start' | 'end';
+  }[];
   @field.object declare controlPointMeta: unknown[];
   @field.object declare pathControlCommands: (string | number)[][];
   /** Path 编辑时锚点与 handle 之间的虚线（本地 Line 实体） */

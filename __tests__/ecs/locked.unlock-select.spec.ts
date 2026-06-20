@@ -35,6 +35,7 @@ import {
   Highlighted,
   Locked,
   Opacity,
+  GlobalTransform,
 } from '../../packages/ecs/src';
 import { NodeJSAdapter, sleep } from '../utils';
 
@@ -83,6 +84,7 @@ describe('Locked', () => {
             Selected,
             Locked,
             Opacity,
+            GlobalTransform,
           ).write,
       );
 

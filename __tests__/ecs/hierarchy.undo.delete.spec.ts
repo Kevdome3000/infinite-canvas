@@ -37,6 +37,7 @@ import {
   Transformable,
   Highlighted,
   Opacity,
+  GlobalTransform,
 } from '../../packages/ecs/src';
 import { NodeJSAdapter, sleep } from '../utils';
 
@@ -86,6 +87,7 @@ describe('Hierarchy', () => {
             Transformable,
             Highlighted,
             Opacity,
+            GlobalTransform,
           ).write,
       );
 

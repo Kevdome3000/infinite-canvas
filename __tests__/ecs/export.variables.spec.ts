@@ -36,6 +36,7 @@ import {
   EllipseSerializedNode,
   GSerializedNode,
   Opacity,
+  GlobalTransform,
 } from '../../packages/ecs/src';
 import { NodeJSAdapter, sleep } from '../utils';
 
@@ -82,6 +83,7 @@ describe('Export SVG', () => {
             ZIndex,
             Group,
             Opacity,
+            GlobalTransform,
           ).write,
       );
 

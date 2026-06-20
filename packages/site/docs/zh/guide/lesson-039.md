@@ -3,11 +3,32 @@ outline: deep
 description: '在现有 2D 无限画布上叠加真 3D Mesh 渲染：统一三维空间、Camera3D 与 MeshPipeline3D。'
 ---
 
+<script setup>
+import Cube from '../../components/Cube.vue'
+import CubePerspective from '../../components/CubePerspective.vue'
+import Lighting from '../../components/Lighting.vue'
+import GltfDuck from '../../components/GltfDuck.vue'
+</script>
+
 # 课程 39 - 3D Mesh 渲染
 
-在 [课程 30 - 后处理与渲染图] 之前，画布上的图形都走 **2D 管线**：`mat3` 正交相机、路径三角化填充、SDF 等。本节在 **不替换** 这套 2D 渲染的前提下，增加一条 **真 3D Mesh** 分支：顶点带法线、透视/正交投影、深度测试，并与 2D 图层合成到同一块画布上。
+在 [课程 30 - 后处理与渲染图] 之前，画布上的图形都走 2D 管线：正交相机、SDF、路径三角化填充等。本节在不替换这套 2D 渲染的前提下，增加一条 3D Mesh 分支：顶点带法线、透视/正交投影、深度测试，并与 2D 图层合成到同一块画布上。
 
-设计目标接近 [Spline 的 2D/3D 同空间模型](https://docs.spline.design/designing-in-3-d/working-with-2d-and-3d-objects)：2D 图形可视为落在 **z = 0** 平面上的对象，3D 模型与之共处同一世界；平移/缩放 2D 相机时，可选让 3D 相机一起联动。实现见 [PR #271](https://github.com/xiaoiver/infinite-canvas-tutorial/pull/271)。
+## Framer、Spline、Rive 和 Bevy {#framer-spline-rive-bevy}
+
+Framer 和 Spline 实现 2D/3D 融合的核心思路可以归纳为两种技术路径，它们根据产品定位选择了不同的架构策略。
+
+Framer 的 3D 能力本质上是 CSS 3D Transforms 的增强封装，而非真正的 3D 渲染管线。因此无法导入外部 3D 模型（GLB/OBJ），无真实光照、阴影、材质系统，3D 效果仅限于"卡片翻转"、"视差层"等简单场景。详见：[How to Turn 2D Elements into Interactive 3D Objects in Framer]
+
+![source: https://framer.university/blog/how-to-turn-2d-elements-into-interactive-3d-objects-in-framer](https://framerusercontent.com/images/j0Ohpy2LqEoU8uSlHGeoymyLlg.png)
+
+Spline 是真正的 3D 编辑器，其架构更接近游戏引擎。Spline 允许创建独立的 [UI Scenes]（2D 画布），然后将其作为纹理贴到 3D 场景中的 UI Frame 对象上。[Working with 2D and 3D objects]
+
+![source: https://docs.spline.design/designing-in-3-d/working-with-2d-and-3d-objects](https://cdn.spline.design/_assets/docs/957fce0d-3bef-420c-90b0-9085ffec39fd.png)
+
+Rive 目前本质上仍是 2D 工具，它的"3D 感"来自 2.5D 变换、网格变形等，而非完整的 3D 管线。
+
+我们的思路和 [2D Rendering in Bevy] 接近，2D 图形可视为落在 **z = 0** 平面上的对象，3D 模型与之共处同一世界；平移/缩放 2D 相机时，可选让 3D 相机一起联动。实现见 [PR #271](https://github.com/xiaoiver/infinite-canvas-tutorial/pull/271)。
 
 ## 架构概览 {#architecture}
 
@@ -15,11 +36,12 @@ description: '在现有 2D 无限画布上叠加真 3D Mesh 渲染：统一三�
 同一 WebGL/WebGPU 上下文
   └─ MeshPipeline 渲染图
        ├─ Pass：3D（MeshPipeline3D.drawMeshes）
+       ├─ Pass：3D Gizmo（RenderGizmo3D.drawGizmos，叠在 mesh 之后）
        ├─ Pass：网格 / 2D 矢量（原有 BatchManager）
        └─ Pass：后处理 → 上屏
 ```
 
--   **`Renderer3DPlugin`**：注册 3D 组件，调度 `MeshPipeline3D`（GPU 缓存）与 **`CameraSync`**（联动 2D 相机）。
+-   **`Renderer3DPlugin`**：注册 3D 组件，调度 `MeshPipeline3D`（GPU 缓存）、**`CameraSync`**（联动 2D 相机）、**`Pick3D`**（选中/拖拽）与 **`RenderGizmo3D`**（变换把手绘制）。
 -   **`MeshPipeline3D`**：不负责单独 swapchain present；在 `MeshPipeline` 的主 pass 里 **先画 3D、再画 2D**，共用颜色与深度附件。
 -   现有 **`Mesh.ts`** 仍是 **2D 矢量填充**，不要与 3D 的 `Mesh3D` 混淆。
 
@@ -36,13 +58,6 @@ const app = new App().addPlugins(...DefaultPlugins, DefaultRenderer3DPlugin);
 app.run();
 ```
 
-示例可参考：
-
--   **[立方体（透视）](/zh/example/cube-perspective)**：`linked` + `perspective`，`translation: [100, 100, 40]`（与 `packages/webcomponents/examples/main.ts` 一致）
--   **[立方体（正交）](/zh/example/cube)**：`linked` + `orthographic`，`translation: [200, 100, 40]`
-
-文档站交互示例统一经 `packages/site/docs/lib/ensure-example-world.ts` 启动 ECS，默认注册 `DefaultRenderer3DPlugin`，SPA 跳转无需刷新。
-
 ## 核心组件 {#components}
 
 | 组件              | 作用                                                                                        |
@@ -50,7 +65,9 @@ app.run();
 | **`Camera3D`**    | `projection: 'perspective' \| 'orthographic'`；`linked` 时由 `CameraSync` 跟随 2D 平移/缩放 |
 | **`Mesh3D`**      | `positions`、`normals`、可选 `indices`（三角网格）                                          |
 | **`Material3D`**  | Blinn-Phong：`baseColor`、`ambient`、`diffuse`、`specular`、`shininess`                     |
+| **`Light3D`**     | `ambient` / `directional` / `point` / `spot`；见 [场景光照示例](/zh/example/lighting)       |
 | **`Transform3D`** | 平移、欧拉角旋转、缩放                                                                      |
+| **`Selected3D`**  | 3D 选中态：当前 gizmo 模式、激活轴/平面、拖拽参考点等（见 [3D 变换 Gizmo](#gizmo)）         |
 | **`Mat4`**        | 4×4 矩阵工具（`perspective` / `ortho` / `lookAt`）                                          |
 
 通过 ECS `commands.spawn` 创建实体，例如：
@@ -88,34 +105,9 @@ commands.spawn(
 );
 ```
 
-## Rect 挤出 `extrude3d`（Spline 式）{#extrude3d}
-
-在 rect 节点上设置 `extrude3d`，由 `SyncExtrude3D` 按 **同一套** `x` / `y` / `width` / `height` 生成 3D 盒子（无需手写 `Transform3D`）：
-
-```ts
-api.updateNodes([
-    {
-        id: 'box',
-        type: 'rect',
-        x: 100,
-        y: 100,
-        width: 200,
-        height: 200,
-        extrude3d: 80, // 或 true（默认深度 100）
-        fills: [
-            /* … */
-        ],
-    },
-]);
-```
-
--   包围盒、拖拽、缩放仍由 2D rect 的 Transformer 处理。
--   首次挤出会自动创建 `linked` + `orthographic` 的 `Camera3D`；mesh 中心与 rect 的 `x`/`y`/`extrude3d` 对齐（画布坐标）。
--   删除 rect 或去掉 `extrude3d` 会清理 companion mesh。
-
 ## 统一三维空间（linked 相机）{#unified-space}
 
-若希望 **拖动画布时 2D 与 3D 一起平移/缩放**，为 `Camera3D` 设置 `linked: true`。`linked` 时默认 `projection: 'orthographic'`；显式设为 `'perspective'` 可获得近大远小（见下文与 `packages/webcomponents/examples/main.ts`）。
+若希望 **拖动画布时 2D 与 3D 一起平移/缩放**，为 `Camera3D` 设置 `linked: true`
 
 `CameraSync` 每帧读取 2D `ComputedCamera` 的 `(x, y, zoom)`，并写入 3D 相机的 `eye` / `center` / `baseDistance`：
 
@@ -125,160 +117,129 @@ api.updateNodes([
 
 ### linked + 正交 {#linked-orthographic}
 
-`MeshPipeline3D` 直接使用 2D 的 `viewProjectionMatrix`（含 Y 翻转与平移缩放），适合 `extrude3d` 与 2D rect 严格对齐：
+`MeshPipeline3D` 直接使用 2D 的 `viewProjectionMatrix`（含 Y 翻转与平移缩放），适合 `extrude3d` 与 2D rect 严格对齐。
 
-```ts
-commands.spawn(
-    new Camera3D({
-        linked: true,
-        projection: 'orthographic',
-        clearColor: false,
-    }),
-);
+[立方体（正交）](/zh/example/cube) 示例使用 **linked + orthographic**（`translation: [200, 100, 40]`）。
 
-commands.spawn(
-    new Mesh3D({ positions, normals, indices }),
-    new Material3D({
-        /* … */
-    }),
-    new Transform3D({
-        // 与 2D 节点一致时可使用 canvasWorldToWorld3D(x, y, z)
-        translation: [200, 100, 40],
-        scale: [100, 100, 100],
-    }),
-);
-```
-
-文档站 [立方体（正交）](/zh/example/cube) 示例使用 **linked + orthographic**（`translation: [200, 100, 40]`）。
+<Cube />
 
 ### linked + 透视 {#linked-perspective}
 
 透视模式下，屏幕位置由 **完整 2D VP** 决定（平移、缩放、Y 翻转与 2D 一致），深度方向用透视矩阵按 `Transform3D.translation.z` 做近大远小；锚点为 `translation` 的 `(x, y, z)`，使物体落点与 2D 的 `(x, y)` 对齐。
 
-```ts
-commands.spawn(
-    new Camera3D({
-        linked: true,
-        projection: 'perspective',
-        clearColor: false,
-    }),
-);
+[立方体（透视）](/zh/example/cube-perspective) 使用上述 **linked + perspective** 配置；拖动画布时 cube 应与 2D 图层同向平移、同向缩放。
 
-commands.spawn(
-    new Mesh3D({ positions, normals, indices }),
-    new Material3D({
-        baseColor: [1, 1, 1, 1],
-        ambient: 0.25,
-        diffuse: 0.75,
-        specular: 0.4,
-        shininess: 48,
-    }),
-    new Transform3D({
-        // 画布坐标，与 SerializedNode 的 x/y 同系，勿对 x/y 再 canvasWorldToWorld3D
-        translation: [100, 100, 40],
-        rotation: [0.3, 0.6, 0],
-        scale: [100, 100, 100],
-    }),
-);
+<CubePerspective />
+
+## 基于 Raycast 的拾取 {#raycast-picking}
+
+3D 选中与 gizmo 拖拽由 **`Pick3D`** 系统负责（选择工具下 **`Select`** 也会调用同一套逻辑）。指针按下时，对光标下的视口像素做 CPU 检测，依次测试 gizmo 把手与 `Mesh3D` 三角形，**不**走 GPU picking pass。实现集中在 `ray-casting.ts` 与 `pick3d-probe.ts`。
+
+### 流程
+
+```plaintext
+视口坐标 (x, y)
+  └─ buildPickSceneForViewport(camera, …)  →  Mesh3DPickScene（与渲染同一套矩阵）
+       └─ probePick3DAtViewport(…)
+            ├─ 1. 已 Selected3D 实体的 gizmo 部件（逐 part 检测）
+            └─ 2. 本 canvas 全部 Mesh3D → 取最近命中（最小 t）
 ```
 
-在线示例 [立方体（透视）](/zh/example/cube-perspective) 使用上述 **linked + perspective** 配置；拖动画布时 cube 应与 2D 图层同向平移、同向缩放。
+**优先级**：先测 **已选中** 实体上的 gizmo；未命中再测场景 mesh。多个 mesh 同时命中时，取沿射线 **距离最近** 的一个（linked 透视下为 **深度最大/最靠前**）。
 
-### 独立 3D 相机 {#standalone-camera}
+### 标准 Raycast（正交 / 自由相机）
 
-不设 `linked` 时自行指定 `eye` / `center` / `projection`，2D 平移缩放只影响 2D 图层。适合固定机位的演示或单元测试：
+非 linked 透视模式时，拾取路径与常见 3D 编辑器一致：
+
+1. **`screenToRay`**：视口像素 → NDC → 用 **`inv(view × projection)`** 反投影近/远点，得到世界空间射线。
+2. **`rayMeshIntersection`**：顶点经 model 矩阵变换后：
+    - **粗测**：射线 vs 变换后的 **AABB**（slab 法）。
+    - **细测**：对每个三角形做 **Möller–Trumbore** 射线-三角形求交，保留最小 `t`。
 
 ```ts
-commands.spawn(
-    new Camera3D({
-        eye: [0, 0, 3.5],
-        center: [0, 0, 0],
-        clearColor: true,
-    }),
-);
-
-commands.spawn(
-    new Mesh3D({ positions, normals, indices }),
-    new Material3D({
-        /* … */
-    }),
-    new Transform3D({
-        translation: [0, 0, 0],
-        rotation: [0.4, 0.4, 0],
-        scale: [1, 1, 1],
-    }),
-);
+// packages/ecs/src/utils/ray-casting.ts（示意）
+const invVP = computeInvViewProjection(projMatrix, viewMatrix);
+const ray = screenToRay(vx, vy, width, height, invVP);
+const hit = rayMeshIntersection(ray, positions, indices, modelMatrix);
+// hit: { t, point, triangleIndex } | null
 ```
 
-## 与 2D 图层合成 {#compositing}
+**Linked 正交**（`linked + orthographic`）走同一路径：`MeshPipeline3D` 将 2D 的 `viewProjectionMatrix` 注入 pick scene，点击与 2D rect、`extrude3d` 严格对齐。
 
-典型用法：
+### Linked 透视：屏幕空间三角形
 
-1. `commands.spawn` 创建 `Camera3D` 与带 `Mesh3D` 的实体；
-2. `commands.execute()`；
-3. 照常 `api.updateNodes([...])` 添加矩形、图片等 2D 节点。
+**Linked 透视**对 mesh **不用**世界射线。屏幕位置由完整 2D VP 决定，深度由 `translation.z` 上的透视矩阵单独处理。为与顶点着色器一致，**`pickMeshLinkedPerspective`** 用相同 uniform 把每个三角形投影到视口，再用 **`pointInTriangle2D`** 判断光标是否在 **二维投影三角形** 内，并取该像素处 **最靠前** 的深度。gizmo 部件复用同一 helper（把手可带 Z 向 screen bias）。
 
-3D 先写入 framebuffer（可清屏），2D 网格与矢量再叠加上去；HTML overlay 仍由原有 `RenderHTML` 等系统处理。
+这样在无限画布上平移/缩放时，透视 cube 仍能做到「所见即所点」。
 
-## 动画与重绘 {#animation}
+### 拖拽约束
 
-`MeshPipeline` 默认 **按需渲染**（有脏标记才 `renderCamera`）。修改 **`Transform3D`**（或 `Mesh3D` / `Material3D` / `Camera3D`）后，会触发本帧 3D 重绘。
+gizmo 命中后，**`Pick3D.handleDrag`** 每帧重新求射线，并与 **约束平面** 求交（`intersectRayWithPlane`）：
 
-驱动旋转示例（在 `requestAnimationFrame` 里写组件即可，与 `App` 自带的 `world.execute()` 循环配合）：
+-   **平移**（箭头 / 平面）：平面法线随当前轴或平面 widget。
+-   **旋转**（圆环）：平面法线为环轴；角度增量由 `angleOnRotationPlane` 计算。
 
-```ts
-const cubeEntity = commands
-    .spawn(/* Mesh3D + Material3D + Transform3D */)
-    .id()
-    .hold();
+相对初始命中点（`dragHitStart`）的增量写回 **`Transform3D`**。
 
-commands.execute();
+完整指针流程与把手含义见 [3D 变换 Gizmo](#gizmo)。
 
-const t0 = performance.now();
-const spin = (now: number) => {
-    const t = (now - t0) / 1000;
-    cubeEntity.write(Transform3D).rotation = [
-        0.3 + t * 0.9,
-        0.6 + t * 1.2,
-        t * 0.5,
-    ];
-    requestAnimationFrame(spin);
-};
-requestAnimationFrame(spin);
+## 3D 变换 Gizmo {#gizmo}
+
+在 **选择工具**（`penbarSelected === Pen.SELECT`）下点击 3D 网格，会为实体挂上 **`Selected3D`**，并在物体中心绘制 **平移（translate）** 把手：红/绿/蓝箭头 + 半透明平面块。拖拽把手会写回 **`Transform3D.translation`**；与 2D 的 `Selected` + `RenderTransformer` 类似，但走独立 3D 拾取与绘制路径。
+
+### 交互流程 {#gizmo-flow}
+
+```plaintext
+pointer down（Select 工具）
+  └─ Pick3D.handlePointerDown
+       ├─ probePick3DAtViewport：先测 gizmo，再测 Mesh3D
+       ├─ 命中 gizmo → 记录 activeAxis、dragHitStart，dragging = true
+       └─ 命中 mesh → add Selected3D；未命中 → 移除已有 Selected3D
+
+pointer move（按住）
+  └─ Pick3D.handleDrag：射线与约束平面求交，delta = 当前交点 − dragHitStart
+
+pointer up
+  └─ 结束拖拽，清空 activeAxis / dragHitStart
 ```
 
-## 当前范围与后续 {#roadmap}
+### 坐标与把手含义 {#gizmo-axes}
 
-**已具备：**
+与 [统一三维空间](#unified-space) 一致，gizmo 使用 **画布坐标（Y 向下）**，不是 Blender 的 Y-up：
 
--   静态/动态三角网格、Blinn-Phong 光照、背面剔除
--   与 2D `MeshPipeline` 同图合成
--   `linked` + **orthographic**（2D VP 对齐）与 **perspective**（2D 平移/缩放/Y 翻转 + 透视深度）
--   `extrude3d` 挤出盒子（linked 正交路径）
+| 颜色 | 轴  | 方向（典型 linked 画布视图） | 拖拽改动的分量  |
+| ---- | --- | ---------------------------- | --------------- |
+| 红   | +X  | 向右                         | `translation.x` |
+| 绿   | +Y  | 向下                         | `translation.y` |
+| 蓝   | +Z  | **深度**（`z+` 朝画面里）    | `translation.z` |
 
-## 快照测试 {#tests}
+-   **箭头**：沿单轴平移。
+-   **平面**（`xy` / `xz` / `yz` 半透明方块）：在该平面内同时改两个分量（例如 `xy` = 只动 X、Y，不改 Z）。
 
-ECS 回归测试（需 headless WebGL，见仓库 `docs/running-ecs-tests.md`）：
+-   **合并模式 `transform`（默认，接近 Spline）**：**同时**显示平移箭头/平面与旋转圆环；点哪类把手就执行哪类操作（`activePartKind`：`translate` | `rotate`），无需 `W` / `E` 切换。
+-   拖 **箭头 / 平面** → 改 `Transform3D.translation`；拖 **圆环** → 改 `Transform3D.rotation`（局部欧拉角，与 mesh 一致）。
+-   圆环随物体当前朝向绘制；箭头仍保持画布世界轴向（X 右、Y 下、Z 深度）。
+-   拾取按屏幕空间 **最近** 命中；重叠时箭头在上层，优先拖到平移。`scale` 仍预留。
 
-| 文件                                     | 场景                                       | 金图                             |
-| ---------------------------------------- | ------------------------------------------ | -------------------------------- |
-| `__tests__/ecs/cube.spec.ts`             | 独立 `Camera3D` + 原点 cube                | `snapshots/cube.png`             |
-| `__tests__/ecs/cube-perspective.spec.ts` | `linked` + `perspective`，`(100, 100, 40)` | `snapshots/cube-perspective.png` |
+## 光照 {#lighting}
 
-```bash
-pnpm exec jest -c ./jest.ecs.config.js __tests__/ecs/cube.spec.ts __tests__/ecs/cube-perspective.spec.ts
-```
+演示 Light3D 组件与 Blinn-Phong 材质配合：环境光打底、冷色平行光作填充，暖色聚光灯绕场景中心轨道运动，立方体 / 球体 / 圆柱三种几何体便于对比 specular 与明暗变化。
 
-因 becsy / `App.run()` 限制，**每个 spec 文件只能启动一次 App**，透视用例单独放在 `cube-perspective.spec.ts`。
+<Lighting />
 
-**尚未覆盖（可结合 [#76](https://github.com/xiaoiver/infinite-canvas-tutorial/issues/76) 继续演进）：**
+## glTF 模型 {#gltf}
 
--   glTF 导入、PBR 材质、阴影与多光源
--   将 2D 图元完全迁入统一 3D 变换栈（而非「3D pass + 2D pass」叠层）
--   与 Vello 管线的 3D 整合
+通过声明式 `mesh3d` 的 `geometry: { type: 'gltf', url: '…' }` 加载外部 glTF/GLB。Khronos **Duck** 示例使用 `/data/` 下的 `.gltf` + `.bin`；网格会归一化到单位包围盒，再用 `scale3d` 缩放到画布尺寸。
+
+<GltfDuck />
 
 ## 扩展阅读 {#extended-reading}
 
--   [PR #271：3D rendering pipeline with unified space mode](https://github.com/xiaoiver/infinite-canvas-tutorial/pull/271)
--   [Spline：Working with 2D and 3D objects](https://docs.spline.design/designing-in-3-d/working-with-2d-and-3d-objects)
+-   [Working with 2D and 3D objects]
 -   [Bevy Core3dPlugin](https://docs.rs/bevy/latest/bevy/core_pipeline/core_3d/struct.Core3dPlugin.html)（插件分层参考）
+
+[课程 30 - 后处理与渲染图]: /zh/guide/lesson-030
+[How to Turn 2D Elements into Interactive 3D Objects in Framer]: https://framer.university/blog/how-to-turn-2d-elements-into-interactive-3d-objects-in-framer
+[UI Scenes]: https://docs.spline.design/designing-in-3-d/ui-scenes
+[Working with 2D and 3D objects]: https://docs.spline.design/designing-in-3-d/working-with-2d-and-3d-objects
+[2D Rendering in Bevy]: https://bevy.org/examples/2d-rendering/2d-shapes/

@@ -50,6 +50,10 @@ import {
   Material3D,
   Mesh3D,
   Extrude3D,
+  Light3D,
+  Mesh3DNode,
+  NodeLayerBlendMode,
+  DropShadow,
 } from '@infinite-canvas-tutorial/ecs';
 import { Event } from '../event';
 import { pendingGpuReadyDispatch } from '../API';
@@ -114,6 +118,10 @@ export class EmitCanvasReady extends System {
           Material3D,
           Transform3D,
           Extrude3D,
+          Light3D,
+          Mesh3DNode,
+          NodeLayerBlendMode,
+          DropShadow,
         ).write,
     );
   }

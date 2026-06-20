@@ -30,6 +30,7 @@ import {
   ComputeZIndex,
   Pen,
   Opacity,
+  GlobalTransform,
 } from '../../packages/ecs/src';
 import { NodeJSAdapter, sleep, createMouseEvent } from '../utils';
 
@@ -70,6 +71,7 @@ describe('Draw polyline in pencil canvas mode', () => {
             Name,
             ZIndex,
             Opacity,
+            GlobalTransform,
           ).write,
       );
 

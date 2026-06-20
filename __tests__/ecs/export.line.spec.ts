@@ -33,6 +33,7 @@ import {
   Screenshot,
   Line,
   Opacity,
+  GlobalTransform,
 } from '../../packages/ecs/src';
 import { NodeJSAdapter, sleep } from '../utils';
 
@@ -78,6 +79,7 @@ describe('Export SVG', () => {
             ZIndex,
             Line,
             Opacity,
+            GlobalTransform,
           ).write,
       );
 

@@ -34,6 +34,7 @@ import {
   PolylineSerializedNode,
   Polyline,
   Opacity,
+  GlobalTransform,
 } from '../../packages/ecs/src';
 import { NodeJSAdapter, sleep } from '../utils';
 
@@ -78,6 +79,7 @@ describe('Transformer', () => {
             Selected,
             Polyline,
             Opacity,
+            GlobalTransform,
           ).write,
       );
 

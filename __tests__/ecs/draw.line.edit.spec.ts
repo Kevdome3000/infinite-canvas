@@ -35,6 +35,7 @@ import {
   Binding,
   Editable,
   Opacity,
+  GlobalTransform,
 } from '../../packages/ecs/src';
 import { NodeJSAdapter, sleep, createMouseEvent } from '../utils';
 
@@ -80,6 +81,7 @@ describe('Draw line', () => {
             ZIndex,
             Editable,
             Opacity,
+            GlobalTransform,
           ).write,
       );
 
@@ -150,7 +152,7 @@ describe('Draw line', () => {
       await sleep(300);
     }
 
-    await sleep(300);
+    await sleep(1000);
 
     const dir = `${__dirname}/snapshots`;
     await expect($canvas!.getContext('webgl1')).toMatchWebGLSnapshot(

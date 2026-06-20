@@ -34,6 +34,7 @@ import {
   ClipMode,
   RectSerializedNode,
   Opacity,
+  GlobalTransform,
 } from '../../packages/ecs/src';
 import { NodeJSAdapter, sleep } from '../utils';
 
@@ -80,6 +81,7 @@ describe('Export SVG', () => {
             ZIndex,
             ClipMode,
             Opacity,
+            GlobalTransform,
           ).write,
       );
 

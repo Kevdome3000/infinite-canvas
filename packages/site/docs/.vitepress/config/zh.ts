@@ -156,6 +156,7 @@ export const zh = defineConfig({
               { text: 'Mermaid', link: 'mermaid' },
               { text: 'D2', link: 'd2' },
               { text: 'Drawio', link: 'drawio' },
+              { text: 'Figma', link: 'figma' },
               { text: 'Yoga', link: 'yoga' },
               { text: 'Vello', link: 'vello' },
             ],
@@ -236,6 +237,10 @@ export const zh = defineConfig({
               {
                 text: '填充规则',
                 link: 'fill-rule',
+              },
+              {
+                text: 'VectorNetwork 立方体（拖拽边）',
+                link: 'vector-network-cube',
               },
               {
                 text: '文本',
@@ -329,6 +334,10 @@ export const zh = defineConfig({
               {
                 text: '声明式渐变',
                 link: 'declarative-gradient',
+              },
+              {
+                text: 'mix-blend-mode',
+                link: 'blend-mode',
               },
               {
                 text: '重复图案',
@@ -444,6 +453,18 @@ export const zh = defineConfig({
                   {
                     text: '立方体（透视）',
                     link: 'cube-perspective',
+                  },
+                  {
+                    text: '场景光照',
+                    link: 'lighting',
+                  },
+                  {
+                    text: '贴图地球',
+                    link: 'earth',
+                  },
+                  {
+                    text: 'GLTF Duck',
+                    link: 'gltf-duck',
                   },
                 ],
               }
