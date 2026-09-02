@@ -89,6 +89,45 @@ export const parseMermaid = async (
         ...config.themeVariables,
         fontSize: resolvedFontSize,
       },
+
+      // ---------------------------------------------------------------------
+      // SECURITY PINS — founder ruling CM-R5 (2026-09-01). Do not move above
+      // the `...config` spread, and do not let a caller override them.
+      //
+      // Why: `mermaid.render()` output is assigned to `svgContainer.innerHTML`
+      // (:111) on a node appended to `document.body` (:108), and the two live
+      // callers — `packages/canvas/src/components/mermaid-paste.ts` and
+      // `infinite-canvas/packages/webcomponents/src/spectrum/mermaid-paste.ts`
+      // — enter this path from a CLIPBOARD PASTE, gated only by the heuristic
+      // `isLikelyMermaidSyntax`. There is no CSP backstop: ADR-078 (Accepted
+      // 2026-08-26) ships 'unsafe-eval' and rests the defence on 'self'
+      // sourcing and the local-first perimeter.
+      //
+      // `MERMAID_CONFIG` (@excalidraw/mermaid-to-excalidraw@2.2.2) sets
+      // NEITHER of these, so before this pin the behaviour was whatever the
+      // resolving mermaid engine defaulted to. `flowchart.htmlLabels`
+      // defaults to `null` in mermaid 11.15.0, which some label-construction
+      // sites coalesce to `true` and others negate — i.e. it was UNREADABLE
+      // FROM THE DEFAULT. Pin it; do not reason about it.
+      //
+      // Placement matters twice:
+      //  1. These keys sit AFTER `...config`, so a caller cannot weaken them.
+      //     (Before this change the caller's config won outright — `...config`
+      //     at :85 spreads after `...MERMAID_CONFIG` at :84.)
+      //  2. `flowchart` is spread explicitly rather than replaced, because a
+      //     shallow `flowchart: { htmlLabels: false }` would DROP
+      //     MERMAID_CONFIG's `curve: "linear"`.
+      //
+      // Fix belongs here, in the shared engine — NOT at either caller. There
+      // are two callers in two build-graph trees; a caller-side fix lands
+      // twice and drifts.
+      // ---------------------------------------------------------------------
+      securityLevel: 'strict' as const,
+      flowchart: {
+        ...MERMAID_CONFIG.flowchart,
+        ...config.flowchart,
+        htmlLabels: false,
+      },
     };
     const configHash = hashConfig(mergedConfig as Record<string, unknown>);
     if (configHash !== lastConfigHash) {
