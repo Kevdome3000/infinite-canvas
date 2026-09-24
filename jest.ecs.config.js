@@ -21,6 +21,8 @@ const esm = [
 
 module.exports = {
   testTimeout: 30000,
+  // Engine fixtures import the same dependencies as the ECS workspace.
+  modulePaths: ['<rootDir>/packages/ecs/node_modules'],
   setupFiles: ['<rootDir>/__tests__/jest-pretext-canvas.js'],
   testMatch: ['**/ecs/*.spec.+(ts|tsx|js)'],
   preset: 'ts-jest',

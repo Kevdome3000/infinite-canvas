@@ -1765,7 +1765,7 @@ export class Select extends System {
     const entity = api.getEntity(node);
     if (!isEntityAlive(entity) || !entity.has(GlobalTransform)) return false;
     const matrix = Mat3.toGLMat3(entity.read(GlobalTransform).matrix);
-    return matrix.every(
+    return Array.from(matrix).every(
       (value, i) => Math.abs(value - drag.worldMatrix[i]) < 1e-6,
     );
   }
