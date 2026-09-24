@@ -4,7 +4,6 @@ import {
   Commands,
   ComputeZIndex,
   DefaultPlugins,
-  DefaultRendererPlugin,
   DefaultStateManagement,
   DOMAdapter,
   PreStartUp,
@@ -74,7 +73,7 @@ describe('reconciled document contract in a real ECS world', () => {
         api.createCamera({ zoom: 1 });
       }
     }
-    const app = new App().addPlugins(...DefaultPlugins.filter((plugin) => plugin !== DefaultRendererPlugin), () => {
+    const app = new App().addPlugins(...DefaultPlugins, () => {
       system(PreStartUp)(StartUpSystem);
       system((s) => s.before(ComputeZIndex))(StartUpSystem);
     });
