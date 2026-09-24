@@ -1,184 +1,210 @@
-/// <reference types="jest" />
-import {
-    App,
-    Commands,
-    Entity,
-    Plugin,
-    PreStartUp,
-    System,
-    Transform,
-    system,
-    Connection,
-    ColumnLayout,
-    Rect,
-    ConnectionPlugin,
-    LayoutPlugin,
-    TransformPlugin,
-    Polyline,
-    Vec2
-} from '../../packages/ecs/src';
-import { entityToSerializedNodes } from '../../packages/ecs/src/utils/serialize/entity';
-import { serializedNodesToEntities } from '../../packages/ecs/src/utils/deserialize/entity';
+import type { API, SerializedNode } from '../../packages/ecs/src';
 
-export const sleep = (ms: number) => {
-    return new Promise((resolve) => setTimeout(resolve, ms));
-};
+// The document API owns serialization; ECS entity IDs are not document IDs.
+// Mapping from the retired fixture is recorded in serialization-contract.md.
+describe('layout and connection document round trip', () => {
+  it('restores layout settings, routed dashed geometry and bindings in a fresh world', async () => {
+    const document = [
+      {
+        id: 'layout',
+        type: 'column-layout',
+        x: 10,
+        y: 10,
+        width: 100,
+        height: 200,
+        gap: 20,
+        padding: 15,
+        alignItems: 'center',
+        isAutoLayout: true,
+      },
+      { id: 'source', type: 'rect', x: 0, y: 0, width: 40, height: 40 },
+      { id: 'target', type: 'rect', x: 150, y: 100, width: 40, height: 40 },
+      {
+        id: 'connection',
+        type: 'polyline',
+        fromId: 'source',
+        toId: 'target',
+        edgeStyle: 'orthogonalEdgeStyle',
+        orthogonal: true,
+        points: '0,0 1,1',
+        stroke: '#000000',
+        strokeWidth: 2,
+        strokeDasharray: '8,4',
+      },
+    ] as SerializedNode[];
 
-describe('Serialization', () => {
-    it('should serialize and deserialize ColumnLayout and Connection', async () => {
-        const app = new App();
+    const loadAndInspect = async (nodes: SerializedNode[], edit: boolean) => {
+      // Becsy decorators are module-global. Reload modules for a fresh registry,
+      // as independent engine instances have in separate module contexts.
+      jest.resetModules();
+      const {
+        API,
+        App,
+        Commands,
+        ComputeZIndex,
+        DefaultPlugins,
+        DefaultStateManagement,
+        DOMAdapter,
+        PreStartUp,
+        System,
+        system,
+        Camera,
+        Canvas,
+        Children,
+        FillLayers,
+        GlobalTransform,
+        Grid,
+        Name,
+        Opacity,
+        Parent,
+        Rect,
+        Ellipse,
+        HTML,
+        HTMLContainer,
+        ColumnLayout,
+        Renderable,
+        StrokeLayers,
+        Stroke,
+        Theme,
+        Transform,
+        Visibility,
+        ZIndex,
+        Binding,
+        Binded,
+        Polyline,
+      } = await import('../../packages/ecs/src');
 
-        const entities: { layout?: Entity; source?: Entity; target?: Entity; conn?: Entity } = {};
+      DOMAdapter.set({
+        createCanvas: () =>
+          ({
+            width: 0,
+            height: 0,
+            getContext: () => null,
+            addEventListener: () => undefined,
+            removeEventListener: () => undefined,
+            style: {},
+          } as unknown as HTMLCanvasElement),
+        createTexImageSource: (canvas: unknown) => canvas,
+        createImage: () =>
+          Promise.reject(new Error('images are not used by this test')),
+        getWindow: () => globalThis,
+        getDocument: () => undefined,
+        getXMLSerializer: () => null,
+        getDOMParser: () => null,
+        splitGraphemes: (s: string) => Array.from(s),
+        requestAnimationFrame: () => 0,
+        cancelAnimationFrame: () => undefined,
+      } as never);
 
-        const TestSetupPlugin: Plugin = (app) => {
-            app.registerComponent(Polyline); // Needed for visual connection parts
-            app.registerComponent(Rect); // Needed for layout parts
-            system(PreStartUp)(StartUpSystem);
-        };
-
-        class StartUpSystem extends System {
-            private readonly commands = new Commands(this);
-
-            // We declare a query to ensure write access if needed
-            q = this.query((q) => q.using(Transform, Connection, Polyline, ColumnLayout, Rect).write);
-
-            initialize(): void {
-                // Create ColumnLayout Entity
-                const layoutCmd = this.commands.spawn(
-                    new Transform({ translation: new Vec2(10, 10) }),
-                    new ColumnLayout({
-                        gap: 20,
-                        padding: 15,
-                        alignItems: 'center',
-                        isAutoLayout: true
-                    }),
-                    new Rect({ width: 100, height: 200 })
-                );
-                entities.layout = layoutCmd.id().hold();
-
-                // Create Source & Target for connection
-                const sourceCmd = this.commands.spawn(new Transform({ translation: new Vec2(0, 0) }));
-                const sourceEntity = sourceCmd.id().hold();
-                entities.source = sourceEntity;
-
-                const targetCmd = this.commands.spawn(new Transform({ translation: new Vec2(100, 100) }));
-                const targetEntity = targetCmd.id().hold();
-                entities.target = targetEntity;
-
-                // Create Connection Entity
-                const connCmd = this.commands.spawn(
-                    new Connection({
-                        source: sourceEntity,
-                        target: targetEntity,
-                        routingType: 'orthogonal',
-                        strokeStyle: 'dashed'
-                    }),
-                    new Polyline() // Visual representation
-                );
-                entities.conn = connCmd.id().hold();
-            }
-        }
-
-        app.addPlugins(TransformPlugin, LayoutPlugin, ConnectionPlugin, TestSetupPlugin);
-
-        // Run the app loop to initialize entities
-        await app.run();
-        await sleep(50); // Allow systems to process
-
-        // 1. Serialize entities
-        const serializedNodes = [];
-        if (entities.layout) serializedNodes.push(...entityToSerializedNodes(entities.layout));
-        if (entities.conn) serializedNodes.push(...entityToSerializedNodes(entities.conn));
-
-        // Check serialization output
-        const layoutNode = serializedNodes.find(n => n.type === 'column-layout');
-        expect(layoutNode).toBeDefined();
-        expect((layoutNode as any).gap).toBe(20);
-        expect((layoutNode as any).padding).toBe(15);
-        expect((layoutNode as any).alignItems).toBe('center');
-
-        const connNode = serializedNodes.find(n => n.type === 'connection');
-        expect(connNode).toBeDefined();
-        // Verify IDs match source/target (need to check how IDs are serialized, likely stringified entity ID)
-        // entities.source.__id is internal, but serialization usually uses it to map.
-        // However, `entityToSerializedNodes` uses internal `__id`? 
-        // Yes: const id = entity.__id;
-
-        expect((connNode as any).routingType).toBe('orthogonal');
-        expect((connNode as any).strokeStyle).toBe('dashed');
-        expect((connNode as any).source).toBe(entities.source?.__id);
-
-
-        // 2. Deserialize (Mocking world)
-        // We need a fresh Commands object usually, but testing deserialization function in isolation 
-        // requires a mocked Commands or a real one attached to a system.
-        // `serializedNodesToEntities` takes `commands: Commands`.
-
-        // We can't easily spawn into the SAME world without conflicts or ID mapping issues strictly speaking,
-        // but here we just want to verify the created components.
-        // Let's rely on checking the serialized data mostly, as `serializedNodesToEntities` uses standard `commands.spawn`.
-
-        // To strictly test deserialization, we would need to run it.
-        // Let's assume serialization checking is the critical missing part requested by review.
-        // But acceptance criteria said "Round-trip".
-
-        // Validating "Round-trip" implies:
-        // Serialize -> JSON -> Deserialize -> Check Components.
-
-        // We can use the existing app's commands if we are careful or use a "mock" commands object
-        // that captures spawn calls.
-
-        const mockCommands: any = {
-            spawn: () => {
-                const entityStore: any = {
-                    components: [],
-                    insert: (component: any) => {
-                        entityStore.components.push(component);
-                        return entityStore;
-                    },
-                    appendChild: () => { },
-                    id: () => ({ hold: () => ({}) })
-                };
-                return entityStore;
-            }
-        };
-
-        // Mock idEntityMap to resolve references
-        const idMap = new Map();
-        // Pre-populate source/target in map so connection can resolve them
-        idMap.set(entities.source!.__id, { id: () => entities.source });
-        idMap.set(entities.target!.__id, { id: () => entities.target });
-
-        const result = serializedNodesToEntities(
-            serializedNodes,
-            [], // fonts
-            mockCommands,
-            idMap
+      let api: API;
+      class StartUpSystem extends System {
+        commands = new Commands(this);
+        access = this.query(
+          (q) =>
+            q.using(
+              Canvas,
+              Theme,
+              Grid,
+              Camera,
+              Parent,
+              Children,
+              Transform,
+              GlobalTransform,
+              Renderable,
+              FillLayers,
+              StrokeLayers,
+              Stroke,
+              Opacity,
+              Visibility,
+              Name,
+              ZIndex,
+              Rect,
+              Ellipse,
+              HTML,
+              HTMLContainer,
+              ColumnLayout,
+              Binding,
+              Binded,
+              Polyline,
+            ).write,
         );
+        initialize() {
+          api = new API(new DefaultStateManagement(), this.commands);
+          api.createCanvas({ width: 300, height: 300, devicePixelRatio: 1 });
+          api.createCamera({ zoom: 1 });
+        }
+      }
+      const app = new App().addPlugins(...DefaultPlugins, () => {
+        system(PreStartUp)(StartUpSystem);
+        system((s) => s.before(ComputeZIndex))(StartUpSystem);
+      });
+      await app.run();
+      const frame = async (operation: () => void) => {
+        api.runAtNextTick(operation);
+        await app.world.execute();
+      };
+      try {
+        await frame(() => api.replaceDocument(nodes, 'remote'));
+        const layout = api
+          .getEntity(api.getNodeById('layout'))
+          .read(ColumnLayout);
+        expect(layout.gap).toBe(edit ? 20 : 24);
+        expect(layout.padding).toBe(15);
+        expect(layout.alignItems).toBe('center');
+        expect(layout.isAutoLayout).toBe(true);
 
-        // Inspect created "entities"
-        // We expect a ColumnLayout entity and Connection entity (plus children/parents if any)
-        // Since we mocked spawn, `result.entities` will be our mock objects.
-
-        // Actually `serializedNodesToEntities` returns { entities, idEntityMap }. 
-        // The entries in `idEntityMap` values are the spawn results.
-
-        // Let's filter for the one that has ColumnLayout component
-        const allSpawned = Array.from(result.idEntityMap.values()) as any[];
-
-        const layoutSpawn = allSpawned.find(e => e.components.some((c: any) => c instanceof ColumnLayout));
-        expect(layoutSpawn).toBeDefined();
-        const layoutComp = layoutSpawn.components.find((c: any) => c instanceof ColumnLayout);
-        expect(layoutComp.gap).toBe(20);
-
-        const connSpawn = allSpawned.find(e => e.components.some((c: any) => c instanceof Connection));
-        expect(connSpawn).toBeDefined();
-        const connComp = connSpawn.components.find((c: any) => c instanceof Connection);
-        expect(connComp.strokeStyle).toBe('dashed');
-        // Ensure source/target resolved
-        expect(connComp.source).toBe(entities.source);
-        expect(connComp.target).toBe(entities.target);
-
+        const edge = api.getEntity(api.getNodeById('connection'));
+        const source = api.getEntity(api.getNodeById('source'));
+        const target = api.getEntity(api.getNodeById('target'));
+        expect(edge.read(Binding).from).toBe(source);
+        expect(edge.read(Binding).to).toBe(target);
+        expect(source.has(Binded)).toBe(true);
+        expect(target.has(Binded)).toBe(true);
+        expect(Array.from(edge.read(Stroke).dasharray)).toEqual(
+          edit ? [8, 4] : [12, 6],
+        );
+        const points = edge.read(Polyline).points;
+        expect(points.length).toBeGreaterThanOrEqual(3);
+        expect(points.flat().every(Number.isFinite)).toBe(true);
+        for (let i = 1; i < points.length; i++) {
+          expect(
+            points[i][0] === points[i - 1][0] ||
+              points[i][1] === points[i - 1][1],
+          ).toBe(true);
+        }
+        if (edit) {
+          await frame(() => {
+            api.updateNode(api.getNodeById('layout'), { gap: 24 });
+            api.updateNode(api.getNodeById('connection'), {
+              strokeDasharray: '12,6',
+            });
+          });
+        }
+        // Actual export/import across JSON and two independent ECS worlds.
+        const exported = JSON.parse(
+          JSON.stringify(api.getNodes()),
+        ) as SerializedNode[];
+        expect(exported.find((n) => n.id === 'layout')).toMatchObject({
+          type: 'column-layout',
+          gap: 24,
+          padding: 15,
+          alignItems: 'center',
+          isAutoLayout: true,
+        });
+        expect(exported.find((n) => n.id === 'connection')).toMatchObject({
+          type: 'polyline',
+          fromId: 'source',
+          toId: 'target',
+          edgeStyle: 'orthogonalEdgeStyle',
+          orthogonal: true,
+          strokeDasharray: '12,6',
+        });
+        return exported;
+      } finally {
         await app.exit();
-    });
+      }
+    };
+    const serialized = await loadAndInspect(document, true);
+    expect(await loadAndInspect(serialized, false)).toEqual(serialized);
+  });
 });
