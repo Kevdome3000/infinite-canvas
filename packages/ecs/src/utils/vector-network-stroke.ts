@@ -28,52 +28,6 @@ function reverseFlatPoints(flat: number[]): number[] {
   return out;
 }
 
-function appendWithoutDuplicateJoin(
-  base: number[],
-  extension: number[],
-): void {
-  if (extension.length === 0) {
-    return;
-  }
-  if (base.length >= 2) {
-    const lx = base[base.length - 2];
-    const ly = base[base.length - 1];
-    const fx = extension[0];
-    const fy = extension[1];
-    if (
-      Math.abs(lx - fx) < EPS &&
-      Math.abs(ly - fy) < EPS
-    ) {
-      base.push(...extension.slice(2));
-      return;
-    }
-  }
-  base.push(...extension);
-}
-
-function prependWithoutDuplicateJoin(
-  base: number[],
-  prefix: number[],
-): void {
-  if (prefix.length === 0) {
-    return;
-  }
-  if (base.length >= 2 && prefix.length >= 2) {
-    const bx = base[0];
-    const by = base[1];
-    const lx = prefix[prefix.length - 2];
-    const ly = prefix[prefix.length - 1];
-    if (
-      Math.abs(lx - bx) < EPS &&
-      Math.abs(ly - by) < EPS
-    ) {
-      base.unshift(...prefix.slice(0, -2));
-      return;
-    }
-  }
-  base.unshift(...prefix);
-}
-
 function isStraightCubic(
   p0: vec2,
   p1: vec2,
@@ -127,7 +81,10 @@ export function tessellateVectorSegment(
   vec2.add(p1, p0, vec2.fromValues(ts?.x ?? 0, ts?.y ?? 0));
   vec2.add(p2, p3, vec2.fromValues(te?.x ?? 0, te?.y ?? 0));
 
-  if (vec2.squaredDistance(p0, p3) < EPS * EPS) {
+  if (
+    vec2.squaredDistance(p0, p3) < EPS * EPS &&
+    isStraightCubic(p0, p1, p2, p3)
+  ) {
     return [p0[0], p0[1], p3[0], p3[1]];
   }
 
@@ -145,25 +102,6 @@ export function tessellateVectorSegment(
     out.push(pts[i][0], pts[i][1]);
   }
   return out;
-}
-
-function tessellateOriented(
-  vertices: VectorVertexLike[],
-  seg: VectorSegmentLike,
-  from: number,
-  to: number,
-): number[] {
-  const pts = tessellateVectorSegment(vertices, seg);
-  if (pts.length === 0) {
-    return [];
-  }
-  if (seg.start === from && seg.end === to) {
-    return pts;
-  }
-  if (seg.end === from && seg.start === to) {
-    return reverseFlatPoints(pts);
-  }
-  return [];
 }
 
 /** -1 = tessellation interior (use global stroke linejoin). */

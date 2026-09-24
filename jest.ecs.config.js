@@ -1,4 +1,3 @@
-/* eslint-env node */
 const esm = [
   'd3-*',
   'earcut',
@@ -10,6 +9,12 @@ const esm = [
   'point-to-segment-2d',
   '@chenglou/pretext',
   'uuid',
+  '@exodus/bytes',
+  '@noble/hashes',
+  'parse5',
+  'entities',
+  '@csstools',
+  '@asamuzakjp',
 ]
   .map((d) => `_${d}|${d}`)
   .join('|');
@@ -19,7 +24,7 @@ module.exports = {
   setupFiles: ['<rootDir>/__tests__/jest-pretext-canvas.js'],
   testMatch: ['**/ecs/*.spec.+(ts|tsx|js)'],
   preset: 'ts-jest',
-  moduleFileExtensions: ['ts', 'tsx', 'js', 'json'],
+  moduleFileExtensions: ['ts', 'tsx', 'js', 'mjs', 'cjs', 'json'],
   modulePathIgnorePatterns: ['dist', '\\.next'],
   // Workspace packages: resolve to source so tests run without a prior build
   moduleNameMapper: {
@@ -31,7 +36,7 @@ module.exports = {
   },
   collectCoverageFrom: ['packages/ecs/src/**/*.ts'],
   transform: {
-    '^.+\\.[tj]s$': [
+    '^.+\\.[cm]?[tj]s$': [
       'ts-jest',
       {
         isolatedModules: true,

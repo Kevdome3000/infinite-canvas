@@ -22,6 +22,7 @@ import {
   distanceBetweenPoints,
   EASING_FUNCTION,
   getScale,
+  inferXYWidthHeight,
   inLine,
   inPolyline,
   isDataUrl,
@@ -98,7 +99,6 @@ import {
   Font,
   GlobalTransform,
   Grid,
-  Group,
   Highlighted,
   Landmark,
   LandmarkAnimationEffectTiming,
@@ -119,7 +119,6 @@ import {
   Stroke,
   Text,
   Theme,
-  ThemeMode,
   mergeThemeState,
   resolveThemeModeFromPreference,
   ToBeDeleted,
@@ -147,6 +146,10 @@ import {
   updateMatrix,
 } from './systems';
 import { DOMAdapter } from './environment';
+import { TaskQueue } from './TaskQueue';
+import { CapabilityRegistry } from './CapabilityRegistry';
+import { ResourceScope } from './resources/ResourceScope';
+import { documentValueEqual, validateDocument } from './document';
 import { SIBLINGS_MAX_Z_INDEX, SIBLINGS_MIN_Z_INDEX } from './context';
 import {
   applyIcDocumentToApi,
@@ -245,7 +248,7 @@ export class DefaultStateManagement implements StateManagement {
     this.#nodes = nodes;
   }
 
-  onChange(snapshot: { appState: AppState; nodes: SerializedNode[] }) { }
+  onChange(snapshot: { appState: AppState; nodes: SerializedNode[] }) {}
 }
 
 export const mapToArray = <T extends { id: string } | string>(
@@ -267,14 +270,6 @@ export const arrayToMap = <T extends { id: string } | string>(
     return acc;
   }, new Map());
 };
-
-export const pendingAPICallings: (() => any)[] = [];
-
-/**
- * 在 {@link Deleter} 完成本帧 `ToBeDeleted` 实体移除后执行（晚于 `pendingAPICallings`）。
- * 用于导入场景等需在「旧实体已删除」后再 `updateNodes` 的逻辑。
- */
-export const pendingAPICallingsAfterDelete: (() => any)[] = [];
 
 export interface Mesh3DLayer {
   id: string;
@@ -304,7 +299,15 @@ export class API {
   #mesh3DLayerEntities: Map<string, Entity> = new Map();
   #selectedMesh3DLayerIds: string[] = [];
   #history = new History();
+  #beforeHistoryChange = new Set<() => void>();
   #store = new Store(this);
+  #tasks = new TaskQueue();
+  #afterDeleteTasks = new TaskQueue();
+  #destroyed = false;
+  #scope = new ResourceScope();
+  #activeImageTasks = 0;
+
+  readonly capabilities = new CapabilityRegistry();
 
   onchange: (snapshot: { appState: AppState; nodes: SerializedNode[] }) => void;
   onNodesChange: (nodes: SerializedNode[]) => void;
@@ -317,29 +320,30 @@ export class API {
     this.#store.onStoreIncrementEmitter.on(StoreIncrementEvent, (event) => {
       this.#history.record(event.elementsChange, event.appStateChange);
 
-      const snapshot = {
-        appState: this.stateManagement.getAppState(),
-        nodes: this.stateManagement.getNodes(),
-      };
-      this.stateManagement.onChange?.(snapshot);
-
-      // 分别触发 nodes 和 appState 的变化回调
-      if (!event.elementsChange.isEmpty() && this.onNodesChange) {
-        this.onNodesChange(snapshot.nodes);
-      }
-
-      if (!event.appStateChange.isEmpty() && this.onAppStateChange) {
-        this.onAppStateChange(snapshot.appState);
-      }
-
-      // 保持向后兼容：如果设置了 onchange，当有任何变化时都会触发
-      if (
-        this.onchange &&
-        (!event.elementsChange.isEmpty() || !event.appStateChange.isEmpty())
-      ) {
-        this.onchange(snapshot);
-      }
+      this.notifyChange(
+        !event.elementsChange.isEmpty(),
+        !event.appStateChange.isEmpty(),
+      );
     });
+  }
+
+  private notifyChange(nodesChanged = true, appStateChanged = true) {
+    const snapshot = { appState: this.getAppState(), nodes: this.getNodes() };
+    this.stateManagement.onChange?.(snapshot);
+    if (nodesChanged) this.onNodesChange?.(snapshot.nodes);
+    if (appStateChanged) this.onAppStateChange?.(snapshot.appState);
+    if (nodesChanged || appStateChanged) this.onchange?.(snapshot);
+  }
+
+  /** Register cleanup owned by this canvas. Returns an idempotent disposer. */
+  onDestroy(cleanup: () => void) {
+    return this.#scope.add(cleanup);
+  }
+
+  /** End transient edits before undo/redo reads the current document. */
+  onBeforeHistoryChange(callback: () => void) {
+    this.#beforeHistoryChange.add(callback);
+    return this.onDestroy(() => this.#beforeHistoryChange.delete(callback));
   }
 
   getCommands() {
@@ -383,7 +387,10 @@ export class API {
     }
 
     const oldAppState = this.getAppState();
-    const { cameraZoom, cameraX, cameraY, cameraRotation } = patch;
+    const { cameraZoom, cameraX, cameraY, cameraRotation } = {
+      ...oldAppState,
+      ...patch,
+    };
 
     if (
       Object.prototype.hasOwnProperty.call(patch, 'checkboardStyle') &&
@@ -443,19 +450,19 @@ export class API {
       const mergedVariables = options?.replaceVariables
         ? (patch.variables as NonNullable<AppState['variables']>)
         : {
-          ...prevVariables,
-          ...patch.variables,
-        };
+            ...prevVariables,
+            ...patch.variables,
+          };
       variablesPatch = { variables: mergedVariables };
     }
 
     if (
-      (cameraZoom && cameraZoom !== oldAppState.cameraZoom) ||
-      (cameraX && cameraX !== oldAppState.cameraX) ||
-      (cameraY && cameraY !== oldAppState.cameraY) ||
-      (cameraRotation && cameraRotation !== oldAppState.cameraRotation)
+      cameraZoom !== oldAppState.cameraZoom ||
+      cameraX !== oldAppState.cameraX ||
+      cameraY !== oldAppState.cameraY ||
+      cameraRotation !== oldAppState.cameraRotation
     ) {
-      if (this.#camera.has(ComputedCamera)) {
+      if (this.#camera?.has(ComputedCamera)) {
         this.gotoLandmark(
           {
             zoom: cameraZoom ?? 1,
@@ -494,7 +501,7 @@ export class API {
     const variablesActuallyChanged =
       Object.prototype.hasOwnProperty.call(patch, 'variables') &&
       JSON.stringify((variablesPatch as { variables?: object }).variables) !==
-      JSON.stringify(prevVariables);
+        JSON.stringify(prevVariables);
 
     const shouldRefreshDesignVariableBindings =
       variablesActuallyChanged ||
@@ -1164,7 +1171,9 @@ export class API {
             stroke: strokeForHit,
           });
         } else {
-          const ctx = DOMAdapter.get().createCanvas(100, 100).getContext('2d') as CanvasRenderingContext2D;
+          const ctx = DOMAdapter.get()
+            .createCanvas(100, 100)
+            .getContext('2d') as CanvasRenderingContext2D;
           const path = new Path2D(d);
           if (hasStroke) {
             ctx.strokeStyle = resolveGpuStrokeColor(entity) ?? 'transparent';
@@ -1287,6 +1296,7 @@ export class API {
     const EPSILON = 0.0001;
 
     const animate = (timestamp: number) => {
+      if (this.#destroyed) return;
       if (timeStart === undefined) {
         timeStart = timestamp;
       }
@@ -1330,12 +1340,14 @@ export class API {
         if (onframe) {
           onframe(t);
         }
-        this.#landmarkAnimationID =
-          DOMAdapter.get().requestAnimationFrame(animate);
+        if (!this.#destroyed) {
+          this.#landmarkAnimationID =
+            DOMAdapter.get().requestAnimationFrame(animate);
+        }
       }
     };
 
-    DOMAdapter.get().requestAnimationFrame(animate);
+    this.#landmarkAnimationID = DOMAdapter.get().requestAnimationFrame(animate);
   }
 
   private applyLandmark(landmark: Landmark) {
@@ -1437,7 +1449,9 @@ export class API {
   // -------------------------------------------------------------------------
 
   /** @returns the live {@link AnimationController} attached to a node, if any. */
-  getNodeAnimationController(id: SerializedNode['id']): AnimationController | null {
+  getNodeAnimationController(
+    id: SerializedNode['id'],
+  ): AnimationController | null {
     const node = this.getNodeById(id);
     if (!node) {
       return null;
@@ -1808,19 +1822,19 @@ export class API {
     // remove duplicates
     const layersSelected = preserveSelection
       ? [
-        ...prevAppState.layersSelected,
-        ...nodes.map((node) => node.id),
-      ].filter((id, index, self) => self.indexOf(id) === index)
+          ...prevAppState.layersSelected,
+          ...nodes.map((node) => node.id),
+        ].filter((id, index, self) => self.indexOf(id) === index)
       : nodes
-        .map((node) => node.id)
-        .filter((id, index, self) => self.indexOf(id) === index);
+          .map((node) => node.id)
+          .filter((id, index, self) => self.indexOf(id) === index);
     if (updateAppState) {
       const layersHighlighted = preserveSelection
         ? prevAppState.layersHighlighted
         : prevAppState.layersHighlighted.filter(
-          (id) =>
-            !prevSelectedIds.includes(id) || layersSelected.includes(id),
-        );
+            (id) =>
+              !prevSelectedIds.includes(id) || layersSelected.includes(id),
+          );
       this.setAppState({
         ...prevAppState,
         layersSelected,
@@ -1877,7 +1891,9 @@ export class API {
       return node?.type === 'mesh3d' || node?.type === 'light3d';
     };
 
-    nodes = nodes.filter((node) => node.type !== 'mesh3d' && node.type !== 'light3d');
+    nodes = nodes.filter(
+      (node) => node.type !== 'mesh3d' && node.type !== 'light3d',
+    );
 
     if (!preserveSelection) {
       this.getAppState().layersHighlighted.forEach((id) => {
@@ -1890,12 +1906,12 @@ export class API {
     // remove duplicates
     const layersHighlighted = preserveSelection
       ? [
-        ...prevAppState.layersHighlighted,
-        ...nodes.map((node) => node.id),
-      ].filter((id, index, self) => self.indexOf(id) === index)
+          ...prevAppState.layersHighlighted,
+          ...nodes.map((node) => node.id),
+        ].filter((id, index, self) => self.indexOf(id) === index)
       : nodes
-        .map((node) => node.id)
-        .filter((id, index, self) => self.indexOf(id) === index);
+          .map((node) => node.id)
+          .filter((id, index, self) => self.indexOf(id) === index);
     if (updateAppState) {
       this.setAppState({
         ...prevAppState,
@@ -1919,11 +1935,12 @@ export class API {
       safeRemoveComponent(entity, Highlighted);
     });
 
+    const ids = new Set(nodes.map((node) => node.id));
     const prevAppState = this.getAppState();
     this.setAppState({
       ...prevAppState,
       layersHighlighted: prevAppState.layersHighlighted.filter(
-        (id) => !nodes.map((node) => node.id).includes(id),
+        (id) => !ids.has(id),
       ),
     });
   }
@@ -2038,11 +2055,11 @@ export class API {
         skipOverrideKeys,
         this,
       );
-      const index = nodes.findIndex((n) => n.id === updated.id);
 
       this.commands.execute();
 
       if (updateAppState) {
+        const index = nodes.findIndex((n) => n.id === updated.id);
         if (index !== -1) {
           nodes[index] = updated;
           this.setNodes(nodes);
@@ -2058,6 +2075,9 @@ export class API {
    * @see https://docs.excalidraw.com/docs/@excalidraw/excalidraw/api/props/excalidraw-api#updatescene
    */
   updateNodes(nodes: SerializedNode[], updateAppState = true) {
+    if (!nodes.length) return;
+    const nextNodes = updateAppState ? this.getNodes().slice() : [];
+    const indices = new Map(nextNodes.map((node, index) => [node.id, index]));
     const existentNodes = nodes.filter((node) =>
       this.#idEntityMap.has(node.id),
     );
@@ -2100,18 +2120,85 @@ export class API {
       this.commands.execute();
 
       if (updateAppState) {
-        this.setNodes([
-          ...this.getNodes(),
-          ...this.#refExpandedWireForBatch(nonExistentNodes),
-        ]);
+        nextNodes.push(...this.#refExpandedWireForBatch(nonExistentNodes));
       }
     }
 
     if (existentNodes.length > 0) {
       existentNodes.forEach((node) => {
-        this.updateNode(node, undefined, updateAppState);
+        this.updateNode(node, undefined, false);
+        const index = indices.get(node.id);
+        if (updateAppState && index !== undefined)
+          nextNodes[index] = { ...node };
       });
     }
+    if (updateAppState) this.setNodes(nextNodes);
+  }
+
+  /**
+   * Apply a complete document snapshot. Missing IDs are deleted, unlike updateNodes.
+   * Call inside runAtNextTick when applying an asynchronous remote update.
+   */
+  replaceDocument(
+    nodes: readonly SerializedNode[],
+    source: 'local' | 'remote' = 'remote',
+  ) {
+    const received = structuredClone(nodes.filter((node) => !node.isDeleted));
+    validateDocument(received);
+    const next = expandRefSerializedNodes(received, received);
+    validateDocument(next);
+    next.forEach((node) => {
+      if (node.type === 'mesh3d') {
+        node.x ??= 0;
+        node.y ??= 0;
+        const scale =
+          typeof node.scale3d === 'number'
+            ? node.scale3d
+            : node.scale3d?.[0] ?? 100;
+        node.width ??= scale;
+        node.height ??= scale;
+      }
+      if ([node.x, node.y, node.width, node.height].some(isNil))
+        inferXYWidthHeight(node);
+    });
+    const previous = this.getNodes();
+    const previousById = new Map(previous.map((node) => [node.id, node]));
+    const nextIds = new Set(next.map((node) => node.id));
+    const changed = next.filter(
+      (node) => !documentValueEqual(previousById.get(node.id), node),
+    );
+    // Structural changes and removed attributes need fresh components with their defaults.
+    const rebuild = changed.some((node) => {
+      const old = previousById.get(node.id);
+      return (
+        old &&
+        (old.type !== node.type ||
+          old.parentId !== node.parentId ||
+          Object.keys(old).some(
+            (key) => old[key] !== undefined && node[key] === undefined,
+          ))
+      );
+    });
+    const selected = this.getAppState().layersSelected.filter((id) =>
+      nextIds.has(id),
+    );
+    const removed = previous.filter((node) => rebuild || !nextIds.has(node.id));
+    if (removed.length)
+      this.deleteNodesById(
+        removed.map((node) => node.id),
+        false,
+      );
+    // mutateElement updates local version metadata; keep the received document intact.
+    this.updateNodes(structuredClone(rebuild ? next : changed), false);
+    this.setNodes(next);
+    if (rebuild && selected.length) {
+      this.selectNodes(selected.map((id) => this.getNodeById(id)));
+    }
+    this.record(
+      source === 'remote'
+        ? CaptureUpdateAction.NEVER
+        : CaptureUpdateAction.IMMEDIATELY,
+    );
   }
 
   updateNodeVectorNetwork(node: SerializedNode, vectorNetwork: VectorNetwork) {
@@ -2122,8 +2209,7 @@ export class API {
     // Re-normalize the geometry so its bounding box top-left sits at the local
     // origin (0,0), mirroring the deserialize convention (see
     // utils/deserialize/entity.ts). The node translation absorbs the offset so
-    // the geometry keeps its world position, and Transformer resize math keeps
-    // relying on node.x === geometry left.
+    // the geometry keeps its world position, including under rotation and scale.
     const { minX, minY, maxX, maxY } = VectorNetwork.getGeometryBounds({
       vertices,
       segments,
@@ -2135,9 +2221,13 @@ export class API {
       y: vertex.y - minY,
     }));
 
+    // Rebase in the parent's coordinate system, preserving rotated/scaled anchors.
+    const angle = node.rotation ?? 0;
+    const dx = minX * (node.scaleX ?? 1);
+    const dy = minY * (node.scaleY ?? 1);
     this.updateNode(node, {
-      x: (node.x ?? 0) + minX,
-      y: (node.y ?? 0) + minY,
+      x: (node.x ?? 0) + Math.cos(angle) * dx - Math.sin(angle) * dy,
+      y: (node.y ?? 0) + Math.sin(angle) * dx + Math.cos(angle) * dy,
       width: maxX - minX,
       height: maxY - minY,
       vertices: normalizedVertices,
@@ -2345,8 +2435,8 @@ export class API {
           typeof fs === 'number'
             ? fs
             : typeof fs === 'string'
-              ? parseFloat(fs) || 12
-              : 12;
+            ? parseFloat(fs) || 12
+            : 12;
         (diff as TextSerializedNode).fontSize = oldFontSize * sY;
 
         const ww = textOld.wordWrapWidth ?? 0;
@@ -2631,30 +2721,26 @@ export class API {
     updateComputedPoints(entity);
   }
 
-  deleteNodesById(ids: SerializedNode['id'][]) {
-    const nodes = this.getNodes();
-    const deletedNodes: SerializedNode[] = [];
-
-    // 递归收集所有子节点及其后代
-    const collectChildrenRecursively = (node: SerializedNode) => {
-      deletedNodes.push(node);
-      nodes.splice(nodes.indexOf(node), 1);
-
-      this.getChildren(node).forEach((child) => {
-        const childNode = this.getNodeByEntity(child);
-        if (childNode) {
-          collectChildrenRecursively(childNode);
-        }
-      });
-    };
-
-    ids.forEach((id) => {
-      const index = nodes.findIndex((n) => id === n.id);
-      if (index !== -1) {
-        const node = nodes[index];
-        collectChildrenRecursively(node);
+  deleteNodesById(ids: SerializedNode['id'][], updateAppState = true) {
+    const previous = this.getNodes();
+    const children = new Map<string, string[]>();
+    previous.forEach((node) => {
+      if (node.parentId != null) {
+        const siblings = children.get(node.parentId) ?? [];
+        siblings.push(node.id);
+        children.set(node.parentId, siblings);
       }
     });
+    const deletedIds = new Set<string>();
+    const pending = [...ids];
+    while (pending.length) {
+      const id = pending.pop()!;
+      if (deletedIds.has(id)) continue;
+      deletedIds.add(id);
+      pending.push(...(children.get(id) ?? []));
+    }
+    const nodes = previous.filter((node) => !deletedIds.has(node.id));
+    const deletedNodes = previous.filter((node) => deletedIds.has(node.id));
 
     this.deselectNodes(deletedNodes);
     this.unhighlightNodes(deletedNodes);
@@ -2667,7 +2753,7 @@ export class API {
       this.#idEntityMap.delete(node.id);
     });
 
-    this.setNodes(nodes);
+    if (updateAppState) this.setNodes(nodes);
 
     return deletedNodes;
   }
@@ -2888,21 +2974,31 @@ export class API {
 
   undo() {
     this.runAtNextTick(() => {
-      this.#history.undo(
+      this.#beforeHistoryChange.forEach((callback) => callback());
+      const result = this.#history.undo(
         arrayToMap(this.getNodes()),
         this.getAppState(),
         this.#store.snapshot,
       );
+      if (result) {
+        this.record(CaptureUpdateAction.NEVER);
+        this.notifyChange();
+      }
     });
   }
 
   redo() {
     this.runAtNextTick(() => {
-      this.#history.redo(
+      this.#beforeHistoryChange.forEach((callback) => callback());
+      const result = this.#history.redo(
         arrayToMap(this.getNodes()),
         this.getAppState(),
         this.#store.snapshot,
       );
+      if (result) {
+        this.record(CaptureUpdateAction.NEVER);
+        this.notifyChange();
+      }
     });
   }
 
@@ -3095,10 +3191,7 @@ export class API {
    * 确定性转译，对照 {@link renderToSVG}：默认 `react-tailwind` + `resolved`。变量与 `reusable`/
    * `ref` 组件结构会被保留并映射为目标框架的 token / 组件。
    */
-  exportCode(
-    nodes?: SerializedNode[],
-    options: CodegenOptions = {},
-  ): string {
+  exportCode(nodes?: SerializedNode[], options: CodegenOptions = {}): string {
     const api = this.#canvas.read(Canvas).api;
     const source = nodes && nodes.length ? nodes : api.getNodes();
     return serializedNodesToCode(source, {
@@ -3291,47 +3384,57 @@ export class API {
    * Tear down this canvas instance (scene nodes, camera, and canvas entity).
    */
   destroy() {
-    const prev = this.getAppState();
-    this.setAppState({
-      ...prev,
-      layersSelected: [],
-      layersHighlighted: [],
-      layersCropping: [],
-    });
+    if (this.#destroyed) return;
+    this.#destroyed = true;
+    this.#tasks.dispose();
+    this.#afterDeleteTasks.dispose();
+    this.cancelLandmarkAnimation();
+    this.capabilities.dispose();
+    try {
+      this.#scope.dispose();
+    } finally {
+      const prev = this.getAppState();
+      this.setAppState({
+        ...prev,
+        layersSelected: [],
+        layersHighlighted: [],
+        layersCropping: [],
+      });
 
-    for (const node of [...this.getNodes()]) {
-      const entity = this.getEntity(node);
-      if (entity) {
-        try {
-          if (entity.has(Selected)) {
-            entity.remove(Selected);
+      for (const node of [...this.getNodes()]) {
+        const entity = this.getEntity(node);
+        if (entity) {
+          try {
+            if (entity.has(Selected)) {
+              entity.remove(Selected);
+            }
+            safeRemoveComponent(entity, Highlighted);
+          } catch {
+            /* entity already deleted */
           }
-          safeRemoveComponent(entity, Highlighted);
-        } catch {
-          /* entity already deleted */
+          try {
+            entity.delete();
+          } catch {
+            /* already deleted */
+          }
         }
+        this.#idEntityMap.delete(node.id);
+      }
+      this.setNodes([]);
+
+      if (this.#camera) {
         try {
-          entity.delete();
+          this.#camera.delete();
         } catch {
           /* already deleted */
         }
       }
-      this.#idEntityMap.delete(node.id);
-    }
-    this.setNodes([]);
-
-    if (this.#camera) {
-      try {
-        this.#camera.delete();
-      } catch {
-        /* already deleted */
-      }
-    }
-    if (this.#canvas) {
-      try {
-        this.#canvas.delete();
-      } catch {
-        /* already deleted */
+      if (this.#canvas) {
+        try {
+          this.#canvas.delete();
+        } catch {
+          /* already deleted */
+        }
       }
     }
   }
@@ -3364,14 +3467,41 @@ export class API {
   }
 
   runAtNextTick(fn: () => any) {
-    pendingAPICallings.push(fn);
+    this.#tasks.add(fn);
+  }
+
+  /** @internal Called by the owning world's Deleter system. */
+  flushPendingTasks() {
+    this.#tasks.flush();
+  }
+
+  /** @internal Called after entity deletion by the owning world. */
+  flushAfterDeleteTasks() {
+    this.#afterDeleteTasks.flush();
+  }
+
+  private async runImageTask<T>(
+    message: string,
+    task: () => Promise<T>,
+  ): Promise<T> {
+    if (this.#destroyed) throw new Error('Canvas has been destroyed');
+    this.#activeImageTasks++;
+    this.setAppState({ loading: true, loadingMessage: message });
+    try {
+      return await task();
+    } finally {
+      this.#activeImageTasks--;
+      if (!this.#destroyed && !this.#activeImageTasks) {
+        this.setAppState({ loading: false, loadingMessage: '' });
+      }
+    }
   }
 
   /**
    * 在当前帧实体删除（`ToBeDeleted` → `entity.delete()`）完成之后执行回调。
    */
   runAfterDeletedEntities(fn: () => any) {
-    pendingAPICallingsAfterDelete.push(fn);
+    this.#afterDeleteTasks.add(fn);
   }
 
   /**
@@ -3403,19 +3533,27 @@ export class API {
     prompt: string,
     image_urls: string[],
   ): Promise<{ images: Image[]; description: string }> {
-    throw new Error('Not implemented');
+    return this.runImageTask('Generating image...', () =>
+      this.capabilities.get('createOrEditImage')(isEdit, prompt, image_urls),
+    );
   }
 
   /**
    * Upload the file to CDN and return an URL.
    */
-  upload: (file: File) => Promise<string>;
+  async upload(file: File): Promise<string> {
+    return this.runImageTask('Uploading image...', () =>
+      this.capabilities.get('upload')(file),
+    );
+  }
 
   /**
    * Encode image before segmenting.
    */
   async encodeImage(image_url: string): Promise<void> {
-    throw new Error('Not implemented');
+    return this.runImageTask('Encoding image...', () =>
+      this.capabilities.get('encodeImage')(image_url),
+    );
   }
 
   /**
@@ -3432,7 +3570,9 @@ export class API {
      */
     image: Image;
   }> {
-    throw new Error('Not implemented');
+    return this.runImageTask('Segmenting image...', () =>
+      this.capabilities.get('segmentImage')(input),
+    );
   }
 
   /**
@@ -3444,7 +3584,9 @@ export class API {
   }): Promise<{
     images: Image[];
   }> {
-    throw new Error('Not implemented');
+    return this.runImageTask('Decomposing image...', () =>
+      this.capabilities.get('decomposeImage')(input),
+    );
   }
 
   /**
@@ -3454,14 +3596,18 @@ export class API {
     image_url: string;
     scale_factor?: number;
   }): Promise<Image> {
-    throw new Error('Not implemented');
+    return this.runImageTask('Upscaling image...', () =>
+      this.capabilities.get('upscaleImage')(input),
+    );
   }
 
   async removeByMask(input: {
     image_url: string;
     mask: HTMLCanvasElement;
   }): Promise<Image> {
-    throw new Error('Not implemented');
+    return this.runImageTask('Removing by mask...', () =>
+      this.capabilities.get('removeByMask')(input),
+    );
   }
 }
 

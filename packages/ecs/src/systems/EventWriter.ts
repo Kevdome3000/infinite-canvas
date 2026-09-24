@@ -24,8 +24,7 @@ export class EventWriter extends System {
 
   private readonly pointerIds = new Map<number, Set<number>>();
 
-  #onDestroyCallbacks: WeakMap<HTMLCanvasElement, (() => void)[]> =
-    new WeakMap();
+  #onDestroyCallbacks = new Map<HTMLCanvasElement, (() => void)[]>();
 
   @co private *setInputTrigger(entity: Entity, triggerKey: string): Generator {
     const input = entity.write(Input);
@@ -66,7 +65,17 @@ export class EventWriter extends System {
       this.#onDestroyCallbacks
         .get(element as HTMLCanvasElement)
         ?.forEach((callback) => callback());
+      this.#onDestroyCallbacks.delete(element as HTMLCanvasElement);
+      this.pointerIds.delete(entity.__id);
     });
+  }
+
+  finalize() {
+    this.#onDestroyCallbacks.forEach((callbacks) =>
+      callbacks.forEach((callback) => callback()),
+    );
+    this.#onDestroyCallbacks.clear();
+    this.pointerIds.clear();
   }
 
   private bindEventListeners(entity: Entity): void {
@@ -135,6 +144,11 @@ export class EventWriter extends System {
         pointerClient: [e.clientX, e.clientY],
         pointerViewport: [viewport.x, viewport.y],
         pressure: e.pressure,
+        pointerInside:
+          viewport.x >= 0 &&
+          viewport.y >= 0 &&
+          viewport.x <= entity.read(Canvas).width &&
+          viewport.y <= entity.read(Canvas).height,
       });
 
       syncCtrlShiftAltMeta(e);
@@ -152,6 +166,9 @@ export class EventWriter extends System {
         return;
       }
 
+      if (Number.isFinite(e.clientX) && Number.isFinite(e.clientY)) {
+        onPointerMove(e);
+      }
       this.setInputTrigger(input, 'pointerUpTrigger');
       pointerIds.delete(e.pointerId);
       if (e.pointerType === 'touch' && e.pointerId === primaryTouchPointerId) {
@@ -176,6 +193,7 @@ export class EventWriter extends System {
           if (!isPinching && primaryTouchPointerId !== null) {
             // Stop any active single-touch drawing before pinch starts.
             this.setInputTrigger(input, 'pointerUpTrigger');
+            input.write(Input).pointerCancelled = true;
           }
           isPinching = true;
           primaryTouchPointerId = null;
@@ -191,6 +209,11 @@ export class EventWriter extends System {
       }
 
       this.setInputTrigger(input, 'pointerDownTrigger');
+      Object.assign(input.write(Input), {
+        pointerInside: true,
+        pointerCancelled: false,
+        pointerButton: e.button ?? 0,
+      });
 
       if (pointerIds.size === 1) {
         if (e.pointerType === 'touch') {
@@ -203,6 +226,7 @@ export class EventWriter extends System {
         Object.assign(input.write(Input), {
           pointerClient: [e.clientX, e.clientY],
           pointerViewport: [viewport.x, viewport.y],
+          pointerDownViewport: [viewport.x, viewport.y],
           lastPointerDownTime: currentTime,
           pressure: e.pressure,
         });
@@ -212,6 +236,8 @@ export class EventWriter extends System {
     };
 
     const onPointerCancel = (e: PointerEvent) => {
+      input.write(Input).pointerCancelled = true;
+      input.write(Input).pointerInside = false;
       pointerIds.delete(e.pointerId);
       if (e.pointerId === primaryTouchPointerId) {
         primaryTouchPointerId = null;
@@ -219,6 +245,11 @@ export class EventWriter extends System {
       if (e.pointerType === 'touch' && pointerIds.size < 2) {
         isPinching = false;
       }
+    };
+
+    const onPointerLeave = () => {
+      input.write(Input).pointerInside = false;
+      input.write(Input).pointerCancelled = true;
     };
 
     const onPointerWheel = (e: WheelEvent) => {
@@ -264,6 +295,7 @@ export class EventWriter extends System {
             prevTwoFingerCenterClient = { x: cx, y: cy };
             if (primaryTouchPointerId !== null) {
               this.setInputTrigger(input, 'pointerUpTrigger');
+              input.write(Input).pointerCancelled = true;
               primaryTouchPointerId = null;
             }
             isPinching = true;
@@ -298,6 +330,7 @@ export class EventWriter extends System {
             if (primaryTouchPointerId !== null) {
               // Ensure brush systems exit drag mode when pinch starts.
               this.setInputTrigger(input, 'pointerUpTrigger');
+              input.write(Input).pointerCancelled = true;
               primaryTouchPointerId = null;
             }
             isPinching = true;
@@ -359,6 +392,7 @@ export class EventWriter extends System {
       }
 
       input.write(Input).key = e.key;
+      input.write(Input).keyShiftKey = e.shiftKey;
       input.write(Input).event = e;
     };
 
@@ -384,6 +418,7 @@ export class EventWriter extends System {
       $el.addEventListener('pointerdown', onPointerDown, true);
       $el.addEventListener('pointerup', onPointerUp, true);
       $el.addEventListener('pointercancel', onPointerCancel, true);
+      $el.addEventListener('pointerleave', onPointerLeave, true);
     };
 
     const addTouchEventListener = ($el: HTMLCanvasElement) => {
@@ -397,6 +432,7 @@ export class EventWriter extends System {
       $el.addEventListener('mousemove', onPointerMove, true);
       $el.addEventListener('mousedown', onPointerDown, true);
       $el.addEventListener('mouseup', onPointerUp, true);
+      $el.addEventListener('mouseleave', onPointerLeave, true);
     };
 
     const removePointerEventListener = ($el: HTMLCanvasElement) => {
@@ -404,6 +440,7 @@ export class EventWriter extends System {
       $el.removeEventListener('pointerdown', onPointerDown, true);
       $el.removeEventListener('pointerup', onPointerUp, true);
       $el.removeEventListener('pointercancel', onPointerCancel, true);
+      $el.removeEventListener('pointerleave', onPointerLeave, true);
     };
 
     const removeTouchEventListener = ($el: HTMLCanvasElement) => {
@@ -417,6 +454,7 @@ export class EventWriter extends System {
       $el.removeEventListener('mousemove', onPointerMove, true);
       $el.removeEventListener('mousedown', onPointerDown, true);
       $el.removeEventListener('mouseup', onPointerUp, true);
+      $el.removeEventListener('mouseleave', onPointerLeave, true);
     };
 
     if ('addEventListener' in globalThis) {

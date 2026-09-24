@@ -23,12 +23,13 @@
  * 3D geometry is drawn in the first pass of {@link MeshPipeline}'s render graph;
  * 2D/grid/HTML overlays composite on the same target afterward.
  */
-import { component, system } from '@lastolivegames/becsy';
+import { system } from '@lastolivegames/becsy';
 import { Plugin, type PluginWithConfig } from './types';
 import {
   CameraSync,
   ComputeBounds,
   ComputeCamera,
+  CameraControl,
   EnsureExtrudeMeshes,
   EnsureMesh3DNodes,
   LoadMesh3DGeometry,
@@ -74,9 +75,9 @@ function createRenderer3DPlugin(options: Renderer3DPluginOptions = {}): Plugin {
     );
 
     system(PostUpdate)(LoadMesh3DGeometry);
-    system((s) => s.after(SyncExtrude3D).before(SyncMesh3DNodes))(
-      LoadMesh3DGeometry,
-    );
+    system((s) =>
+      s.after(SyncExtrude3D).before(SyncMesh3DNodes, CameraControl),
+    )(LoadMesh3DGeometry);
 
     system(PostUpdate)(SyncMesh3DNodes);
     system((s) => s.after(LoadMesh3DGeometry).before(ComputeCamera))(
