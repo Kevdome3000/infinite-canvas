@@ -18,12 +18,12 @@ jobs:
 
       - uses: pnpm/action-setup@v4
         with:
-          version: 9  
+          version: 9.15.9
 
-      - name: Use Node.js 20
+      - name: Use Node.js 22
         uses: actions/setup-node@v3
         with:
-          node-version: 20.14.0
+          node-version: 22
           cache: 'pnpm'
 
       - name: Install dependencies
@@ -41,20 +41,21 @@ jobs:
           ADSENSE_CLIENT: ${{ secrets.ADSENSE_CLIENT }}
         run: pnpm --filter '@infinite-canvas-tutorial/site' run build
 
+      - name: Prepare deployment tooling
+        run: |
+          mkdir -p "$RUNNER_TEMP/cloudflare-pages"
+          printf '{"private":true}\n' > "$RUNNER_TEMP/cloudflare-pages/package.json"
+
       - name: Publish to Cloudflare Pages
-        uses: cloudflare/pages-action@v1
+        uses: cloudflare/wrangler-action@25853364521e0d392ece9b0c1e97a4b37b638087 # v4.1.2
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: 4abdc9b6ff77e69917753afff2a4ad14
-          projectName: infinite-canvas-tutorial
-          directory: packages/site/docs/.vitepress/dist
-          # Optional: Switch what branch you are publishing to.
-          # By default this will be the branch which triggered this workflow
-          branch: master
-          # Optional: Change the working directory
-          # workingDirectory: my-site
-          # Optional: Change the Wrangler version, allows you to point to a specific version or a tag such as `beta`
-          wranglerVersion: '3'
+          workingDirectory: ${{ runner.temp }}/cloudflare-pages
+          packageManager: npm
+          command: pages deploy "${{ github.workspace }}/packages/site/docs/.vitepress/dist" --project-name=infinite-canvas-tutorial --branch=master --commit-hash=${{ github.sha }}
+          wranglerVersion: '4.137.0'
+          gitHubToken: ${{ secrets.GITHUB_TOKEN }}
 
       # - name: Algolia crawler creation and crawl
       #   uses: algolia/algoliasearch-crawler-github-actions@v1.0.10
