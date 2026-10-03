@@ -7,6 +7,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { join } from 'node:path';
+import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
 
@@ -15,6 +16,7 @@ if (!['commonjs', 'ESNext'].includes(format)) {
   throw new Error('Expected commonjs or ESNext.');
 }
 const root = fileURLToPath(new URL('..', import.meta.url));
+const require = createRequire(import.meta.url);
 const source = join(root, 'rust/glsl-wgsl-compiler/pkg');
 const packageRoot = join(root, 'packages/device-api');
 const name = 'glsl_wgsl_compiler';
@@ -24,7 +26,7 @@ rmSync(output, { recursive: true, force: true });
 execFileSync(
   process.execPath,
   [
-    join(root, 'node_modules/typescript/bin/tsc'),
+    require.resolve('typescript/bin/tsc'),
     '-p',
     join(packageRoot, 'tsconfig.build.json'),
     '--module',
