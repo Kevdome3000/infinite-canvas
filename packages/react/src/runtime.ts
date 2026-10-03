@@ -146,8 +146,8 @@ export function createCanvasRuntime(
           // Lit's disconnected cleanup runs before App.exit().
           queueMicrotask(() => {
             if (users || releaseGeneration !== generation) return;
-            current = undefined;
-            state.controller.abort();
+            // Publish the stop barrier before abort dispatches application code:
+            // an abort listener may synchronously acquire the next generation.
             stopping = ready
               .catch(() => undefined)
               .then(() => cleanupApp(state))
@@ -156,6 +156,8 @@ export function createCanvasRuntime(
                   activeRuntime = undefined;
                 }
               });
+            current = undefined;
+            state.controller.abort();
           });
         },
       };

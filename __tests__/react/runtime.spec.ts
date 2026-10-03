@@ -298,3 +298,39 @@ it('rejects native async setup before it can install partial work', async () => 
   lease.release();
   await flush();
 });
+
+it('serializes a reentrant acquire from an abort listener behind the old exit', async () => {
+  let finishExit!: () => void;
+  mockExit = new Promise((resolve) => {
+    finishExit = resolve;
+  });
+  let next:
+    | ReturnType<ReturnType<typeof createCanvasRuntime>['acquire']>
+    | undefined;
+  let setups = 0;
+  const runtime = createCanvasRuntime({
+    onAppReady: (_app, { signal }) => {
+      if (++setups === 1)
+        signal.addEventListener(
+          'abort',
+          () => {
+            next = runtime.acquire();
+          },
+          { once: true },
+        );
+    },
+  });
+  const first = runtime.acquire();
+  await first.ready;
+  first.release();
+  await flush();
+  const appsBeforeExit = mockApps.length;
+  const setupsBeforeExit = setups;
+  finishExit();
+  await next?.ready;
+  next?.release();
+  await flush();
+  expect(appsBeforeExit).toBe(1);
+  expect(setupsBeforeExit).toBe(1);
+  expect(mockApps).toHaveLength(2);
+});
