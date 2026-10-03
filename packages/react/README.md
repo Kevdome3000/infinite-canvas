@@ -166,7 +166,7 @@ function EnlargeButton({ onError }: { onError: (error: unknown) => void }) {
 | `updateNodes(nodesOrUpdater, options?)` | Upserts by ID, preserving omitted nodes. Supplied arrays are copied before queueing; an updater reads the latest nodes at execution. Return new nodes without mutating the input. |
 | `setAppState(patchOrUpdater, options?)` | Merges a patch using API semantics. An updater reads the latest state. View settings also refresh selectors when they do not participate in history.                              |
 | `selectNodes(ids, options?)`            | Resolves IDs at execution, ignoring missing/deleted nodes. `preserveSelection: true` extends the selection. Pass `[]` to clear it.                                                |
-| `edit(callback, options?)`              | Runs synchronous API mutations before derived data/rendering, then calls `record()` once.                                                                                              |
+| `edit(callback, options?)`              | Runs synchronous API mutations before derived data/rendering, then calls `record()` once.                                                                                         |
 | `undo()`, `redo()`, `clearHistory()`    | Use the current canvas history. Undo/redo queue their work; clearHistory runs immediately.                                                                                        |
 
 The first four commands return `Promise<boolean>`: `true` after a successful
@@ -266,6 +266,19 @@ export function Compare() {
     );
 }
 ```
+
+The optional `onAppReady(app, { signal })` callback runs synchronously once per
+App startup, after `app.run()` and before any lease becomes ready. Use it to
+attach application observers to the public App, and return a synchronous cleanup
+function. Promise/thenable setup returns are rejected. A released startup skips
+setup; same-microtask StrictMode reacquisition keeps the existing generation.
+
+The signal aborts when the final release commits to shutdown. Cleanup runs once
+after `app.exit()` settles, including on exit failure. If setup throws after
+partial installation, clean that work through the signal or before throwing.
+Setup failures reject readiness with the original error; exit and cleanup errors
+are reported separately. This ordering precedes wrapper-owned canvas frames in
+the browser; synchronous custom RAF adapters are outside that guarantee.
 
 Default engine plugins and `UIPlugin` are included. Plugins are startup
 configuration; changing them requires releasing all canvases and creating a new

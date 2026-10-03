@@ -26,6 +26,7 @@ import type { ExtendedAPI } from '@infinite-canvas-tutorial/webcomponents';
 
 declare global {
   interface Window {
+    runtimeEvents: string[];
     apis: Record<string, ExtendedAPI>;
     actions: Record<string, CanvasActions>;
     canvasErrors: string[];
@@ -46,6 +47,7 @@ declare global {
     >;
   }
 }
+window.runtimeEvents = [];
 window.apis = {};
 window.actions = {};
 window.canvasErrors = [];
@@ -80,6 +82,23 @@ class InitialFrameRender extends System {
   }
 }
 const runtime = createCanvasRuntime({
+  onAppReady(app, { signal }) {
+    window.runtimeEvents.push('setup');
+    const execute = app.world.execute;
+    app.world.execute = async () => {
+      if (document.querySelector('ic-spectrum-canvas')) {
+        window.runtimeEvents.push('canvas-frame');
+      }
+      await execute.call(app.world);
+    };
+    signal.addEventListener('abort', () => window.runtimeEvents.push('abort'), {
+      once: true,
+    });
+    return () => {
+      app.world.execute = execute;
+      window.runtimeEvents.push('dispose');
+    };
+  },
   plugins: new URLSearchParams(location.search).has('initialFrame')
     ? [
         () => {
@@ -212,8 +231,10 @@ function Editor() {
                 : undefined
             }
             onAPIChange={(api) => {
-              if (api) window.apis[id] = api;
-              else delete window.apis[id];
+              if (api) {
+                window.runtimeEvents.push('api');
+                window.apis[id] = api;
+              } else delete window.apis[id];
             }}
             onError={(error) => window.canvasErrors.push(error.message)}
             onNodesChange={(nodes) => {

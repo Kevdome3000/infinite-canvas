@@ -577,3 +577,37 @@ test('React Providers isolate real canvases through edits, history, zoom, and Ap
   expect(await page.evaluate(() => window.canvasErrors)).toEqual([]);
   expect(errors).toEqual([]);
 });
+
+test('runtime setup precedes real canvas frames and cleans each restart generation', async ({
+  page,
+}) => {
+  const errors: string[] = [];
+  page.on('pageerror', (error) => errors.push(error.message));
+  await page.goto('/');
+  await expect(page.getByTestId('left-count')).toHaveText('1', {
+    timeout: 45000,
+  });
+  await expect(page.getByTestId('right-count')).toHaveText('1');
+  const events = await page.evaluate(() => window.runtimeEvents);
+  expect(events[0]).toBe('setup');
+  expect(events.filter((event) => event === 'setup')).toHaveLength(1);
+  expect(events).toContain('api');
+  expect(events).toContain('canvas-frame');
+  await page.evaluate(() => window.setShown([]));
+  await page.waitForFunction(() => window.runtimeEvents.includes('dispose'));
+  await page.evaluate(() => window.setShown(['left']));
+  await expect(page.getByTestId('left-count')).toHaveText('1');
+  const lifecycle = await page.evaluate(() =>
+    window.runtimeEvents.filter(
+      (event) => event !== 'api' && event !== 'canvas-frame',
+    ),
+  );
+  expect(lifecycle).toEqual(['setup', 'abort', 'dispose', 'setup']);
+  await page.evaluate(() => window.setShown([]));
+  await page.waitForFunction(
+    () =>
+      window.runtimeEvents.filter((event) => event === 'dispose').length === 2,
+  );
+  expect(await page.evaluate(() => window.canvasErrors)).toEqual([]);
+  expect(errors).toEqual([]);
+});

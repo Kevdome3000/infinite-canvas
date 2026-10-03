@@ -138,3 +138,163 @@ it('can retry a failed UI load after releasing its lease', async () => {
   retry.release();
   await flush();
 });
+
+it('sets up once per App before readiness and disposes after committed stop', async () => {
+  const dispose = jest.fn();
+  const setup = jest.fn(
+    (_app: unknown, _context: { signal: AbortSignal }) => dispose,
+  );
+  const runtime = createCanvasRuntime({ onAppReady: setup });
+  const first = runtime.acquire();
+  first.release();
+  const second = runtime.acquire();
+  const third = runtime.acquire();
+  await second.ready;
+  expect(setup).toHaveBeenCalledTimes(1);
+  expect(setup.mock.calls[0][0]).toBe(mockApps[0]);
+  const signal = setup.mock.calls[0][1].signal;
+  second.release();
+  await flush();
+  expect(signal.aborted).toBe(false);
+  third.release();
+  await flush();
+  expect(signal.aborted).toBe(true);
+  expect(dispose).toHaveBeenCalledTimes(1);
+  const next = runtime.acquire();
+  await next.ready;
+  expect(setup).toHaveBeenCalledTimes(2);
+  expect(setup.mock.calls[1][1].signal).not.toBe(signal);
+  next.release();
+  await flush();
+});
+
+it('aborts immediately at real stop and retains setup until deferred exit settles', async () => {
+  let finishExit!: () => void;
+  mockExit = new Promise((resolve) => {
+    finishExit = resolve;
+  });
+  const dispose = jest.fn();
+  let signal!: AbortSignal;
+  const runtime = createCanvasRuntime({
+    onAppReady: (_app, context) => {
+      signal = context.signal;
+      return dispose;
+    },
+  });
+  const lease = runtime.acquire();
+  await lease.ready;
+  lease.release();
+  await flush();
+  expect(signal.aborted).toBe(true);
+  expect(mockApps[0].exit).toHaveBeenCalledTimes(1);
+  expect(dispose).not.toHaveBeenCalled();
+  finishExit();
+  await flush();
+  expect(dispose).toHaveBeenCalledTimes(1);
+});
+
+it('does not publish setup after release during startup', async () => {
+  let finishStart!: () => void;
+  mockStart = new Promise((resolve) => {
+    finishStart = resolve;
+  });
+  const setup = jest.fn();
+  const runtime = createCanvasRuntime({ onAppReady: setup });
+  const lease = runtime.acquire();
+  await flush();
+  lease.release();
+  await flush();
+  finishStart();
+  await lease.ready;
+  await flush();
+  expect(setup).not.toHaveBeenCalled();
+  expect(mockApps[0].exit).toHaveBeenCalledTimes(1);
+});
+
+it('aborts partial setup and cleans a failed startup once without replacing its error', async () => {
+  const original = new Error('setup failed');
+  const exitError = new Error('exit failed');
+  const log = jest.spyOn(console, 'error').mockImplementation(() => {});
+  mockExit = Promise.reject(exitError);
+  void mockExit.catch(() => {});
+  const partialCleanup = jest.fn();
+  const runtime = createCanvasRuntime({
+    onAppReady: (_app, { signal }) => {
+      signal.addEventListener('abort', partialCleanup, { once: true });
+      throw original;
+    },
+  });
+  const lease = runtime.acquire();
+  await expect(lease.ready).rejects.toBe(original);
+  expect(partialCleanup).toHaveBeenCalledTimes(1);
+  expect(mockApps[0].exit).toHaveBeenCalledTimes(1);
+  lease.release();
+  await flush();
+  expect(mockApps[0].exit).toHaveBeenCalledTimes(1);
+  expect(log).toHaveBeenCalledWith('Canvas App cleanup failed', exitError);
+  log.mockRestore();
+});
+
+it('rejects asynchronous setup contracts and exits the started App', async () => {
+  const runtime = createCanvasRuntime({
+    onAppReady: (() => Promise.resolve()) as never,
+  });
+  const lease = runtime.acquire();
+  await expect(lease.ready).rejects.toThrow('synchronous');
+  expect(mockApps[0].exit).toHaveBeenCalledTimes(1);
+  lease.release();
+  await flush();
+});
+
+it('disposes after exit failure and reports disposer failure separately', async () => {
+  const exitError = new Error('exit failed');
+  const disposeError = new Error('dispose failed');
+  const log = jest.spyOn(console, 'error').mockImplementation(() => {});
+  const dispose = jest.fn(() => {
+    throw disposeError;
+  });
+  const runtime = createCanvasRuntime({ onAppReady: () => dispose });
+  const lease = runtime.acquire();
+  await lease.ready;
+  mockExit = Promise.reject(exitError);
+  void mockExit.catch(() => {});
+  lease.release();
+  await flush();
+  expect(dispose).toHaveBeenCalledTimes(1);
+  expect(log).toHaveBeenCalledWith('Canvas App cleanup failed', exitError);
+  expect(log).toHaveBeenCalledWith(
+    'Canvas App setup cleanup failed',
+    disposeError,
+  );
+  log.mockRestore();
+});
+
+it('cleans a rejected App startup before publishing its original failure', async () => {
+  const failure = new Error('startup failed');
+  mockStart = Promise.reject(failure);
+  void mockStart.catch(() => {});
+  const setup = jest.fn();
+  const runtime = createCanvasRuntime({ onAppReady: setup });
+  const lease = runtime.acquire();
+  await expect(lease.ready).rejects.toBe(failure);
+  expect(setup).not.toHaveBeenCalled();
+  expect(mockApps[0].exit).toHaveBeenCalledTimes(1);
+  lease.release();
+  await flush();
+  expect(mockApps[0].exit).toHaveBeenCalledTimes(1);
+});
+
+it('rejects native async setup before it can install partial work', async () => {
+  const setup = jest.fn();
+  const runtime = createCanvasRuntime({
+    onAppReady: (async () => {
+      setup();
+    }) as never,
+  });
+  const lease = runtime.acquire();
+  await expect(lease.ready).rejects.toThrow('synchronous');
+  expect(setup).not.toHaveBeenCalled();
+  expect(mockApps[0].exit).toHaveBeenCalledTimes(1);
+  lease.release();
+  await flush();
+});
