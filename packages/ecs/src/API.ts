@@ -147,6 +147,7 @@ import {
 } from './systems';
 import { DOMAdapter } from './environment';
 import { TaskQueue } from './TaskQueue';
+import { EditQueue } from './EditQueue';
 import { CapabilityRegistry } from './CapabilityRegistry';
 import { ResourceScope } from './resources/ResourceScope';
 import { documentValueEqual, validateDocument } from './document';
@@ -156,6 +157,28 @@ import {
   buildIcDocumentFromState,
   parseIcDocumentJson,
 } from './format/ic-document';
+
+export interface CanvasSnapshot {
+  appState: AppState;
+  nodes: SerializedNode[];
+}
+
+export interface CanvasChanges {
+  nodesChanged: boolean;
+  appStateChanged: boolean;
+}
+
+export interface CanvasHistoryState {
+  canUndo: boolean;
+  canRedo: boolean;
+}
+
+export interface CanvasEditOptions {
+  /** Default: IMMEDIATELY. NEVER commits without creating an undo entry. */
+  capture?: 'IMMEDIATELY' | 'NEVER';
+  /** Cancel queued work; cancellation does not roll back applied mutations. */
+  signal?: AbortSignal;
+}
 
 export interface StateManagement {
   getAppState: () => AppState;
@@ -298,14 +321,24 @@ export class API {
   #mesh3DLayers: Mesh3DLayer[] = [];
   #mesh3DLayerEntities: Map<string, Entity> = new Map();
   #selectedMesh3DLayerIds: string[] = [];
-  #history = new History();
+  #history = new History(() => this.notifyHistoryChange());
+  #historyState: CanvasHistoryState = { canUndo: false, canRedo: false };
+  #historySubscribers = new Set<(state: CanvasHistoryState) => void>();
   #beforeHistoryChange = new Set<() => void>();
+  #restoringHistory = false;
   #store = new Store(this);
   #tasks = new TaskQueue();
+  #editTasks = new TaskQueue();
+  #edits = new EditQueue((task) => this.#editTasks.add(task));
+  #editing = false;
+  #flushingEdits = false;
   #afterDeleteTasks = new TaskQueue();
   #destroyed = false;
   #scope = new ResourceScope();
   #activeImageTasks = 0;
+  #subscribers = new Set<
+    (snapshot: CanvasSnapshot, changes: CanvasChanges) => void
+  >();
 
   readonly capabilities = new CapabilityRegistry();
 
@@ -333,6 +366,51 @@ export class API {
     if (nodesChanged) this.onNodesChange?.(snapshot.nodes);
     if (appStateChanged) this.onAppStateChange?.(snapshot.appState);
     if (nodesChanged || appStateChanged) this.onchange?.(snapshot);
+    if (nodesChanged || appStateChanged) {
+      this.notifySubscribers(snapshot, { nodesChanged, appStateChanged });
+    }
+  }
+
+  private notifySubscribers(snapshot: CanvasSnapshot, changes: CanvasChanges) {
+    this.#subscribers.forEach((listener) => listener(snapshot, changes));
+  }
+
+  /** Observe committed changes, including initialization and non-undoable updates. */
+  subscribe(
+    listener: (snapshot: CanvasSnapshot, changes: CanvasChanges) => void,
+  ) {
+    if (this.#destroyed) return () => {};
+    const subscriber = (snapshot: CanvasSnapshot, changes: CanvasChanges) =>
+      listener(snapshot, changes);
+    this.#subscribers.add(subscriber);
+    return this.onDestroy(() => this.#subscribers.delete(subscriber));
+  }
+
+  getHistoryState(): Readonly<CanvasHistoryState> {
+    return this.#historyState;
+  }
+
+  /** Observe undo/redo availability, including clearHistory(), without polling. */
+  subscribeHistory(listener: (state: Readonly<CanvasHistoryState>) => void) {
+    if (this.#destroyed) return () => {};
+    const subscriber = (state: CanvasHistoryState) => listener(state);
+    this.#historySubscribers.add(subscriber);
+    return this.onDestroy(() => this.#historySubscribers.delete(subscriber));
+  }
+
+  private notifyHistoryChange() {
+    const canUndo = !this.#history.isUndoStackEmpty;
+    const canRedo = !this.#history.isRedoStackEmpty;
+    if (
+      canUndo === this.#historyState.canUndo &&
+      canRedo === this.#historyState.canRedo
+    ) {
+      return;
+    }
+    this.#historyState = { canUndo, canRedo };
+    this.#historySubscribers.forEach((listener) =>
+      listener(this.#historyState),
+    );
   }
 
   /** Register cleanup owned by this canvas. Returns an idempotent disposer. */
@@ -509,7 +587,7 @@ export class API {
         Object.keys(nextAppState.variables ?? {}).length > 0);
 
     if (shouldRefreshDesignVariableBindings) {
-      this.runAtNextTick(() => {
+      const refresh = () => {
         for (const node of this.getNodes()) {
           if (this.#idEntityMap.has(node.id)) {
             const varPatch = buildDesignVariableRefreshPatch(node);
@@ -522,7 +600,10 @@ export class API {
         if (options?.recordDesignVariableUndo !== false) {
           this.record();
         }
-      });
+      };
+      // edit() already owns a safe ECS write phase and its history commit.
+      if (this.#flushingEdits || this.#editing) refresh();
+      else this.runAtNextTick(refresh);
     }
   }
 
@@ -2037,8 +2118,8 @@ export class API {
         if (!entity.has(Children)) {
           cameraEntityCommands.appendChild(this.commands.entity(entity));
         }
-        // PropagateTransforms already ran this frame; new nodes need a world matrix
-        // before the render pass (SmoothPolyline, transformer anchors, etc.).
+        // Late callers may run after PropagateTransforms; initialize new nodes'
+        // world matrices for SmoothPolyline, transformer anchors, etc.
         updateGlobalTransform(entity);
       });
 
@@ -2112,8 +2193,8 @@ export class API {
         if (!entity.has(Children)) {
           cameraEntityCommands.appendChild(this.commands.entity(entity));
         }
-        // PropagateTransforms already ran this frame; new nodes need a world matrix
-        // before the render pass (SmoothPolyline, transformer anchors, etc.).
+        // Late callers may run after PropagateTransforms; initialize new nodes'
+        // world matrices for SmoothPolyline, transformer anchors, etc.
         updateGlobalTransform(entity);
       });
 
@@ -2137,7 +2218,7 @@ export class API {
 
   /**
    * Apply a complete document snapshot. Missing IDs are deleted, unlike updateNodes.
-   * Call inside runAtNextTick when applying an asynchronous remote update.
+   * Await remote preparation, then call inside edit() with capture: 'NEVER'.
    */
   replaceDocument(
     nodes: readonly SerializedNode[],
@@ -2961,44 +3042,60 @@ export class API {
   record(
     captureUpdateAction: CaptureUpdateActionType = CaptureUpdateAction.IMMEDIATELY,
   ) {
-    if (
-      captureUpdateAction === CaptureUpdateAction.NEVER ||
-      this.#store.snapshot.isEmpty()
-    ) {
+    // Operations that record internally participate in the enclosing edit.
+    if (this.#editing) return;
+    const previous = this.#store.snapshot;
+    const updateSnapshot =
+      captureUpdateAction === CaptureUpdateAction.NEVER || previous.isEmpty();
+    if (updateSnapshot) {
       this.#store.shouldUpdateSnapshot();
     } else {
       this.#store.shouldCaptureIncrement();
     }
     this.#store.commit(arrayToMap(this.getNodes()), this.getAppState());
+    const next = this.#store.snapshot;
+    if (
+      updateSnapshot &&
+      !this.#restoringHistory &&
+      next !== previous &&
+      (next.meta.didElementsChange || next.meta.didAppStateChange)
+    ) {
+      // Legacy callbacks are for local edits/history; remote commits must not
+      // feed back into collaboration adapters that write through onchange.
+      this.notifySubscribers(
+        { appState: this.getAppState(), nodes: this.getNodes() },
+        {
+          nodesChanged: next.meta.didElementsChange,
+          appStateChanged: next.meta.didAppStateChange,
+        },
+      );
+    }
   }
 
   undo() {
-    this.runAtNextTick(() => {
-      this.#beforeHistoryChange.forEach((callback) => callback());
-      const result = this.#history.undo(
-        arrayToMap(this.getNodes()),
-        this.getAppState(),
-        this.#store.snapshot,
-      );
-      if (result) {
-        this.record(CaptureUpdateAction.NEVER);
-        this.notifyChange();
-      }
-    });
+    this.restoreHistory('undo');
   }
 
   redo() {
-    this.runAtNextTick(() => {
+    this.restoreHistory('redo');
+  }
+
+  private restoreHistory(action: 'undo' | 'redo') {
+    this.#editTasks.add(() => {
       this.#beforeHistoryChange.forEach((callback) => callback());
-      const result = this.#history.redo(
-        arrayToMap(this.getNodes()),
-        this.getAppState(),
-        this.#store.snapshot,
-      );
-      if (result) {
-        this.record(CaptureUpdateAction.NEVER);
-        this.notifyChange();
+      let changed = false;
+      this.#restoringHistory = true;
+      try {
+        changed = !!this.#history[action](
+          arrayToMap(this.getNodes()),
+          this.getAppState(),
+          this.#store.snapshot,
+        );
+        if (changed) this.record(CaptureUpdateAction.NEVER);
+      } finally {
+        this.#restoringHistory = false;
       }
+      if (changed) this.notifyChange();
     });
   }
 
@@ -3386,6 +3483,8 @@ export class API {
   destroy() {
     if (this.#destroyed) return;
     this.#destroyed = true;
+    this.#edits.dispose();
+    this.#editTasks.dispose();
     this.#tasks.dispose();
     this.#afterDeleteTasks.dispose();
     this.cancelLandmarkAnimation();
@@ -3466,8 +3565,51 @@ export class API {
     await copyTextToClipboard(text, clipboardEvent);
   }
 
+  /**
+   * Queue synchronous mutations and commit once before derived data/rendering.
+   * Resolves true after the commit, false on cancellation/destruction; rejects
+   * on failure. Neither completion nor rejection guarantees a rendered frame
+   * or rollback. Nested edits are separate operations on the following tick.
+   */
+  edit(update: (api: this) => void, options: CanvasEditOptions = {}) {
+    const capture = options.capture ?? CaptureUpdateAction.IMMEDIATELY;
+    return this.#edits.add(
+      () => {
+        // Reject native async callbacks before they can start work that resumes
+        // outside this write phase. EditQueue also rejects returned thenables.
+        if (
+          Object.prototype.toString.call(update) === '[object AsyncFunction]'
+        ) {
+          throw new TypeError(
+            'Canvas edits must be synchronous. Await work before edit().',
+          );
+        }
+        this.#editing = true;
+        try {
+          return update(this);
+        } finally {
+          this.#editing = false;
+        }
+      },
+      () => this.record(capture),
+      options.signal,
+    );
+  }
+
   runAtNextTick(fn: () => any) {
-    this.#tasks.add(fn);
+    // Edits used to run in the late queue. Keep callbacks they enqueue on the
+    // following frame even though the edit itself now runs before rendering.
+    this.#tasks.add(fn, this.#flushingEdits);
+  }
+
+  /** @internal Called in the owning world's Edit stage, before PreUpdate. */
+  flushPendingEdits() {
+    this.#flushingEdits = true;
+    try {
+      this.#editTasks.flush();
+    } finally {
+      this.#flushingEdits = false;
+    }
   }
 
   /** @internal Called by the owning world's Deleter system. */

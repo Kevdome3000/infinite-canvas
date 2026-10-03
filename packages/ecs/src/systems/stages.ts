@@ -12,6 +12,7 @@ import { System } from '@lastolivegames/becsy';
  *
  * Then it will run:
  * * [`First`]
+ * * [`Edit`]
  * * [`PreUpdate`]
  * * [`StateTransition`]
  * * [`RunFixedUpdateLoop`]
@@ -40,6 +41,9 @@ export const PostStartUp = System.group();
  * Runs first in the schedule.
  */
 export const First = System.group();
+
+/** Apply queued canvas edits and history before derived data and rendering. */
+export const Edit = System.group();
 
 /**
  * The schedule that contains logic that must run before [`Update`]. For example, a system that reads raw keyboard
@@ -75,10 +79,30 @@ export const PostUpdate = System.group();
  */
 export const Last = System.group();
 
-PreStartUp.schedule((s) => s.before(StartUp));
-StartUp.schedule((s) => s.before(PostStartUp));
-PostStartUp.schedule((s) => s.before(First));
-First.schedule((s) => s.before(PreUpdate));
-PreUpdate.schedule((s) => s.before(Update));
-Update.schedule((s) => s.before(PostUpdate));
-PostUpdate.schedule((s) => s.before(Last));
+const stages = [
+  PreStartUp,
+  StartUp,
+  PostStartUp,
+  First,
+  Edit,
+  PreUpdate,
+  Update,
+  PostUpdate,
+  Last,
+];
+
+/** @internal Prepare the shared stage definitions for a new World. */
+export function prepareStages() {
+  // Becsy 0.16 caches World-specific SystemBoxes on each group and consumes its
+  // schedule builder. Keep the group identities used by plugin decorators, but
+  // discard the previous World's cache and rebuild our ordering constraints.
+  stages.forEach((stage, index) => {
+    Reflect.deleteProperty(stage, '__systems');
+    stage.__executed = false;
+    stage.__scheduleBuilder = undefined;
+    const next = stages[index + 1];
+    if (next) stage.schedule((s) => s.before(next));
+  });
+}
+
+prepareStages();
