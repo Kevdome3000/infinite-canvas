@@ -234,7 +234,7 @@ export class TopNavbar extends LitElement {
   }
 
   private handleCut() {
-    executeCut(this.api, this.appState);
+    void executeCut(this.api, this.api.getAppState());
   }
 
   private handleCopy() {
@@ -242,7 +242,9 @@ export class TopNavbar extends LitElement {
   }
 
   private handlePaste() {
-    executePaste(this.api, this.appState);
+    void executePaste(this.api, this.appState).catch((error: unknown) =>
+      console.error(error),
+    );
   }
 
   private handleOpen() {

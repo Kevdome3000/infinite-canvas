@@ -294,16 +294,7 @@ export const defaultAttributes: Record<
     ...fillDefaultAttributes,
     ...strokeDefaultAttributes,
   },
-  'column-layout': {
-    ...commonDefaultAttributes,
-    gap: 10,
-    padding: 10,
-    alignItems: 'stretch',
-    isAutoLayout: true,
-    direction: 'vertical',
-    maxChildren: 0,
-    showDropZone: false,
-  }
+
 };
 
 /**

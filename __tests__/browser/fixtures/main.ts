@@ -1,3 +1,4 @@
+import { YogaPlugin } from '../../../packages/plugin-yoga/src';
 import '../../../packages/webcomponents/src/spectrum/context-vector-network-edit-bar';
 import '../../../packages/webcomponents/src/spectrum/infinite-canvas';
 import '../../../packages/webcomponents/src/spectrum/fill-icon';
@@ -40,6 +41,8 @@ import {
   system,
   type SerializedNode,
   type AppState,
+  type NodeAlignment,
+  type DistributeSpacingAxis,
 } from '@infinite-canvas-tutorial/ecs';
 import { WorkerClient } from '../../../packages/ecs/src/WorkerClient';
 import { bindDocument } from '../../../packages/site/docs/collaboration/document';
@@ -112,7 +115,7 @@ function create(side: Side) {
     svgLayer,
     width: 320,
     height: 220,
-    devicePixelRatio: 1,
+    devicePixelRatio: window.devicePixelRatio,
   });
   api.createCamera({ zoom: 1 });
   api.updateNodes([seed()]);
@@ -172,10 +175,14 @@ class Bootstrap extends System {
   }
 }
 window.lifecycleProbes?.capturePageListeners();
-const app = new App().addPlugins(...DefaultPlugins, () => {
-  system(PreStartUp)(Bootstrap);
-  system((s) => s.before(ComputeZIndex))(Bootstrap);
-});
+const app = new App().addPlugins(
+  ...DefaultPlugins,
+  ...(new URLSearchParams(location.search).has('yoga') ? [YogaPlugin] : []),
+  () => {
+    system(PreStartUp)(Bootstrap);
+    system((s) => s.before(ComputeZIndex))(Bootstrap);
+  },
+);
 
 function act(side: Side, fn: (slot: Slot) => void) {
   const slot = slots.get(side)!;
@@ -287,11 +294,51 @@ const harness = {
       api.record();
     });
   },
+  align(side: Side, alignment: NodeAlignment, ids: string[]) {
+    return act(side, ({ api }) => {
+      api.alignSelectedNodes(alignment, ids);
+      api.record();
+    });
+  },
+  distribute(side: Side, axis: DistributeSpacingAxis, ids: string[]) {
+    return act(side, ({ api }) => {
+      api.distributeSelectedNodesSpacing(axis, ids);
+      api.record();
+    });
+  },
+  layoutGeometry(side: Side) {
+    const { api } = slots.get(side)!;
+    return api
+      .readLayoutFromECS(api.getNodes())
+      .map(({ id, x, y, width, height }) => ({ id, x, y, width, height }));
+  },
   setPen(side: Side, pen: Pen) {
     return act(side, ({ api }) => api.setAppState({ penbarSelected: pen }));
   },
   setZoom(side: Side, zoom: number) {
     return act(side, ({ api }) => api.setAppState({ cameraZoom: zoom }));
+  },
+  setPreferences(side: Side, preferences: Partial<AppState>) {
+    return act(side, ({ api }) => api.setAppState(preferences));
+  },
+  selectNodes(side: Side, ids: string[]) {
+    return act(side, ({ api }) =>
+      api.selectNodes(api.getNodes().filter((node) => ids.includes(node.id))),
+    );
+  },
+  rotationPivot(side: Side) {
+    const tf = slots.get(side)!.api.getCamera().read(Transformable);
+    return {
+      x: tf.rotatePivotX,
+      y: tf.rotatePivotY,
+      pinned: tf.rotatePivotPinned,
+    };
+  },
+  selectVectorVertex(side: Side, id: string, index: number) {
+    return act(side, ({ api }) => {
+      api.getCamera().write(Transformable).selectedControlPointIndex = index;
+      api.setAppState({ vectorNetworkSelectedVertex: { nodeId: id, index } });
+    });
   },
   async vectorToolbar(side: Side, id: string) {
     const theme = document.createElement('sp-theme');

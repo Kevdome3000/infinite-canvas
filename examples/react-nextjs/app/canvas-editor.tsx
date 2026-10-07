@@ -6,8 +6,12 @@ import {
   InfiniteCanvas,
   useCanvasActions,
   useCanvasSelector,
+  useCanvasStatus,
+  useCanvasCamera,
+  useCanvasShortcuts,
   type InfiniteCanvasProps,
 } from '@infinite-canvas-tutorial/react';
+import { DocumentControls } from './document-controls';
 
 const initialNodes: NonNullable<InfiniteCanvasProps['initialNodes']> = [
   {
@@ -24,7 +28,9 @@ const initialNodes: NonNullable<InfiniteCanvasProps['initialNodes']> = [
 
 function Toolbar() {
   const actions = useCanvasActions();
-  const ready = useCanvasSelector((state) => state.api !== null);
+  const { status } = useCanvasStatus();
+  const ready = status === 'ready';
+  const { zoom } = useCanvasCamera();
   const [error, setError] = useState<string | null>(null);
   const count = useCanvasSelector(
     (state) => state.nodes.filter((node) => !node.isDeleted).length,
@@ -47,23 +53,36 @@ function Toolbar() {
       <button disabled={!ready} onClick={enlarge}>
         Enlarge rectangle
       </button>
-      <button disabled={!canUndo} onClick={actions.undo}>
+      <button disabled={!ready || !canUndo} onClick={actions.undo}>
         Undo
       </button>
-      <button disabled={!canRedo} onClick={actions.redo}>
+      <button disabled={!ready || !canRedo} onClick={actions.redo}>
         Redo
       </button>
+      <button disabled={!ready} onClick={() => actions.zoomTo(1)}>
+        Reset zoom
+      </button>
+      <button
+        disabled={!ready || count === 0}
+        onClick={() => actions.fitToScreen()}
+      >
+        Fit all shapes
+      </button>
+      <output aria-label="Zoom">{Math.round(zoom * 100)}%</output>
       <span>
         Shapes: <output data-testid="shape-count">{count}</output>
       </span>
       {error && <span role="alert">{error}</span>}
+      <DocumentControls storageKey="infinite-canvas:react-nextjs:v1" />
     </div>
   );
 }
 
-export function CanvasEditor() {
+function EditorContent() {
+  const [error, setError] = useState<Error | null>(null);
+  const shortcuts = useCanvasShortcuts({ onError: setError });
   return (
-    <CanvasProvider>
+    <section {...shortcuts} aria-label="Canvas editor">
       <Toolbar />
       <InfiniteCanvas
         style={{ height: 420 }}
@@ -75,6 +94,15 @@ export function CanvasEditor() {
         }}
         fallback={<p role="status">Loading canvas…</p>}
       />
+      {error && <p role="alert">{error.message}</p>}
+    </section>
+  );
+}
+
+export function CanvasEditor() {
+  return (
+    <CanvasProvider>
+      <EditorContent />
     </CanvasProvider>
   );
 }

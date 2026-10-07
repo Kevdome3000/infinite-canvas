@@ -143,6 +143,10 @@ export class EventWriter extends System {
       Object.assign(input.write(Input), {
         pointerClient: [e.clientX, e.clientY],
         pointerViewport: [viewport.x, viewport.y],
+        pointerType:
+          e.pointerType === 'touch' || e.pointerType === 'pen'
+            ? e.pointerType
+            : 'mouse',
         pressure: e.pressure,
         pointerInside:
           viewport.x >= 0 &&
@@ -213,6 +217,10 @@ export class EventWriter extends System {
         pointerInside: true,
         pointerCancelled: false,
         pointerButton: e.button ?? 0,
+        pointerType:
+          e.pointerType === 'touch' || e.pointerType === 'pen'
+            ? e.pointerType
+            : 'mouse',
       });
 
       if (pointerIds.size === 1) {
@@ -249,7 +257,8 @@ export class EventWriter extends System {
 
     const onPointerLeave = () => {
       input.write(Input).pointerInside = false;
-      input.write(Input).pointerCancelled = true;
+      // Touch release is followed by pointerleave; only cancel an active press.
+      if (pointerIds.size > 0) input.write(Input).pointerCancelled = true;
     };
 
     const onPointerWheel = (e: WheelEvent) => {

@@ -1,5 +1,11 @@
-import { StrictMode, useEffect, useState } from 'react';
+import { StrictMode, useEffect, useState, type ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
+import { flushSync } from 'react-dom';
+import { updateAndSelectNodes } from '@infinite-canvas-tutorial/webcomponents';
+import {
+  executePaste,
+  executeCut,
+} from '@infinite-canvas-tutorial/webcomponents/spectrum';
 import {
   CanvasProvider,
   createCanvasRuntime,
@@ -7,6 +13,15 @@ import {
   useCanvasAPI,
   useCanvasActions,
   useCanvasSelector,
+  useCanvasNode,
+  useCanvasSelection,
+  useCanvasHistory,
+  useCanvasStatus,
+  useCanvasEvent,
+  useCanvasCamera,
+  useCanvasShortcuts,
+  useCanvasCoordinates,
+  type CanvasCoordinates,
   type CanvasActions,
 } from '@infinite-canvas-tutorial/react';
 import {
@@ -29,10 +44,16 @@ declare global {
     runtimeEvents: string[];
     apis: Record<string, ExtendedAPI>;
     actions: Record<string, CanvasActions>;
+    coordinates: Record<string, CanvasCoordinates>;
+    insertNodes: typeof updateAndSelectNodes;
+    paste: typeof executePaste;
+    cut: typeof executeCut;
+    flushReact: typeof flushSync;
     canvasErrors: string[];
     nodeChanges: Record<string, SerializedNode[][]>;
     snapshots: Record<string, unknown[]>;
     setShown: (ids: string[]) => void;
+    finishPreparation: Record<string, () => void>;
     boundFill: (id: string) => string | undefined;
     sceneGeometry: (id: string) => { x: number; minX: number; maxX: number };
     initialFrames: Record<
@@ -50,10 +71,16 @@ declare global {
 window.runtimeEvents = [];
 window.apis = {};
 window.actions = {};
+window.coordinates = {};
+window.insertNodes = updateAndSelectNodes;
+window.paste = executePaste;
+window.cut = executeCut;
+window.flushReact = flushSync;
 window.canvasErrors = [];
 window.nodeChanges = {};
 window.snapshots = {};
 window.initialFrames = {};
+window.finishPreparation = {};
 const initialCommitFrames: Record<string, number> = {};
 let frame = 0;
 class InitialFrameStart extends System {
@@ -131,18 +158,31 @@ window.sceneGeometry = (id) => {
 function Toolbar({ id }: { id: string }) {
   const api = useCanvasAPI();
   const actions = useCanvasActions();
+  const coordinates = useCanvasCoordinates();
+  const { status } = useCanvasStatus();
+  useCanvasEvent('ic-comment-added', ({ detail }) => {
+    const { canvasX, canvasY, viewportX, viewportY } = detail;
+    const expected = api!.viewport2Canvas({ x: viewportX, y: viewportY });
+    api!.element.dataset.commentProbe = JSON.stringify({
+      actual: [canvasX, canvasY],
+      expected: [expected.x, expected.y],
+    });
+  });
+  useCanvasEvent('ic-screenshot-downloaded', ({ detail }) => {
+    api!.element.dataset.svgProbe = detail.svg;
+  });
   useEffect(() => {
     window.actions[id] = actions;
+    window.coordinates[id] = coordinates;
     return () => {
       delete window.actions[id];
+      delete window.coordinates[id];
     };
-  }, [id, actions]);
-  const zoom = useCanvasSelector((state) => state.appState?.cameraZoom ?? 1);
-  const canUndo = useCanvasSelector((state) => state.canUndo);
-  const canRedo = useCanvasSelector((state) => state.canRedo);
-  const selected = useCanvasSelector(
-    (state) => state.appState?.layersSelected.length ?? 0,
-  );
+  }, [id, actions, coordinates]);
+  const camera = useCanvasCamera();
+  const { canUndo, canRedo } = useCanvasHistory();
+  const selected = useCanvasSelection();
+  const node = useCanvasNode(selected[0]?.id);
   const count = useCanvasSelector(
     (state) => state.nodes.filter((node) => !node.isDeleted).length,
   );
@@ -151,8 +191,14 @@ function Toolbar({ id }: { id: string }) {
   );
   return (
     <div data-testid={`${id}-toolbar`}>
-      <output data-testid={`${id}-zoom`}>{zoom}</output>
-      <output data-testid={`${id}-selection`}>{selected}</output>
+      <output data-testid={`${id}-status`}>{status}</output>
+      <output data-testid={`${id}-zoom`}>{camera.zoom}</output>
+      <output data-testid={`${id}-camera`}>{JSON.stringify(camera)}</output>
+      <output data-testid={`${id}-selection`}>{selected.length}</output>
+      <output data-testid={`${id}-node-width`}>{node?.width ?? ''}</output>
+      <output data-testid={`${id}-selected-ids`}>
+        {selected.map((node) => node.id).join(',')}
+      </output>
       <output data-testid={`${id}-count`}>{count}</output>
       <output data-testid={`${id}-penbar`}>{String(penbar)}</output>
       <button
@@ -169,12 +215,12 @@ function Toolbar({ id }: { id: string }) {
       >
         Redo
       </button>
-      <button data-testid={`${id}-zoom-in`} onClick={() => api?.zoomTo(2)}>
+      <button data-testid={`${id}-zoom-in`} onClick={() => actions.zoomTo(2)}>
         Zoom
       </button>
       <button
         data-testid={`${id}-batch-edit`}
-        disabled={!api}
+        disabled={status !== 'ready'}
         onClick={() => {
           void actions
             .edit((api) => {
@@ -191,6 +237,17 @@ function Toolbar({ id }: { id: string }) {
   );
 }
 
+function ShortcutScope({ id, children }: { id: string; children: ReactNode }) {
+  const shortcuts = useCanvasShortcuts({
+    onError: (error) => window.canvasErrors.push(error.message),
+  });
+  return (
+    <section {...shortcuts} data-testid={`${id}-shortcuts`}>
+      {children}
+    </section>
+  );
+}
+
 function Editor() {
   const [shown, setShown] = useState(['left', 'right']);
   useEffect(() => {
@@ -200,72 +257,122 @@ function Editor() {
     <>
       {shown.map((id) => (
         <CanvasProvider key={id}>
-          <InfiniteCanvas
-            runtime={runtime}
-            initialAppState={{
-              topbarVisible: false,
-              penbarSelected: Pen.SELECT,
-            }}
-            initialNodes={[
-              {
-                id,
-                zIndex: 0,
-                type: 'rect',
-                x: 50,
-                y: 50,
-                width: 100,
-                height: 80,
-                fills: [{ type: 'solid', value: '#ff8400' }],
-              },
-            ]}
-            style={{ width: 400, height: 300, display: 'inline-block' }}
-            onReady={
-              new URLSearchParams(location.search).has('prepare')
-                ? (api, { signal }) =>
-                    new Promise<void>((resolve) => {
-                      api.runAtNextTick(() => {
-                        if (!signal.aborted) api.record();
-                        resolve();
-                      });
-                    })
-                : undefined
-            }
-            onAPIChange={(api) => {
-              if (api) {
-                window.runtimeEvents.push('api');
-                window.apis[id] = api;
-              } else delete window.apis[id];
-            }}
-            onError={(error) => window.canvasErrors.push(error.message)}
-            onNodesChange={(nodes) => {
-              if (
-                initialCommitFrames[id] === undefined &&
-                nodes.some((node) => node.id === id)
-              ) {
-                initialCommitFrames[id] = frame;
+          <ShortcutScope id={id}>
+            <InfiniteCanvas
+              runtime={runtime}
+              initialAppState={{
+                topbarVisible: false,
+                penbarSelected: Pen.SELECT,
+              }}
+              initialNodes={[
+                {
+                  id,
+                  zIndex: 0,
+                  type: 'rect',
+                  x: 50,
+                  y: 50,
+                  width: 100,
+                  height: 80,
+                  fills: [{ type: 'solid', value: '#ff8400' }],
+                },
+              ]}
+              style={{ width: 400, height: 300, display: 'inline-block' }}
+              onReady={
+                new URLSearchParams(location.search).has('holdPreparation')
+                  ? () =>
+                      new Promise<void>((resolve) => {
+                        window.finishPreparation[id] = resolve;
+                      })
+                  : new URLSearchParams(location.search).has('prepare')
+                  ? (api, { signal }) =>
+                      new Promise<void>((resolve) => {
+                        api.runAtNextTick(() => {
+                          if (!signal.aborted) api.record();
+                          resolve();
+                        });
+                      })
+                  : undefined
               }
-              (window.nodeChanges[id] ??= []).push(structuredClone(nodes));
-            }}
-            onChange={(snapshot) => {
-              (window.snapshots[id] ??= []).push({
-                ids: snapshot.nodes.map((node) => node.id),
-                selected: [...snapshot.appState.layersSelected],
-              });
-            }}
-          >
-            <span slot="penbar-item" data-testid={`${id}-slot`}>
-              React slot
-            </span>
-          </InfiniteCanvas>
-          <Toolbar id={id} />
+              onAPIChange={(api) => {
+                if (api) {
+                  window.runtimeEvents.push('api');
+                  window.apis[id] = api;
+                } else delete window.apis[id];
+              }}
+              onError={(error) => window.canvasErrors.push(error.message)}
+              onNodesChange={(nodes) => {
+                if (
+                  initialCommitFrames[id] === undefined &&
+                  nodes.some((node) => node.id === id)
+                ) {
+                  initialCommitFrames[id] = frame;
+                }
+                (window.nodeChanges[id] ??= []).push(structuredClone(nodes));
+              }}
+              onChange={(snapshot) => {
+                (window.snapshots[id] ??= []).push({
+                  ids: snapshot.nodes.map((node) => node.id),
+                  selected: [...snapshot.appState.layersSelected],
+                });
+              }}
+            >
+              <span slot="penbar-item" data-testid={`${id}-slot`}>
+                React slot
+              </span>
+            </InfiniteCanvas>
+            <Toolbar id={id} />
+            <NodeProperty id={id} />
+          </ShortcutScope>
         </CanvasProvider>
       ))}
     </>
   );
 }
 
-createRoot(document.getElementById('root')!).render(
-  <StrictMode>
-    <Editor />
-  </StrictMode>,
-);
+// Keep this consumer separate from Toolbar: selection/history updates must not
+// mask a stale object selector by causing a parent render.
+function NodeProperty({ id }: { id: string }) {
+  const node = useCanvasSelector((state) =>
+    state.nodes.find((node) => node.id === id),
+  );
+  return (
+    <output data-testid={`${id}-object-width`}>{node?.width ?? ''}</output>
+  );
+}
+
+const host = document.getElementById('root')!;
+const query = new URLSearchParams(location.search);
+const playgroundLocale = query.get('playground');
+const starter = query.get('starter');
+if (playgroundLocale) {
+  // Exercise the real documentation controls without building the whole site.
+  const style = document.createElement('style');
+  style.textContent =
+    '.react-demo-canvas { width: 100%; max-width: 400px; height: 300px; }';
+  document.head.append(style);
+  void import('../../../packages/site/docs/components/react/playground').then(
+    ({ mountPlayground }) =>
+      mountPlayground(host, {
+        locale: playgroundLocale === 'zh' ? 'zh' : 'en',
+        theme: 'light',
+      }),
+  );
+} else if (starter) {
+  const load =
+    starter === 'nextjs'
+      ? import('../../../examples/react-nextjs/app/canvas-editor')
+      : import('../../../examples/react-vite/src/canvas-editor');
+  void load.then(({ CanvasEditor }) =>
+    createRoot(host).render(
+      <StrictMode>
+        <CanvasEditor />
+      </StrictMode>,
+    ),
+  );
+} else {
+  createRoot(host).render(
+    <StrictMode>
+      <Editor />
+    </StrictMode>,
+  );
+}

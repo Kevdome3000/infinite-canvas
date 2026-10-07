@@ -127,13 +127,29 @@ const assert = require('node:assert/strict');
 const React = require('react');
 const { renderToString } = require('react-dom/server');
 for (const entry of ['@infinite-canvas-tutorial/react', '@infinite-canvas-tutorial/react/spectrum']) {
-  const { CanvasProvider, InfiniteCanvas, useCanvasAPI, useCanvasActions, useCanvasSelector } = require(entry);
+  const { CanvasProvider, InfiniteCanvas, useCanvasAPI, useCanvasActions, useCanvasSelector, useCanvasNode, useCanvasSelection, useCanvasHistory, useCanvasStatus, useCanvasCamera, useCanvasCoordinates, useCanvasEvent, useCanvasShortcuts } = require(entry);
   function Toolbar() {
     const api = useCanvasAPI();
     const actions = useCanvasActions();
+    const shortcuts = useCanvasShortcuts();
+    assert.equal(shortcuts.tabIndex, 0);
+    assert.equal(typeof shortcuts.onKeyDownCapture, 'function');
     assert.equal(actions.undo(), false);
+    assert.deepEqual(useCanvasStatus(), { status: 'idle', error: null });
+    assert.deepEqual(useCanvasCamera(), { x: 0, y: 0, zoom: 1, rotation: 0 });
+    for (const convert of Object.values(useCanvasCoordinates())) {
+      assert.equal(convert({ x: 10, y: 20 }), null);
+    }
+    assert.equal(actions.zoomTo(2), false);
+    assert.equal(actions.fitToScreen(), false);
+    assert.equal(useCanvasNode('rect'), null);
+    assert.deepEqual(useCanvasSelection(), []);
+    assert.deepEqual(useCanvasHistory(), { canUndo: false, canRedo: false });
+    useCanvasEvent('ic-point-drawn', () => { throw new Error('SSR event listener ran'); });
+    assert.equal(typeof actions.deleteNodes, 'function');
+    assert.equal(typeof actions.replaceDocument, 'function');
     const zoom = useCanvasSelector(state => state.appState?.cameraZoom ?? 1);
-    return React.createElement('output', null, String(api === null) + ':' + zoom);
+    return React.createElement('output', shortcuts, String(api === null) + ':' + zoom);
   }
   const html = renderToString(React.createElement(CanvasProvider, null,
     React.createElement(InfiniteCanvas, { fallback: 'Loading' }), React.createElement(Toolbar)));
@@ -147,22 +163,60 @@ assert.equal(typeof window, 'undefined');
   });
 
   const types = `
-import { CanvasProvider, InfiniteCanvas, useCanvasAPI, useCanvasActions, useCanvasSelector, type CanvasState, type CanvasActions, type CanvasEditOptions } from '@infinite-canvas-tutorial/react';
-import { InfiniteCanvas as SpectrumCanvas } from '@infinite-canvas-tutorial/react/spectrum';
+import { CanvasProvider, InfiniteCanvas, useCanvasAPI, useCanvasActions, useCanvasSelector, useCanvasNode, useCanvasSelection, useCanvasHistory, useCanvasStatus, useCanvasCamera, useCanvasCoordinates, useCanvasEvent, useCanvasShortcuts, type CanvasCoordinates, type CanvasPoint, type CanvasShortcutOptions, type CanvasShortcutProps, type CanvasCameraState, type CanvasCameraAnimationOptions, type CanvasEventOptions, type CanvasHistoryState, type CanvasStatus, type CanvasState, type CanvasActions, type CanvasEditOptions } from '@infinite-canvas-tutorial/react';
+import type { SerializedNode } from '@infinite-canvas-tutorial/ecs';
+import { InfiniteCanvas as SpectrumCanvas, useCanvasEvent as useSpectrumCanvasEvent, useCanvasCoordinates as useSpectrumCoordinates, type CanvasPoint as SpectrumPoint } from '@infinite-canvas-tutorial/react/spectrum';
 function Toolbar() {
+  const shortcutOptions: CanvasShortcutOptions = { enabled: true, onError: (error: Error) => {} };
+  const shortcuts: CanvasShortcutProps = useCanvasShortcuts(shortcutOptions);
   const api = useCanvasAPI();
   const actions: CanvasActions = useCanvasActions();
   const options: CanvasEditOptions = { capture: 'NEVER', signal: new AbortController().signal };
   const update: Promise<boolean> = actions.updateNodes(nodes => nodes.map(node => ({ ...node, width: 100 })), options);
   const patch: Promise<boolean> = actions.setAppState(state => ({ filter: state.filter }), options);
   const selection: Promise<boolean> = actions.selectNodes(['rect'], { preserveSelection: true });
+  const deleted: Promise<boolean> = actions.deleteNodes(['rect'], options);
+  const replaced: Promise<boolean> = actions.replaceDocument(nodes => nodes.filter(node => !node.isDeleted), options);
+  const selected: readonly Readonly<SerializedNode>[] = useCanvasSelection();
+  const node: Readonly<SerializedNode> | null = useCanvasNode(selected[0]?.id);
+  const history: Readonly<CanvasHistoryState> = useCanvasHistory();
+  const lifecycle = useCanvasStatus();
+  const status: CanvasStatus = lifecycle.status;
+  const startupError: Error | null = lifecycle.error;
+  const coordinates: CanvasCoordinates = useCanvasCoordinates();
+  const point: CanvasPoint = { x: 10, y: 20 };
+  const world: CanvasPoint | null = coordinates.clientToCanvas(point);
+  const client: CanvasPoint | null = coordinates.canvasToClient(point);
+  const viewport: CanvasPoint | null = coordinates.canvasToViewport(point);
+  const fromViewport: CanvasPoint | null = coordinates.viewportToCanvas(point);
+  const spectrumPoint: SpectrumPoint | null = useSpectrumCoordinates().clientToCanvas(point);
+  // @ts-expect-error points have numeric coordinates
+  coordinates.clientToCanvas({ x: '10', y: 20 });
+  const camera: CanvasCameraState = useCanvasCamera();
+  const cameraOptions: CanvasCameraAnimationOptions = { duration: 0, easing: 'linear', onfinish: () => {} };
+  const zoomed: boolean = actions.zoomTo(camera.zoom * 2, cameraOptions);
+  const fitted: boolean = actions.fitToScreen(cameraOptions);
+  useCanvasEvent('ic-camera-changed', event => { const rotation: number = event.detail.rotation; });
+  const eventOptions: CanvasEventOptions = { enabled: status === 'ready', once: true, capture: false, passive: true, signal: options.signal };
+  useCanvasEvent('ic-point-drawn', event => {
+    const x: number = event.detail.x;
+    // @ts-expect-error point events have no zoom property
+    event.detail.zoom;
+  }, eventOptions);
+  useSpectrumCanvasEvent('ic-screenshot-downloaded', event => {
+    const svg: string = event.detail.svg;
+  });
+  useCanvasEvent('pointerdown', event => { const pointerType: string = event.pointerType; });
+  // @ts-expect-error unknown events must be declared in HTMLElementEventMap
+  useCanvasEvent('ic-unknown-event', () => {});
   const edit: Promise<boolean> = actions.edit(api => { api.setAppState({ filter: '' }); });
   const coreEdit: Promise<boolean> | undefined = api?.edit(editor => {
     editor.setAppState({ filter: '' });
     editor.getLocale();
   }, options);
+  const imported: Promise<boolean> | undefined = api?.importIcDocument('{}', { recordHistory: false, signal: options.signal });
   const canUndo: boolean = useCanvasSelector((state: CanvasState) => state.canUndo);
-  return <button disabled={!canUndo} onClick={() => api?.undo()}>Undo</button>;
+  return <section {...shortcuts}><button disabled={!canUndo} onClick={() => api?.undo()}>Undo</button></section>;
 }
 export const editor = <><CanvasProvider><InfiniteCanvas style={{ height: 400 }} /><Toolbar /></CanvasProvider><SpectrumCanvas /></>;
 `;

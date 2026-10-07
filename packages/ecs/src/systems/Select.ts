@@ -7,6 +7,8 @@ import {
   Circle,
   ComputedBounds,
   ComputedCamera,
+  ComputedVisibility,
+  AABB,
   Cursor,
   Ellipse,
   FillLayers,
@@ -92,7 +94,6 @@ import {
 } from '../utils/canvas3d-scope';
 import { Commands } from '../commands';
 import {
-  calculateOffset,
   createSVGElement,
   decompose,
   distanceBetweenPoints,
@@ -103,6 +104,7 @@ import {
   isBrowser,
   rebasePolylinePathGeometryToLocalOrigin,
   snapDraggedElements,
+  snapResizingElements,
   snapToGrid,
 } from '../utils';
 import { API } from '../API';
@@ -160,6 +162,8 @@ export interface SelectOBB {
   dispose?: () => void;
   mode: SelectionMode;
   resizingAnchorName: AnchorName;
+  /** Finger position relative to the handle, in canvas coordinates. */
+  resizePointerOffset?: [number, number];
   activeControlPointIndex?: number;
   activeSegmentMidpointIndex?: number;
   activeSegmentIndex?: number;
@@ -216,8 +220,13 @@ export interface SelectOBB {
   /** Previous snap offset during drag; used to avoid jitter when multiple snaps are equally close. */
   lastSnapOffset?: [number, number];
 
-  /** Accumulated raw drag per axis while snapped; when it exceeds the snap distance the snap releases. */
-  snapEscapeAccum?: [number, number];
+  /** Unsnapped pointer-down geometry and the displacement already applied. */
+  moveGesture?: {
+    pointer: [number, number];
+    bounds: AABB;
+    gridOrigin: [number, number];
+    applied: [number, number];
+  };
 
   /** Pointer angle (rad) vs. {@link SelectOBB.obb} center on last rotate sample; for incremental drag. */
   rotateLastPointerAngle?: number;
@@ -400,7 +409,9 @@ export class Select extends System {
             Selected3D,
           ).write,
     );
-    this.query((q) => q.using(ComputedCamera, FractionalIndex, RBush).read);
+    this.query(
+      (q) => q.using(ComputedCamera, ComputedVisibility, FractionalIndex, RBush).read,
+    );
     this.query((q) =>
       q.using(Camera3D, Canvas3DScope, Mesh3D, Material3D, Transform3D, Selected3D).read,
     );
@@ -536,74 +547,47 @@ export class Select extends System {
 
     const selection = this.selections.get(camera.__id);
 
-    let offset: [number, number] = [0, 0];
+    if (!selection.moveGesture) {
+      const { x: originX, y: originY } = getOBB(camera);
+      selection.moveGesture = {
+        pointer: [sx, sy],
+        bounds: api.getGeometryBounds(
+          api.getAppState().layersSelected.map((id) => api.getNodeById(id)),
+        ),
+        gridOrigin: [originX, originY],
+        applied: [0, 0],
+      };
+    }
+    const gesture = selection.moveGesture;
+    let dragOffset: [number, number] = [
+      ex - gesture.pointer[0],
+      ey - gesture.pointer[1],
+    ];
     if (snapToPixelGridEnabled) {
-      const [gridSx, gridSy] = getGridPoint(sx, sy, snapToPixelGridSize);
-      const [gridEx, gridEy] = getGridPoint(ex, ey, snapToPixelGridSize);
-
-      const dragOffset: [number, number] = [gridEx - gridSx, gridEy - gridSy];
-
-      let { snapOffset, snapLines } = snapDraggedElements(
-        api,
-        dragOffset,
-        selection.lastSnapOffset,
-      );
-
-      // Escape accumulator: track cumulative raw drag while snapped.
-      // Once accumulated distance exceeds the snap threshold, release the snap.
-      const { snapToObjectsEnabled, snapToObjectsDistance } = api.getAppState();
-      if (snapToObjectsEnabled) {
-        if (!selection.snapEscapeAccum) {
-          selection.snapEscapeAccum = [0, 0];
-        }
-        let escaped = false;
-        // X axis
-        if (snapOffset[0] !== 0) {
-          selection.snapEscapeAccum[0] += dragOffset[0];
-          if (
-            Math.abs(selection.snapEscapeAccum[0]) > snapToObjectsDistance
-          ) {
-            snapOffset = [0, snapOffset[1]];
-            selection.snapEscapeAccum[0] = 0;
-            escaped = true;
-          }
-        } else {
-          selection.snapEscapeAccum[0] = 0;
-        }
-        // Y axis
-        if (snapOffset[1] !== 0) {
-          selection.snapEscapeAccum[1] += dragOffset[1];
-          if (
-            Math.abs(selection.snapEscapeAccum[1]) > snapToObjectsDistance
-          ) {
-            snapOffset = [snapOffset[0], 0];
-            selection.snapEscapeAccum[1] = 0;
-            escaped = true;
-          }
-        } else {
-          selection.snapEscapeAccum[1] = 0;
-        }
-        if (escaped) {
-          snapLines = [];
-        }
-      }
-
-      selection.lastSnapOffset = snapOffset;
-
-      const obb = getOBB(camera);
-      offset = calculateOffset(
-        [obb.x, obb.y],
-        dragOffset,
-        snapOffset,
+      const [gx, gy] = getGridPoint(
+        gesture.gridOrigin[0] + dragOffset[0],
+        gesture.gridOrigin[1] + dragOffset[1],
         snapToPixelGridSize,
       );
-
-      if (isBrowser) {
-        this.renderSnapLines(selection, snapLines, api);
-      }
-    } else {
-      offset = [ex - sx, ey - sy];
+      dragOffset = [gx - gesture.gridOrigin[0], gy - gesture.gridOrigin[1]];
     }
+    const { snapOffset, snapLines } = snapDraggedElements(
+      api,
+      dragOffset,
+      selection.lastSnapOffset,
+      gesture.bounds,
+    );
+    const desired: [number, number] = [
+      dragOffset[0] + snapOffset[0],
+      dragOffset[1] + snapOffset[1],
+    ];
+    const offset: [number, number] = [
+      desired[0] - gesture.applied[0],
+      desired[1] - gesture.applied[1],
+    ];
+    gesture.applied = desired;
+    selection.lastSnapOffset = snapOffset;
+    if (isBrowser) this.renderSnapLines(selection, snapLines, api);
 
     const { selecteds, mask } = camera.read(Transformable);
 
@@ -614,10 +598,15 @@ export class Select extends System {
       }
       const node = api.getNodeByEntity(selected);
       if (!node) return; // Skip if entity not in node map
+      const inverseParent = mat3.invert(
+        mat3.create(),
+        api.getParentTransform(selected),
+      );
+      if (!inverseParent) return;
       const { x, y } = selected.read(Transform).translation;
       api.updateNodeOBB(node, {
-        x: x + offset[0],
-        y: y + offset[1],
+        x: x + inverseParent[0] * offset[0] + inverseParent[3] * offset[1],
+        y: y + inverseParent[1] * offset[0] + inverseParent[4] * offset[1],
       });
       updateGlobalTransform(selected);
       updateComputedPoints(selected);
@@ -637,7 +626,7 @@ export class Select extends System {
     const camera = api.getCamera();
 
     delete selection.lastSnapOffset;
-    delete selection.snapEscapeAccum;
+    delete selection.moveGesture;
 
     api.setNodes(api.getNodes());
 
@@ -802,6 +791,15 @@ export class Select extends System {
       const node = api.getNodeById(layersSelected[0]);
       lockAspectRatio = node.lockAspectRatio ?? lockAspectRatio;
     }
+
+    [canvasX, canvasY] = this.snapResizePointer(
+      api,
+      selection,
+      canvasX,
+      canvasY,
+      lockAspectRatio,
+      centeredScaling,
+    );
 
     camera.write(Transformable).status = TransformableStatus.RESIZING;
 
@@ -1242,6 +1240,84 @@ export class Select extends System {
         showLabel(label, api, { x, y, width, height, rotation });
       }
     }
+  }
+
+  private snapResizePointer(
+    api: API,
+    selection: SelectOBB,
+    canvasX: number,
+    canvasY: number,
+    lockAspectRatio: boolean,
+    centeredScaling: boolean,
+  ): [number, number] {
+    if (!api.getAppState().snapToObjectsEnabled) {
+      if (isBrowser) this.clearSnapLines(selection);
+      return [canvasX, canvasY];
+    }
+    const anchor = selection.resizingAnchorName;
+    let point: [number, number] = [canvasX, canvasY];
+    let direction: [number, number];
+    if (anchor !== AnchorName.X1Y1 && anchor !== AnchorName.X2Y2) {
+      const { mask, tlAnchor, brAnchor } = api.getCamera().read(Transformable);
+      const { cx: tlX, cy: tlY } = tlAnchor.read(Circle);
+      const { cx: brX, cy: brY } = brAnchor.read(Circle);
+      const local = api.canvas2Transformer({ x: canvasX, y: canvasY }, mask);
+      let localDirection: [number, number];
+      if (
+        anchor === AnchorName.TOP_CENTER ||
+        anchor === AnchorName.BOTTOM_CENTER
+      ) {
+        local.x = (tlX + brX) / 2;
+        localDirection = [0, 1];
+      } else if (
+        anchor === AnchorName.MIDDLE_LEFT ||
+        anchor === AnchorName.MIDDLE_RIGHT
+      ) {
+        local.y = (tlY + brY) / 2;
+        localDirection = [1, 0];
+      } else if (lockAspectRatio) {
+        // Project the raw pointer onto the same aspect-ratio ray used by resize.
+        // Snapping then moves along this ray, instead of breaking the constraint.
+        const right =
+          anchor === AnchorName.TOP_RIGHT || anchor === AnchorName.BOTTOM_RIGHT;
+        const bottom =
+          anchor === AnchorName.BOTTOM_LEFT ||
+          anchor === AnchorName.BOTTOM_RIGHT;
+        const fixedX = centeredScaling
+          ? selection.obb.width / 2
+          : right
+          ? tlX
+          : brX;
+        const fixedY = centeredScaling
+          ? selection.obb.height / 2
+          : bottom
+          ? tlY
+          : brY;
+        const length = Math.hypot(local.x - fixedX, local.y - fixedY);
+        localDirection = [
+          (Math.sign(local.x - fixedX) || (right ? 1 : -1)) * selection.cos,
+          (Math.sign(local.y - fixedY) || (bottom ? 1 : -1)) * selection.sin,
+        ];
+        local.x = fixedX + localDirection[0] * length;
+        local.y = fixedY + localDirection[1] * length;
+      }
+      const world = api.transformer2Canvas(local, mask);
+      point = [world.x, world.y];
+      if (localDirection) {
+        const end = api.transformer2Canvas(
+          { x: local.x + localDirection[0], y: local.y + localDirection[1] },
+          mask,
+        );
+        direction = [end.x - world.x, end.y - world.y];
+      }
+    }
+    const { snapOffset, snapLines } = snapResizingElements(
+      api,
+      point,
+      direction,
+    );
+    if (isBrowser) this.renderSnapLines(selection, snapLines, api);
+    return [point[0] + snapOffset[0], point[1] + snapOffset[1]];
   }
 
   private handleControlPointMoving(
@@ -2374,7 +2450,7 @@ export class Select extends System {
         return;
       }
 
-      const { layersCropping, layersLassoing } = api.getAppState();
+      const { layersCropping } = api.getAppState();
       layersCropping.forEach((id) => {
         const node = api.getNodeById(id);
         if (node && node.clipMode !== 'soft') {
@@ -2583,15 +2659,28 @@ export class Select extends System {
       }
 
       if (input.pointerDownTrigger) {
+        delete selection.moveGesture;
+        delete selection.lastSnapOffset;
         const { selecteds } = camera.read(Transformable);
         const selected = selecteds.length === 1 ? selecteds[0] : undefined;
         const vectorNetworkEditing =
           selected?.has(VectorNetwork) &&
           selected.has(Editable) &&
           selected.read(Editable).isEditing;
-        const [x, y] = vectorNetworkEditing
-          ? input.pointerDownViewport
-          : input.pointerViewport;
+        const [x, y] = input.pointerDownViewport;
+
+        if (!vectorNetworkEditing) {
+          const allowPivot = input.pointerType !== 'touch' &&
+            selection.mode === SelectionMode.READY_TO_MOVE_PIVOT;
+          // Touch has no hover. Resolve the pressed target afresh, also when
+          // pointermove and pointerdown arrive before the same render frame.
+          selection.mode = SelectionMode.IDLE;
+          this.updateSelectionAtPointer(api, selection, x, y, input, cursor, allowPivot);
+          // Selection or geometry may change while the pointer stays still.
+          selection.pointerMoveViewportX = NaN;
+          selection.pointerMoveViewportY = NaN;
+        }
+        delete selection.resizePointerOffset;
 
         if (vectorNetworkEditing) {
           // A move and press can arrive in the same ECS frame, before hover
@@ -2687,6 +2776,14 @@ export class Select extends System {
             delete selection.rotatePivotLocalFixed;
             camera.write(Transformable).transformerObbFrozenDuringRotate = false;
             selection.mode = SelectionMode.RESIZE;
+            if (input.pointerType === 'touch') {
+              selection.resizePointerOffset = this.getResizePointerOffset(
+                api,
+                selection.resizingAnchorName,
+                x,
+                y,
+              );
+            }
           } else if (selection.mode === SelectionMode.READY_TO_ROTATE) {
             const [px, py] = this.getRotatePivotWorld(api, selection);
             selection.rotatePivotWorldFixed = [px, py];
@@ -2886,7 +2983,6 @@ export class Select extends System {
         this.saveSelectedOBB(api, selection);
       }
 
-      let toHighlight: Entity | undefined;
       if (camera.has(ComputedCamera) && inputPoints.length === 0) {
         const [x, y] = input.pointerViewport;
         if (
@@ -2896,210 +2992,7 @@ export class Select extends System {
           selection.pointerMoveViewportX = x;
           selection.pointerMoveViewportY = y;
 
-          // Highlight the topmost non-ui element (prefer its parent group if any)
-          toHighlight = this.getTopmostEntity(api, x, y, (e) => !e.has(UI));
-          if (toHighlight) {
-            toHighlight = this.resolveHighlightEntityFromHit(toHighlight, camera);
-            if (
-              selection.mode !== SelectionMode.BRUSH &&
-              selection.mode !== SelectionMode.MOVE &&
-              selection.mode !== SelectionMode.ROTATE &&
-              selection.mode !== SelectionMode.RESIZE &&
-              selection.mode !== SelectionMode.MOVE_PIVOT &&
-              selection.mode !== SelectionMode.MOVE_CONTROL_POINT
-            ) {
-              selection.mode = SelectionMode.READY_TO_SELECT;
-            }
-          } else if (
-            selection.mode !== SelectionMode.BRUSH &&
-            selection.mode !== SelectionMode.ROTATE &&
-            selection.mode !== SelectionMode.RESIZE &&
-            selection.mode !== SelectionMode.MOVE_PIVOT &&
-            selection.mode !== SelectionMode.MOVE_CONTROL_POINT
-          ) {
-            selection.mode = SelectionMode.IDLE;
-          }
-          const { mask, selecteds } = camera.read(Transformable);
-
-          cursor.value = 'default';
-
-          // Hit test with transformer
-          if (selecteds.length >= 1) {
-            const {
-              anchor,
-              cursor: cursorName,
-              index,
-            } = hitTest(api, {
-              x,
-              y,
-            }) || {};
-
-            const selected = selecteds.length === 1 ? selecteds[0] : undefined;
-            const vectorNetworkEditing =
-              selected?.has(VectorNetwork) &&
-              (pen === Pen.SELECT &&
-                selected.has(Editable) &&
-                selected.read(Editable).isEditing);
-            if (vectorNetworkEditing) {
-              const transformable = camera.write(Transformable);
-              const editMode = api.getAppState().vectorNetworkEditMode;
-              const allowSegmentHover =
-                editMode === VectorNetworkEditMode.MOVE ||
-                editMode === VectorNetworkEditMode.BEND ||
-                editMode === VectorNetworkEditMode.CUT;
-              const nextSegmentHovered =
-                allowSegmentHover && selected
-                  ? findHoveredVectorNetworkSegmentIndex(api, selected, x, y)
-                  : -1;
-              const nextControlHovered =
-                anchor === AnchorName.CONTROL ? index : -1;
-              let needsRefresh = false;
-              if (transformable.hoveredSegmentIndex !== nextSegmentHovered) {
-                transformable.hoveredSegmentIndex = nextSegmentHovered;
-                needsRefresh = true;
-              }
-              if (transformable.hoveredControlPointIndex !== nextControlHovered) {
-                transformable.hoveredControlPointIndex = nextControlHovered;
-                needsRefresh = true;
-              }
-              if (needsRefresh) {
-                requestTransformerRefreshForCanvas(canvas);
-              }
-            }
-
-            if (selection.mode !== SelectionMode.BRUSH) {
-              if (anchor) {
-                if (anchor === AnchorName.CONTROL) {
-                  cursor.value = 'crosshair';
-                  selection.activeControlPointIndex = index;
-                  selection.activeSegmentMidpointIndex = undefined;
-                  selection.activeSegmentIndex = undefined;
-                  selection.activeTangentHandleIndex = undefined;
-                  selection.mode = SelectionMode.READY_TO_MOVE_CONTROL_POINT;
-                  toHighlight = undefined;
-                } else if (anchor === AnchorName.TANGENT) {
-                  cursor.value = 'crosshair';
-                  selection.activeTangentHandleIndex = index;
-                  selection.activeControlPointIndex = undefined;
-                  selection.activeSegmentMidpointIndex = undefined;
-                  selection.activeSegmentIndex = undefined;
-                  selection.mode = SelectionMode.READY_TO_MOVE_CONTROL_POINT;
-                  toHighlight = undefined;
-                } else if (anchor === AnchorName.CENTER) {
-                  cursor.value = 'move';
-                  selection.activeControlPointIndex = undefined;
-                  selection.activeSegmentMidpointIndex = undefined;
-                  selection.activeSegmentIndex = undefined;
-                  selection.mode = SelectionMode.READY_TO_MOVE_PIVOT;
-                  toHighlight = undefined;
-                } else if (anchor === AnchorName.SEGMENT_MIDPOINT) {
-                  cursor.value = 'crosshair';
-                  selection.activeControlPointIndex = undefined;
-                  selection.activeSegmentMidpointIndex = index;
-                  selection.activeSegmentIndex = undefined;
-                  selection.mode = SelectionMode.READY_TO_MOVE_CONTROL_POINT;
-                  toHighlight = undefined;
-                } else if (anchor === AnchorName.SEGMENT) {
-                  selection.activeTangentHandleIndex = undefined;
-                  cursor.value = 'move';
-                  selection.activeControlPointIndex = undefined;
-                  selection.activeSegmentMidpointIndex = undefined;
-                  selection.activeSegmentIndex = index;
-                  selection.mode = SelectionMode.READY_TO_MOVE_CONTROL_POINT;
-                  toHighlight = undefined;
-                } else {
-                  selection.activeControlPointIndex = undefined;
-                  selection.activeSegmentMidpointIndex = undefined;
-                  selection.activeSegmentIndex = undefined;
-                  if (layersLassoing.length > 0) {
-                    if (anchor === AnchorName.INSIDE) {
-                      cursor.value = LASSO_CURSOR;
-                      selection.mode = SelectionMode.LASSOING;
-                    }
-                  } else {
-                    const { rotation, scale } = mask.read(Transform);
-                    cursor.value =
-                      getCursor(
-                        cursorName,
-                        rotation,
-                        '',
-                        Math.sign(scale[0] * scale[1]) < 0,
-                      ) ?? cursorName;
-                    selection.resizingAnchorName = anchor;
-
-                    if (cursorName.includes('rotate')) {
-                      if (selection.mode !== SelectionMode.ROTATE) {
-                        selection.mode = SelectionMode.READY_TO_ROTATE;
-                      }
-                      toHighlight = undefined;
-                    } else if (
-                      cursorName.includes('resize') ||
-                      anchor === AnchorName.X1Y1 ||
-                      anchor === AnchorName.X2Y2
-                    ) {
-                      if (selection.mode !== SelectionMode.RESIZE) {
-                        selection.mode = SelectionMode.READY_TO_RESIZE;
-                      }
-                      toHighlight = undefined;
-                    } else if (anchor === AnchorName.INSIDE) {
-                      // Only in single transformer, we can select other objects.
-                      if (
-                        toHighlight &&
-                        toHighlight !== selecteds[0] &&
-                        selecteds.length === 1
-                      ) {
-                        selection.mode = SelectionMode.READY_TO_SELECT;
-                      } else {
-                        // In group can toggle selection.
-                        if (input.shiftKey) {
-                          selection.mode = SelectionMode.READY_TO_SELECT;
-                        } else {
-                          if (
-                            // selection.mode !== SelectionMode.BRUSH &&
-                            selection.mode !== SelectionMode.MOVE &&
-                            selection.mode !== SelectionMode.ROTATE &&
-                            selection.mode !== SelectionMode.RESIZE
-                          ) {
-                            selection.mode = SelectionMode.READY_TO_MOVE;
-                          }
-                        }
-                      }
-                    } else if (
-                      toHighlight &&
-                      selection.mode !== SelectionMode.ROTATE &&
-                      selection.mode !== SelectionMode.RESIZE
-                    ) {
-                      selection.mode = SelectionMode.READY_TO_SELECT;
-                    }
-
-                    if (layersCropping.length > 0) {
-                      if (anchor === AnchorName.INSIDE) {
-                        cursor.value = 'move';
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          }
-
-          if (toHighlight) {
-            if (
-              entityIsDeclarative3DNode(toHighlight) ||
-              this.shouldSuppress2DBrushSelection(canvas, x, y)
-            ) {
-              toHighlight = undefined;
-            }
-          }
-
-          if (toHighlight) {
-            const node = api.getNodeByEntity(toHighlight);
-            if (node) {
-              api.highlightNodes([node]);
-            }
-          } else {
-            api.highlightNodes([]);
-          }
+          this.updateSelectionAtPointer(api, selection, x, y, input, cursor);
         }
       }
 
@@ -3122,10 +3015,14 @@ export class Select extends System {
           x,
           y,
         });
+        if (selection.mode === SelectionMode.RESIZE && selection.resizePointerOffset) {
+          ex -= selection.resizePointerOffset[0];
+          ey -= selection.resizePointerOffset[1];
+        }
 
         const { snapToPixelGridEnabled, snapToPixelGridSize } =
           api.getAppState();
-        if (snapToPixelGridEnabled) {
+        if (snapToPixelGridEnabled && selection.mode !== SelectionMode.MOVE) {
           sx = snapToGrid(sx, snapToPixelGridSize);
           sy = snapToGrid(sy, snapToPixelGridSize);
           ex = snapToGrid(ex, snapToPixelGridSize);
@@ -3170,6 +3067,12 @@ export class Select extends System {
           this.handleControlPointMoving(api, ex, ey, selection, input.altKey);
         }
       });
+
+      if (input.key === 'Escape' || input.pointerCancelled) {
+        delete selection.moveGesture;
+        delete selection.lastSnapOffset;
+        if (isBrowser) this.clearSnapLines(selection);
+      }
 
       if (input.key === 'Escape') {
         if (selection.editing) {
@@ -3254,6 +3157,273 @@ export class Select extends System {
     this.selections.clear();
   }
 
+  private getResizePointerOffset(
+    api: API,
+    anchor: AnchorName,
+    x: number,
+    y: number,
+  ): [number, number] {
+    const tf = api.getCamera().read(Transformable);
+    let mask = tf.mask;
+    let hx: number;
+    let hy: number;
+    if (anchor === AnchorName.X1Y1 || anchor === AnchorName.X2Y2) {
+      const endpoint =
+        anchor === AnchorName.X1Y1 ? tf.x1y1Anchor : tf.x2y2Anchor;
+      const { cx, cy } = endpoint.read(Circle);
+      hx = cx;
+      hy = cy;
+      mask = tf.lineMask;
+    } else {
+      const { cx: left, cy: top } = tf.tlAnchor.read(Circle);
+      const { cx: right, cy: bottom } = tf.brAnchor.read(Circle);
+      hx =
+        anchor === AnchorName.TOP_LEFT ||
+        anchor === AnchorName.BOTTOM_LEFT ||
+        anchor === AnchorName.MIDDLE_LEFT
+          ? left
+          : anchor === AnchorName.TOP_RIGHT ||
+            anchor === AnchorName.BOTTOM_RIGHT ||
+            anchor === AnchorName.MIDDLE_RIGHT
+          ? right
+          : (left + right) / 2;
+      hy =
+        anchor === AnchorName.TOP_LEFT ||
+        anchor === AnchorName.TOP_RIGHT ||
+        anchor === AnchorName.TOP_CENTER
+          ? top
+          : anchor === AnchorName.BOTTOM_LEFT ||
+            anchor === AnchorName.BOTTOM_RIGHT ||
+            anchor === AnchorName.BOTTOM_CENTER
+          ? bottom
+          : (top + bottom) / 2;
+    }
+    const handle = api.transformer2Canvas({ x: hx, y: hy }, mask);
+    const pointer = api.viewport2Canvas({ x, y });
+    return [pointer.x - handle.x, pointer.y - handle.y];
+  }
+
+  private updateSelectionAtPointer(
+    api: API,
+    selection: SelectOBB,
+    x: number,
+    y: number,
+    input: Input,
+    cursor: Cursor,
+    allowPivot = input.pointerType !== 'touch',
+  ) {
+    const camera = api.getCamera();
+    const canvas = api.getCanvas();
+    const {
+      penbarSelected: pen,
+      layersCropping,
+      layersLassoing,
+    } = api.getAppState();
+
+    // Highlight the topmost non-ui element (prefer its parent group if any)
+    let toHighlight = this.getTopmostEntity(api, x, y, (e) => !e.has(UI));
+    if (toHighlight) {
+      toHighlight = this.resolveHighlightEntityFromHit(toHighlight, camera);
+      if (
+        selection.mode !== SelectionMode.BRUSH &&
+        selection.mode !== SelectionMode.MOVE &&
+        selection.mode !== SelectionMode.ROTATE &&
+        selection.mode !== SelectionMode.RESIZE &&
+        selection.mode !== SelectionMode.MOVE_PIVOT &&
+        selection.mode !== SelectionMode.MOVE_CONTROL_POINT
+      ) {
+        selection.mode = SelectionMode.READY_TO_SELECT;
+      }
+    } else if (
+      selection.mode !== SelectionMode.BRUSH &&
+      selection.mode !== SelectionMode.ROTATE &&
+      selection.mode !== SelectionMode.RESIZE &&
+      selection.mode !== SelectionMode.MOVE_PIVOT &&
+      selection.mode !== SelectionMode.MOVE_CONTROL_POINT
+    ) {
+      selection.mode = SelectionMode.IDLE;
+    }
+    const { mask, selecteds } = camera.read(Transformable);
+
+    cursor.value = 'default';
+
+    // Hit test with transformer
+    if (selecteds.length >= 1) {
+      const { anchor: hitAnchor, cursor: cursorName, index } =
+        hitTest(api, { x, y }, input.pointerType) || {};
+      // A direct press in the body moves the shape. Moving the small rotation
+      // pivot remains an explicit mouse/pen action after hovering its handle.
+      const anchor = hitAnchor === AnchorName.CENTER && !allowPivot
+        ? AnchorName.INSIDE
+        : hitAnchor;
+
+      const selected = selecteds.length === 1 ? selecteds[0] : undefined;
+      const vectorNetworkEditing =
+        selected?.has(VectorNetwork) &&
+        pen === Pen.SELECT &&
+        selected.has(Editable) &&
+        selected.read(Editable).isEditing;
+      if (vectorNetworkEditing) {
+        const transformable = camera.write(Transformable);
+        const editMode = api.getAppState().vectorNetworkEditMode;
+        const allowSegmentHover =
+          editMode === VectorNetworkEditMode.MOVE ||
+          editMode === VectorNetworkEditMode.BEND ||
+          editMode === VectorNetworkEditMode.CUT;
+        const nextSegmentHovered =
+          allowSegmentHover && selected
+            ? findHoveredVectorNetworkSegmentIndex(api, selected, x, y)
+            : -1;
+        const nextControlHovered = anchor === AnchorName.CONTROL ? index : -1;
+        let needsRefresh = false;
+        if (transformable.hoveredSegmentIndex !== nextSegmentHovered) {
+          transformable.hoveredSegmentIndex = nextSegmentHovered;
+          needsRefresh = true;
+        }
+        if (transformable.hoveredControlPointIndex !== nextControlHovered) {
+          transformable.hoveredControlPointIndex = nextControlHovered;
+          needsRefresh = true;
+        }
+        if (needsRefresh) {
+          requestTransformerRefreshForCanvas(canvas);
+        }
+      }
+
+      if (selection.mode !== SelectionMode.BRUSH) {
+        if (anchor) {
+          if (anchor === AnchorName.CONTROL) {
+            cursor.value = 'crosshair';
+            selection.activeControlPointIndex = index;
+            selection.activeSegmentMidpointIndex = undefined;
+            selection.activeSegmentIndex = undefined;
+            selection.activeTangentHandleIndex = undefined;
+            selection.mode = SelectionMode.READY_TO_MOVE_CONTROL_POINT;
+            toHighlight = undefined;
+          } else if (anchor === AnchorName.TANGENT) {
+            cursor.value = 'crosshair';
+            selection.activeTangentHandleIndex = index;
+            selection.activeControlPointIndex = undefined;
+            selection.activeSegmentMidpointIndex = undefined;
+            selection.activeSegmentIndex = undefined;
+            selection.mode = SelectionMode.READY_TO_MOVE_CONTROL_POINT;
+            toHighlight = undefined;
+          } else if (anchor === AnchorName.CENTER) {
+            cursor.value = 'move';
+            selection.activeControlPointIndex = undefined;
+            selection.activeSegmentMidpointIndex = undefined;
+            selection.activeSegmentIndex = undefined;
+            selection.mode = SelectionMode.READY_TO_MOVE_PIVOT;
+            toHighlight = undefined;
+          } else if (anchor === AnchorName.SEGMENT_MIDPOINT) {
+            cursor.value = 'crosshair';
+            selection.activeControlPointIndex = undefined;
+            selection.activeSegmentMidpointIndex = index;
+            selection.activeSegmentIndex = undefined;
+            selection.mode = SelectionMode.READY_TO_MOVE_CONTROL_POINT;
+            toHighlight = undefined;
+          } else if (anchor === AnchorName.SEGMENT) {
+            selection.activeTangentHandleIndex = undefined;
+            cursor.value = 'move';
+            selection.activeControlPointIndex = undefined;
+            selection.activeSegmentMidpointIndex = undefined;
+            selection.activeSegmentIndex = index;
+            selection.mode = SelectionMode.READY_TO_MOVE_CONTROL_POINT;
+            toHighlight = undefined;
+          } else {
+            selection.activeControlPointIndex = undefined;
+            selection.activeSegmentMidpointIndex = undefined;
+            selection.activeSegmentIndex = undefined;
+            if (layersLassoing.length > 0) {
+              if (anchor === AnchorName.INSIDE) {
+                cursor.value = LASSO_CURSOR;
+                selection.mode = SelectionMode.LASSOING;
+              }
+            } else {
+              const { rotation, scale } = mask.read(Transform);
+              cursor.value =
+                getCursor(
+                  cursorName,
+                  rotation,
+                  '',
+                  Math.sign(scale[0] * scale[1]) < 0,
+                ) ?? cursorName;
+              selection.resizingAnchorName = anchor;
+
+              if (cursorName.includes('rotate')) {
+                if (selection.mode !== SelectionMode.ROTATE) {
+                  selection.mode = SelectionMode.READY_TO_ROTATE;
+                }
+                toHighlight = undefined;
+              } else if (
+                cursorName.includes('resize') ||
+                anchor === AnchorName.X1Y1 ||
+                anchor === AnchorName.X2Y2
+              ) {
+                if (selection.mode !== SelectionMode.RESIZE) {
+                  selection.mode = SelectionMode.READY_TO_RESIZE;
+                }
+                toHighlight = undefined;
+              } else if (anchor === AnchorName.INSIDE) {
+                // Only in single transformer, we can select other objects.
+                if (
+                  toHighlight &&
+                  toHighlight !== selecteds[0] &&
+                  selecteds.length === 1
+                ) {
+                  selection.mode = SelectionMode.READY_TO_SELECT;
+                } else {
+                  // In group can toggle selection.
+                  if (input.shiftKey) {
+                    selection.mode = SelectionMode.READY_TO_SELECT;
+                  } else {
+                    if (
+                      // selection.mode !== SelectionMode.BRUSH &&
+                      selection.mode !== SelectionMode.MOVE &&
+                      selection.mode !== SelectionMode.ROTATE &&
+                      selection.mode !== SelectionMode.RESIZE
+                    ) {
+                      selection.mode = SelectionMode.READY_TO_MOVE;
+                    }
+                  }
+                }
+              } else if (
+                toHighlight &&
+                selection.mode !== SelectionMode.ROTATE &&
+                selection.mode !== SelectionMode.RESIZE
+              ) {
+                selection.mode = SelectionMode.READY_TO_SELECT;
+              }
+
+              if (layersCropping.length > 0) {
+                if (anchor === AnchorName.INSIDE) {
+                  cursor.value = 'move';
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+
+    if (toHighlight) {
+      if (
+        entityIsDeclarative3DNode(toHighlight) ||
+        this.shouldSuppress2DBrushSelection(canvas, x, y)
+      ) {
+        toHighlight = undefined;
+      }
+    }
+
+    if (toHighlight) {
+      const node = api.getNodeByEntity(toHighlight);
+      if (node) {
+        api.highlightNodes([node]);
+      }
+    } else {
+      api.highlightNodes([]);
+    }
+  }
+
   private applyBrushSelection(
     api: API,
     selection: SelectOBB,
@@ -3303,6 +3473,9 @@ export class Select extends System {
       selectedNodeIds.length !== prevSelectedNodeIds.length ||
       selectedNodeIds.some((id, i) => id !== prevSelectedNodeIds[i]);
     if (selectedChanged) {
+      delete selection.moveGesture;
+      delete selection.lastSnapOffset;
+      if (isBrowser) this.clearSnapLines(selection);
       const tf = camera.write(Transformable);
       tf.rotatePivotPinned = false;
       tf.rotatePivotX = NaN;
@@ -3446,7 +3619,6 @@ export class Select extends System {
       if (!node) {
         return;
       }
-      if (!node) return; // Skip if entity not in node map
       const oldNode = selection.nodes.find((n) => n.id === node.id);
       if (!oldNode) {
         return;

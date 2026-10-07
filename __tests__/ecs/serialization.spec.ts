@@ -7,7 +7,9 @@ describe('layout and connection document round trip', () => {
     const document = [
       {
         id: 'layout',
-        type: 'column-layout',
+        type: 'rect',
+        display: 'flex',
+        flexDirection: 'column',
         x: 10,
         y: 10,
         width: 100,
@@ -15,7 +17,6 @@ describe('layout and connection document round trip', () => {
         gap: 20,
         padding: 15,
         alignItems: 'center',
-        isAutoLayout: true,
       },
       { id: 'source', type: 'rect', x: 0, y: 0, width: 40, height: 40 },
       { id: 'target', type: 'rect', x: 150, y: 100, width: 40, height: 40 },
@@ -61,7 +62,7 @@ describe('layout and connection document round trip', () => {
         Ellipse,
         HTML,
         HTMLContainer,
-        ColumnLayout,
+        Flex,
         Renderable,
         StrokeLayers,
         Stroke,
@@ -122,7 +123,7 @@ describe('layout and connection document round trip', () => {
               Ellipse,
               HTML,
               HTMLContainer,
-              ColumnLayout,
+              Flex,
               Binding,
               Binded,
               Polyline,
@@ -145,13 +146,11 @@ describe('layout and connection document round trip', () => {
       };
       try {
         await frame(() => api.replaceDocument(nodes, 'remote'));
-        const layout = api
-          .getEntity(api.getNodeById('layout'))
-          .read(ColumnLayout);
+        expect(api.getEntity(api.getNodeById('layout')).has(Flex)).toBe(true);
+        const layout = api.getNodeById('layout');
         expect(layout.gap).toBe(edit ? 20 : 24);
         expect(layout.padding).toBe(15);
         expect(layout.alignItems).toBe('center');
-        expect(layout.isAutoLayout).toBe(true);
 
         const edge = api.getEntity(api.getNodeById('connection'));
         const source = api.getEntity(api.getNodeById('source'));
@@ -185,11 +184,12 @@ describe('layout and connection document round trip', () => {
           JSON.stringify(api.getNodes()),
         ) as SerializedNode[];
         expect(exported.find((n) => n.id === 'layout')).toMatchObject({
-          type: 'column-layout',
+          type: 'rect',
+          display: 'flex',
+          flexDirection: 'column',
           gap: 24,
           padding: 15,
           alignItems: 'center',
-          isAutoLayout: true,
         });
         expect(exported.find((n) => n.id === 'connection')).toMatchObject({
           type: 'polyline',

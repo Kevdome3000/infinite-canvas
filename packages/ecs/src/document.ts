@@ -16,8 +16,18 @@ export function documentValueEqual(a: unknown, b: unknown): boolean {
   );
 }
 
+/** Reject retired fork wire before any state, history or ECS mutation. */
+export function assertSupportedLayoutNodes(
+  nodes: readonly { type?: string }[],
+) {
+  if (nodes.some((node) => node.type === 'column-layout')) {
+    throw new Error('Unsupported retired layout type: column-layout');
+  }
+}
+
 /** Validate before any ECS or state mutation; snapshots must include their parents. */
 export function validateDocument(nodes: readonly SerializedNode[]) {
+  assertSupportedLayoutNodes(nodes);
   const byId = new Map<string, SerializedNode>();
   for (const node of nodes) {
     if (!node.id || byId.has(node.id))

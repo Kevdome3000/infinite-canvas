@@ -150,7 +150,7 @@ import { TaskQueue } from './TaskQueue';
 import { EditQueue } from './EditQueue';
 import { CapabilityRegistry } from './CapabilityRegistry';
 import { ResourceScope } from './resources/ResourceScope';
-import { documentValueEqual, validateDocument } from './document';
+import { assertSupportedLayoutNodes, documentValueEqual, validateDocument } from './document';
 import { SIBLINGS_MAX_Z_INDEX, SIBLINGS_MIN_Z_INDEX } from './context';
 import {
   applyIcDocumentToApi,
@@ -541,15 +541,25 @@ export class API {
       cameraRotation !== oldAppState.cameraRotation
     ) {
       if (this.#camera?.has(ComputedCamera)) {
-        this.gotoLandmark(
-          {
-            zoom: cameraZoom ?? 1,
-            x: cameraX ?? 0,
-            y: cameraY ?? 0,
-            rotation: cameraRotation ?? 0,
-          },
-          { duration: 0 },
-        );
+        const { x, y, zoom, rotation } = this.#camera.read(ComputedCamera);
+        // Camera systems publish their computed state here each frame. Echoing
+        // it back as a new destination would cancel the animation being observed.
+        if (
+          x !== (cameraX ?? 0) ||
+          y !== (cameraY ?? 0) ||
+          zoom !== (cameraZoom ?? 1) ||
+          rotation !== (cameraRotation ?? 0)
+        ) {
+          this.gotoLandmark(
+            {
+              zoom: cameraZoom ?? 1,
+              x: cameraX ?? 0,
+              y: cameraY ?? 0,
+              rotation: cameraRotation ?? 0,
+            },
+            { duration: 0 },
+          );
+        }
       } else {
         this.runAtNextTick(() => {
           this.gotoLandmark(
@@ -1023,8 +1033,8 @@ export class API {
   viewport2Client({ x, y }: IPointData): IPointData {
     const { scaleX, scaleY, bbox } = getScale(this.getCanvasElement());
     return {
-      x: (x + (bbox?.left || 0)) * scaleX,
-      y: (y + (bbox?.top || 0)) * scaleY,
+      x: x * scaleX + (bbox?.left || 0),
+      y: y * scaleY + (bbox?.top || 0),
     };
   }
 
@@ -1364,12 +1374,12 @@ export class API {
       }
     };
 
+    this.cancelLandmarkAnimation();
+
     if (duration === 0) {
       endAnimation();
       return;
     }
-
-    this.cancelLandmarkAnimation();
 
     let timeStart: number | undefined;
     const destPosition: vec2 = [x, y]; // in world space
@@ -1722,7 +1732,9 @@ export class API {
     // Get bounds of all renderables.
     const bounds = new AABB();
     rbush.all().forEach((node) => {
-      const { minX, minY, maxX, maxY } = node;
+      const { minX, minY, maxX, maxY, entity } = node;
+      // Editor overlays (including hidden handles) are also indexed for picking.
+      if (entity.has(UI) || entity.has(ToBeDeleted)) return;
       bounds.addFrame(minX, minY, maxX, maxY);
     });
 
@@ -1755,28 +1767,35 @@ export class API {
 
     const { width, height } = this.#canvas.read(Canvas);
 
-    const scaleX = width / (maxX - minX);
-    const scaleY = height / (maxY - minY);
+    const { rotation } = this.#camera.read(ComputedCamera);
+    const cos = Math.cos(rotation);
+    const sin = Math.sin(rotation);
+    const boundsWidth = maxX - minX;
+    const boundsHeight = maxY - minY;
+    const scaleX =
+      width / (Math.abs(cos) * boundsWidth + Math.abs(sin) * boundsHeight);
+    const scaleY =
+      height / (Math.abs(sin) * boundsWidth + Math.abs(cos) * boundsHeight);
 
     const newZoom = zoomCompare(scaleX, scaleY);
+    if (!Number.isFinite(newZoom) || newZoom <= 0) return;
 
     // Fit to center
     const centerX = (minX + maxX) / 2;
     const centerY = (minY + maxY) / 2;
 
-    const { zoom } = this.#camera.read(ComputedCamera);
+    const halfWidth = width / 2 / newZoom;
+    const halfHeight = height / 2 / newZoom;
 
+    // Compute one destination. Chaining an instant pan and zoom would read the
+    // previous frame's ComputedCamera when resolving the zoom's viewport anchor.
     this.gotoLandmark(
       this.createLandmark({
-        x: centerX - width / 2 / zoom,
-        y: centerY - height / 2 / zoom,
+        x: centerX - cos * halfWidth + sin * halfHeight,
+        y: centerY - sin * halfWidth - cos * halfHeight,
+        zoom: newZoom,
       }),
-      {
-        duration: 0,
-        onfinish: () => {
-          this.zoomTo(newZoom, effectTiming);
-        },
-      },
+      effectTiming ?? { duration: 300, easing: 'ease' },
     );
   }
 
@@ -2090,6 +2109,7 @@ export class API {
     updateAppState = true,
     skipOverrideKeys: string[] = [],
   ) {
+    assertSupportedLayoutNodes(diff ? [node, diff] : [node]);
     const entity = this.#idEntityMap.get(node.id)?.id();
     const nodes = this.getNodes();
 
@@ -2156,6 +2176,7 @@ export class API {
    * @see https://docs.excalidraw.com/docs/@excalidraw/excalidraw/api/props/excalidraw-api#updatescene
    */
   updateNodes(nodes: SerializedNode[], updateAppState = true) {
+    assertSupportedLayoutNodes(nodes);
     if (!nodes.length) return;
     const nextNodes = updateAppState ? this.getNodes().slice() : [];
     const indices = new Map(nextNodes.map((node, index) => [node.id, index]));
@@ -3659,10 +3680,18 @@ export class API {
   }
 
   /**
-   * 自 `.ic` 文档或 JSON 字符串恢复场景（会先清空当前场景根节点）。
+   * 从 `.ic` 文档或 JSON 字符串恢复场景，在 Edit 阶段替换并提交一次。
+   * 返回 true 表示提交完成，取消或销毁返回 false；输入在排队前校验并复制。
    */
-  importIcDocument(doc: unknown, options?: { recordHistory?: boolean }) {
-    applyIcDocumentToApi(this, parseIcDocumentJson(doc), options);
+  importIcDocument(
+    doc: unknown,
+    options?: { recordHistory?: boolean; signal?: AbortSignal },
+  ): Promise<boolean> {
+    const received = structuredClone(parseIcDocumentJson(doc));
+    return this.edit((api) => applyIcDocumentToApi(api, received, options), {
+      capture: options?.recordHistory === false ? 'NEVER' : 'IMMEDIATELY',
+      signal: options?.signal,
+    });
   }
 
   // AI APIs

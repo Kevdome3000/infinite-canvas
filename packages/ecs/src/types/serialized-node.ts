@@ -769,14 +769,7 @@ export interface CardMetadata {
     source?: 'chance-note-card' | 'chance-blocksuite-note-card';
   };
 
-  // Card Stack ECS layout configuration
-  /** ColumnLayout settings for card stacks */
-  columnLayout?: {
-    direction: 'vertical' | 'horizontal';
-    gap: number;
-    padding: number;
-    alignItems: 'start' | 'center' | 'end' | 'stretch';
-  };
+
 }
 
 export interface HtmlSerializedNode
@@ -892,19 +885,6 @@ export type NodeSerializedNode =
   | RefSerializedNode;
 export type EdgeSerializedNode = LineSerializedNode | PolylineSerializedNode | RoughLineSerializedNode | RoughPolylineSerializedNode | PathSerializedNode | RoughPathSerializedNode;
 
-export interface ColumnLayoutAttributes {
-  gap: number;
-  padding: number | number[];
-  alignItems: 'start' | 'center' | 'end' | 'stretch';
-  isAutoLayout: boolean;
-  direction: 'vertical' | 'horizontal';
-  maxChildren: number;
-  showDropZone: boolean;
-}
-export interface ColumnLayoutSerializedNode
-  extends Omit<BaseSerializeNode<'column-layout'>, 'alignItems'>,
-    Partial<ColumnLayoutAttributes> {}
-
 export type SerializedNode =
   | GSerializedNode
   | EllipseSerializedNode
@@ -925,8 +905,7 @@ export type SerializedNode =
   | IconFontSerializedNode
   | Mesh3DNodeSerializedNode
   | Light3DNodeSerializedNode
-  | RefSerializedNode
-  | ColumnLayoutSerializedNode;
+  | RefSerializedNode;
 
 export type SerializedNodeAttributes = GSerializedNode &
   EllipseSerializedNode &
@@ -947,8 +926,7 @@ export type SerializedNodeAttributes = GSerializedNode &
   IconFontSerializedNode &
   Mesh3DNodeSerializedNode &
   Light3DNodeSerializedNode &
-  RefSerializedNode &
-  ColumnLayoutSerializedNode;
+  RefSerializedNode;
 
 /**
  * `ref.descendants` 中单个后代节点的属性覆盖；故意排除会破坏实例子树结构的字段。

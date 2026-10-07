@@ -46,6 +46,16 @@ function mount(store = createCanvasStore()) {
       updates.forEach((node) => next.set(node.id, node));
       nodes = [...next.values()];
     }),
+    deleteNodesById: jest.fn((ids: string[]) => {
+      nodes = nodes.filter((node) => !ids.includes(node.id));
+      state = {
+        ...state,
+        layersSelected: state.layersSelected.filter((id) => !ids.includes(id)),
+      };
+    }),
+    replaceDocument: jest.fn((next: readonly SerializedNode[]) => {
+      nodes = structuredClone([...next]);
+    }),
     setAppState: jest.fn((patch: Partial<AppState>) => {
       state = { ...state, ...patch };
     }),
@@ -64,6 +74,8 @@ function mount(store = createCanvasStore()) {
     undo: jest.fn(),
     redo: jest.fn(),
     clearHistory: jest.fn(),
+    zoomTo: jest.fn(),
+    fitToScreen: jest.fn(),
     destroy() {
       edits.dispose();
       queue.dispose();
@@ -99,6 +111,44 @@ it('composes queued functional node updates from the latest scene', async () => 
   api.destroy();
 });
 
+it('routes retained camera actions to the current canvas without creating history', () => {
+  const store = createCanvasStore();
+  const actions = createCanvasActions(store);
+  expect(actions.zoomTo(2)).toBe(false);
+  expect(actions.fitToScreen()).toBe(false);
+  const first = mount(store);
+  const options = { duration: 0, onfinish: jest.fn() };
+  expect(actions.zoomTo(2, options)).toBe(true);
+  expect(first.api.zoomTo).toHaveBeenCalledWith(2, options);
+  expect(actions.fitToScreen(options)).toBe(true);
+  expect(first.api.fitToScreen).toHaveBeenCalledWith(options);
+  first.flush();
+  expect(first.api.record).not.toHaveBeenCalled();
+  first.lease.release();
+  first.api.destroy();
+  expect(actions.zoomTo(3)).toBe(false);
+  expect(actions.fitToScreen()).toBe(false);
+  const second = mount(store);
+  expect(actions.zoomTo(4)).toBe(true);
+  expect(actions.fitToScreen()).toBe(true);
+  expect(first.api.zoomTo).toHaveBeenCalledTimes(1);
+  expect(first.api.fitToScreen).toHaveBeenCalledTimes(1);
+  expect(second.api.zoomTo).toHaveBeenCalledWith(4, undefined);
+  expect(second.api.fitToScreen).toHaveBeenCalledWith(undefined);
+  second.api.destroy();
+});
+
+it('rejects invalid zoom before it reaches the camera', () => {
+  const { api, actions } = mount();
+  for (const zoom of [0, -1, NaN, Infinity, -Infinity]) {
+    expect(() => actions.zoomTo(zoom)).toThrow(RangeError);
+  }
+  expect(api.zoomTo).not.toHaveBeenCalled();
+  expect(actions.zoomTo(0.25)).toBe(true);
+  expect(api.zoomTo).toHaveBeenCalledWith(0.25, undefined);
+  api.destroy();
+});
+
 it('copies supplied nodes before queueing and preserves omitted nodes', async () => {
   const { api, flush, actions } = mount();
   const supplied = { ...rectangle(60), id: 'second' };
@@ -110,6 +160,80 @@ it('copies supplied nodes before queueing and preserves omitted nodes', async ()
     ['rect', 100],
     ['second', 60],
   ]);
+  api.destroy();
+});
+
+it('copies deletion IDs and refreshes the document and selection after execution', async () => {
+  const { api, store, flush, actions } = mount();
+  const selected = actions.selectNodes(['rect']);
+  const ids = ['rect', 'missing', 'rect'];
+  const deleted = actions.deleteNodes(ids);
+  ids.length = 0;
+  expect(api.deleteNodesById).not.toHaveBeenCalled();
+  flush();
+  expect(await Promise.all([selected, deleted])).toEqual([true, true]);
+  expect(api.deleteNodesById).toHaveBeenCalledWith(['rect', 'missing', 'rect']);
+  expect(store.getSnapshot().nodes).toEqual([]);
+  expect(store.getSnapshot().appState!.layersSelected).toEqual([]);
+  expect(api.record.mock.calls).toEqual([['IMMEDIATELY'], ['IMMEDIATELY']]);
+  api.destroy();
+});
+
+it('copies a full replacement document before queueing and honors capture options', async () => {
+  const { api, store, flush, actions } = mount();
+  const supplied = { ...rectangle(60), id: 'second' };
+  const replaced = actions.replaceDocument([supplied], { capture: 'NEVER' });
+  supplied.width = 999;
+  expect(api.replaceDocument).not.toHaveBeenCalled();
+  flush();
+  expect(await replaced).toBe(true);
+  expect(api.replaceDocument).toHaveBeenCalledWith(
+    [expect.objectContaining({ id: 'second', width: 60 })],
+    'local',
+  );
+  expect(store.getSnapshot().nodes.map((node) => node.id)).toEqual(['second']);
+  expect(api.record.mock.calls).toEqual([['NEVER']]);
+  api.destroy();
+});
+
+it('runs replacement updaters against the latest scene in edit invocation order', async () => {
+  const { api, flush, actions } = mount();
+  const inserted = actions.updateNodes([{ ...rectangle(70), id: 'second' }]);
+  const deleted = actions.deleteNodes(['rect']);
+  const replaced = actions.replaceDocument((nodes) =>
+    nodes.map((node) => ({ ...node, width: node.width! + 10 })),
+  );
+  flush();
+  expect(await Promise.all([inserted, deleted, replaced])).toEqual([
+    true,
+    true,
+    true,
+  ]);
+  expect(api.getNodes().map((node) => [node.id, node.width])).toEqual([
+    ['second', 80],
+  ]);
+  expect(api.record).toHaveBeenCalledTimes(3);
+  api.destroy();
+});
+
+it('cancels queued document commands and propagates replacement validation failures', async () => {
+  const { api, actions, flush } = mount();
+  const controller = new AbortController();
+  const deleted = actions.deleteNodes(['rect'], { signal: controller.signal });
+  const replaced = actions.replaceDocument([], { signal: controller.signal });
+  controller.abort();
+  expect(await Promise.all([deleted, replaced])).toEqual([false, false]);
+  api.replaceDocument.mockImplementationOnce(() => {
+    throw new Error('Duplicate node id');
+  });
+  const failed = actions.replaceDocument([rectangle(), rectangle()]);
+  const rejected = expect(failed).rejects.toThrow('Duplicate node id');
+  flush();
+  await rejected;
+  expect(api.deleteNodesById).not.toHaveBeenCalled();
+  expect(api.replaceDocument).toHaveBeenCalledTimes(1);
+  expect(api.record).not.toHaveBeenCalled();
+  expect(api.getNodes()).toEqual([rectangle()]);
   api.destroy();
 });
 

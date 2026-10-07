@@ -2,13 +2,21 @@ import type {
   AppState,
   CanvasEditOptions,
   SerializedNode,
+  LandmarkAnimationEffectTiming,
 } from '@infinite-canvas-tutorial/ecs';
 import type { ExtendedAPI } from '@infinite-canvas-tutorial/webcomponents';
 import type { CanvasStore } from './store';
 
 export type { CanvasEditOptions } from '@infinite-canvas-tutorial/ecs';
 
+export type CanvasCameraAnimationOptions =
+  Partial<LandmarkAnimationEffectTiming>;
+
 export interface CanvasActions {
+  /** Animate zoom around the viewport center; requires a finite positive zoom. */
+  zoomTo(zoom: number, options?: CanvasCameraAnimationOptions): boolean;
+  /** Fit all rendered shapes; an empty scene is a no-op. Does not record history. */
+  fitToScreen(options?: CanvasCameraAnimationOptions): boolean;
   /** Run synchronous mutations before derived data/rendering and commit once. */
   edit(
     update: (api: ExtendedAPI) => void,
@@ -16,6 +24,18 @@ export interface CanvasActions {
   ): Promise<boolean>;
   /** Upsert nodes; an updater reads the latest scene when the edit executes. */
   updateNodes(
+    update:
+      | readonly SerializedNode[]
+      | ((nodes: readonly SerializedNode[]) => readonly SerializedNode[]),
+    options?: CanvasEditOptions,
+  ): Promise<boolean>;
+  /** Delete IDs and their descendants from the latest scene. */
+  deleteNodes(
+    ids: readonly string[],
+    options?: CanvasEditOptions,
+  ): Promise<boolean>;
+  /** Replace the entire document, deleting omitted IDs; undoable by default. */
+  replaceDocument(
     update:
       | readonly SerializedNode[]
       | ((nodes: readonly SerializedNode[]) => readonly SerializedNode[]),
@@ -65,6 +85,21 @@ export function createCanvasActions(store: CanvasStore): CanvasActions {
   };
 
   return {
+    zoomTo(zoom, options) {
+      const api = store.getSnapshot().api;
+      if (!api) return false;
+      if (!Number.isFinite(zoom) || zoom <= 0) {
+        throw new RangeError('Camera zoom must be a finite positive number.');
+      }
+      api.zoomTo(zoom, options);
+      return true;
+    },
+    fitToScreen(options) {
+      const api = store.getSnapshot().api;
+      if (!api) return false;
+      api.fitToScreen(options);
+      return true;
+    },
     edit,
     async updateNodes(update, options) {
       const next =
@@ -75,6 +110,23 @@ export function createCanvasActions(store: CanvasStore): CanvasActions {
             ? structuredClone(next(api.getNodes()))
             : next;
         api.updateNodes([...nodes]);
+      }, options);
+    },
+    deleteNodes(ids, options) {
+      const deleted = [...ids];
+      return edit((api) => {
+        api.deleteNodesById(deleted);
+      }, options);
+    },
+    async replaceDocument(update, options) {
+      const next =
+        typeof update === 'function' ? update : structuredClone(update);
+      return edit((api) => {
+        // The core validates and clones the full document before applying it.
+        api.replaceDocument(
+          typeof next === 'function' ? next(api.getNodes()) : next,
+          'local',
+        );
       }, options);
     },
     async setAppState(update, options) {

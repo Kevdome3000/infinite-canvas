@@ -1,3 +1,4 @@
+import { assertSupportedLayoutNodes } from '../../document';
 import { isNil, path2Absolute } from '@antv/util';
 import toposort from 'toposort';
 import { Entity } from '@lastolivegames/becsy';
@@ -47,7 +48,6 @@ import {
   Flex,
   Group,
   IconFont,
-  ColumnLayout,
   Extrude3D,
   Light3D,
   Mesh3DNode,
@@ -58,7 +58,6 @@ import type {
   AnimationAttributes,
   AttenuationAttributes,
   BrushSerializedNode,
-  ColumnLayoutSerializedNode,
   DropShadowAttributes,
   EdgeSerializedNode,
   EmbedSerializedNode,
@@ -179,18 +178,7 @@ export function inferXYWidthHeight(node: SerializedNode) {
       bounds = Brush.getGeometryBounds(node);
     } else if (type === 'vector-network') {
       bounds = VectorNetwork.getGeometryBounds(node);
-    } else if (type === 'column-layout') {
-      // ColumnLayout bounds usually depend on children or Rect if present.
-      // If inferred, we need to know layout size.
-      // For now, assume it might have explicit bounds or we skip inference if not present.
-      // A common pattern for groups/layouts is that they might not have intrinsic geometry bounds
-      // without children being verified first.
-      // Let's assume passed node has x/y/width/height if it was serialized from a Rect.
-      // If not, we might fail here.
-      // However, if we serialized a Rect component, `inferXYWidthHeight` works based on `type`.
-      // If type is 'column-layout', it might NOT have a geometry method.
-      // We should check if it has x/y/width/height already.
-      if (!isNil(node.x) && !isNil(node.width)) return;
+
     }
 
     if (bounds) {
@@ -1000,11 +988,13 @@ export function serializedNodesToEntities(
   entities: Entity[];
   idEntityMap: Map<string, EntityCommands>;
 } {
+  assertSupportedLayoutNodes(nodes);
   const mergedForRef = mergeSerializedNodesForRefLookup(
     nodes,
     options?.lookupNodes,
   );
   const expandedNodes = expandRefSerializedNodes(nodes, mergedForRef);
+  assertSupportedLayoutNodes(expandedNodes);
   const graph = mergeSerializedNodesForRefLookup(
     expandedNodes,
     options?.lookupNodes,
@@ -1523,53 +1513,10 @@ export function serializedNodesToEntities(
       entityCommands.insert(new HTML({ x: 0, y: 0, width: absoluteWidth, height: absoluteHeight, html }));
       entityCommands.insert(new HTMLContainer());
 
-      // Add ColumnLayout for card stacks to enable ECS-based child positioning
-      const metadata = (attributes as HtmlSerializedNode).metadata;
-      const cardType = metadata?.cardType?.toLowerCase();
-      if (cardType === 'stack') {
-        entityCommands.insert(
-          new ColumnLayout({
-            isAutoLayout: true,
-            direction: 'vertical',
-            gap: 8,
-            padding: 12,
-            alignItems: 'stretch',
-          }),
-        );
-        entityCommands.insert(new Rect({ x: 0, y: 0, width: absoluteWidth, height: absoluteHeight }));
-      }
     } else if (type === 'embed') {
       const { url } = attributes as EmbedSerializedNode;
       entityCommands.insert(new Embed({ x: 0, y: 0, width: absoluteWidth, height: absoluteHeight, url }));
       entityCommands.insert(new HTMLContainer());
-    } else if (type === 'column-layout') {
-      const { gap, padding: rawPadding, alignItems, isAutoLayout } =
-        attributes as ColumnLayoutSerializedNode;
-      const padding = Array.isArray(rawPadding) ? (rawPadding[0] ?? 0) : (rawPadding ?? 0);
-      entityCommands.insert(
-        new ColumnLayout({ gap, padding, alignItems, isAutoLayout }),
-      );
-      // Usually ColumnLayouts also have a Rect component which is handled by general props?
-      // No, `Rect` component addition is specific to `type === 'rect'`.
-      // If ColumnLayout entity had Rect, `entityToSerializedNodes` would serialize Rect props
-      // into attributes (like cornerRadius) ONLY IF it entered the `Rect` block.
-      // But `entityToSerializedNodes` is an if/else chain on TYPE.
-      // If `type` is 'column-layout', it doesn't run `Rect` block.
-      // effectively `Rect` specific props like cornerRadius might be lost if we don't handle them
-      // OR if `RectSerializedNode` properties are part of base.
-      // `width`/`height` are part of transform/base, so they are safe.
-      // We should probably add `Rect` component if width/height are present,
-      // as ColumnLayout usually implies a container.
-      // Keep it simple: Add Rect with transform dims.
-      entityCommands.insert(new Rect({ x: 0, y: 0, width: absoluteWidth, height: absoluteHeight }));
-      // Also add Polyline if points exist (visuals)
-      if ((attributes as any).points) {
-        entityCommands.insert(
-          new Polyline({
-            points: deserializePoints((attributes as any).points),
-          }),
-        );
-      }
     } else if (type === 'iconfont') {
       const {
         iconFontName = '',

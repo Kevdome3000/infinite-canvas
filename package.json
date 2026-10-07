@@ -29,6 +29,7 @@
     "test:ecs": "jest -c ./jest.ecs.config.js --coverage",
     "dev:react-tests": "vite --config __tests__/react/browser/vite.config.ts",
     "test:react:browser": "playwright test -c playwright.react.config.ts",
+    "test:react:browser:webkit": "playwright test -c playwright.react-webkit.config.ts",
     "test:react:package": "node scripts/verify-react-package.mjs",
     "test:react": "node -r ./__tests__/react/no-canvas.cjs ./node_modules/jest/bin/jest.js -c ./jest.react.config.js --runInBand",
     "test:e2e": "npx playwright test",
@@ -40,6 +41,7 @@
     "release:alpha": "changeset publish --tag alpha",
     "dev:browser-tests": "NODE_OPTIONS=--max-http-header-size=65536 vite --config __tests__/browser/vite.config.ts",
     "test:browser": "playwright test -c playwright.browser.config.ts",
+    "test:browser:webkit": "playwright test -c playwright.webkit.config.ts",
     "lint": "eslint . --max-warnings=0",
     "test:tooling": "node --test __tests__/tooling/*.test.mjs"
   },
@@ -153,7 +155,16 @@
       "lodash@<4.18.0": "^4.18.0",
       "tough-cookie@<4.1.3": "^4.1.3",
       "@loaders.gl/textures>texture-compressor": "-",
-      "@loaders.gl/images": "4.5.2"
+      "@loaders.gl/images": "4.5.2",
+      "proxy-addr@<2.0.8": "2.0.8",
+      "source-map-js@<1.2.2": "1.2.2",
+      "vue@<3.5.42": "3.5.42",
+      "katex@<0.18.2": "0.18.2"
+    },
+    "patchedDependencies": {
+      "braces@3.0.3": "patches/braces@3.0.3.patch",
+      "http-cache-semantics@4.1.1": "patches/http-cache-semantics@4.1.1.patch",
+      "sprintf-js@1.0.3": "patches/sprintf-js@1.0.3.patch"
     }
   },
   "packageManager": "pnpm@9.15.9"

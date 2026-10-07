@@ -19,12 +19,20 @@ import {
   Pen,
   RectSerializedNode,
   GSerializedNode,
+  type SerializedNode,
 } from '@infinite-canvas-tutorial/ecs';
 import { html, render } from '@spectrum-web-components/base';
 import { VirtualTrigger, openOverlay } from '@spectrum-web-components/overlay';
 import { v4 as uuidv4 } from 'uuid';
 import { apiContext, appStateContext } from '../context';
 import { ExtendedAPI } from '../API';
+import { editLayer } from './layer-command';
+import {
+  deleteLayers,
+  editLayerStructure,
+  layerSubtree,
+  nudgeLayers,
+} from './layer-structure-command';
 import { extractExternalUrlMetadata } from '../utils/url';
 import { measureHTML } from '../utils';
 import { updateAndSelectNodes } from '../utils/common';
@@ -52,15 +60,44 @@ export function executeCopy(
   );
 }
 
-export function executeCut(
+export async function executeCut(
   api: ExtendedAPI,
   appState: AppState,
   event?: ClipboardEvent,
 ) {
-  executeCopy(api, appState, event);
-  // delete nodes
-  api.deleteNodesById(appState.layersSelected);
-  api.record();
+  const ids = [...new Set(appState.layersSelected)].filter((id) => {
+    const node = api.getNodeById(id);
+    return node && !node.isDeleted && !node.locked && api.getEntity(node);
+  });
+  if (!ids.length) return false;
+  const controller = new AbortController();
+  const dispose = api.onDestroy(() => controller.abort());
+  try {
+    const snapshot = JSON.stringify(layerSubtree(api, ids));
+    // ClipboardEvent data is writable only during dispatch. Populate it before
+    // awaiting; menu commands instead wait for the system clipboard to succeed.
+    let copied = false;
+    if (event?.clipboardData) {
+      event.clipboardData.setData(MIME_TYPES.text, snapshot);
+      copied = event.clipboardData.getData(MIME_TYPES.text) === snapshot;
+    }
+    if (!copied) await api.copyToClipboard(JSON.parse(snapshot));
+    if (controller.signal.aborted) return false;
+    return await editLayerStructure(api, (editor) => {
+      // Do not delete newer edits or newly added descendants after a slow copy.
+      if (
+        controller.signal.aborted ||
+        JSON.stringify(layerSubtree(editor, ids)) !== snapshot
+      )
+        return;
+      return () => editor.deleteNodesById(ids);
+    });
+  } catch (error) {
+    if (!controller.signal.aborted) console.error(error);
+    return false;
+  } finally {
+    dispose();
+  }
 }
 
 function getMaxZIndex(api: ExtendedAPI) {
@@ -100,7 +137,7 @@ function createSVG(
     node.locked = true;
   });
 
-  updateAndSelectNodes(api, appState, [root, ...nodes]);
+  return updateAndSelectNodes(api, appState, [root, ...nodes]);
 }
 
 function createText(
@@ -109,7 +146,7 @@ function createText(
   text: string,
   position?: { x: number; y: number },
 ) {
-  updateAndSelectNodes(api, appState, [
+  return updateAndSelectNodes(api, appState, [
     {
       id: uuidv4(),
       type: 'text',
@@ -132,7 +169,7 @@ function createHTML(
 ) {
   const { width, height } = measureHTML(html);
 
-  updateAndSelectNodes(api, appState, [
+  return updateAndSelectNodes(api, appState, [
     {
       id: uuidv4(),
       type: 'html',
@@ -178,7 +215,7 @@ export async function executePaste(
 
   if (!file) {
     if (data.html) {
-      createHTML(api, appState, data.html, canvasPosition);
+      await createHTML(api, appState, data.html, canvasPosition);
       // return this.addElementsFromMixedContentPaste(data.mixedContent, {
       //   isPlainPaste,
       //   sceneX,
@@ -195,7 +232,7 @@ export async function executePaste(
 
         // TODO: create bookmark asset
       } else if (string.startsWith('<svg') && string.endsWith('</svg>')) {
-        createSVG(api, appState, string, canvasPosition);
+        await createSVG(api, appState, string, canvasPosition);
       } else if (isLikelyMermaidSyntax(string)) {
         const pasted = await tryPasteMermaid(
           api,
@@ -204,7 +241,7 @@ export async function executePaste(
           canvasPosition,
         );
         if (!pasted) {
-          createText(api, appState, data.text, canvasPosition);
+          await createText(api, appState, data.text, canvasPosition);
         }
       } else {
         // const nonEmptyLines = data.text
@@ -212,7 +249,7 @@ export async function executePaste(
         // .split(/\n+/)
         // .map((s) => s.trim())
         // .filter(Boolean);
-        createText(api, appState, data.text, canvasPosition);
+        await createText(api, appState, data.text, canvasPosition);
       }
     } else if (data.elements) {
       const nodes = api.cloneNodes(data.elements);
@@ -234,7 +271,7 @@ export async function executePaste(
         }
       }
 
-      updateAndSelectNodes(api, appState, nodes);
+      await updateAndSelectNodes(api, appState, nodes);
     }
   } else if (isSupportedImageFileType(file?.type)) {
     await api.createImageFromFile(file, { position: canvasPosition });
@@ -288,14 +325,14 @@ export class ContextMenu extends LitElement {
     if (value === 'copy') {
       executeCopy(this.api, this.appState);
     } else if (value === 'paste') {
-      executePaste(
+      void executePaste(
         this.api,
         this.appState,
         undefined,
         this.lastContextMenuPosition,
-      );
+      ).catch((error: unknown) => console.error(error));
     } else if (value === 'cut') {
-      executeCut(this.api, this.appState);
+      void executeCut(this.api, this.api.getAppState());
     } else if (value === 'bring-to-front') {
       this.executeBringToFront();
     } else if (value === 'bring-forward') {
@@ -556,7 +593,7 @@ export class ContextMenu extends LitElement {
   };
 
   private handleCut = (event: ClipboardEvent) => {
-    const { layersSelected } = this.appState;
+    const { layersSelected } = this.api.getAppState();
     if (
       document.activeElement !== this.api.element ||
       layersSelected.length === 0
@@ -564,7 +601,7 @@ export class ContextMenu extends LitElement {
       return;
     }
 
-    executeCut(this.api, this.appState, event);
+    void executeCut(this.api, this.api.getAppState(), event);
 
     event.preventDefault();
     event.stopPropagation();
@@ -575,7 +612,12 @@ export class ContextMenu extends LitElement {
       return;
     }
 
-    executePaste(this.api, this.appState, event, this.lastPointerMovePosition);
+    void executePaste(
+      this.api,
+      this.appState,
+      event,
+      this.lastPointerMovePosition,
+    ).catch((error: unknown) => console.error(error));
 
     event.preventDefault();
     event.stopPropagation();
@@ -614,46 +656,18 @@ export class ContextMenu extends LitElement {
       return;
     }
 
-    if (event.key === 'ArrowUp') {
+    if (
+      ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(event.key)
+    ) {
       event.preventDefault();
-      layersSelected.forEach((id) => {
-        const node = this.api.getNodeById(id);
-        if (node) {
-          this.api.updateNodeOBB(node, { y: (node.y as number) - 10 });
-        }
-      });
-      this.api.record();
-    } else if (event.key === 'ArrowDown') {
-      event.preventDefault();
-      layersSelected.forEach((id) => {
-        const node = this.api.getNodeById(id);
-        if (node) {
-          this.api.updateNodeOBB(node, { y: (node.y as number) + 10 });
-        }
-      });
-      this.api.record();
-    } else if (event.key === 'ArrowLeft') {
-      event.preventDefault();
-      layersSelected.forEach((id) => {
-        const node = this.api.getNodeById(id);
-        if (node) {
-          this.api.updateNodeOBB(node, { x: (node.x as number) - 10 });
-        }
-      });
-      this.api.record();
-    } else if (event.key === 'ArrowRight') {
-      event.preventDefault();
-      layersSelected.forEach((id) => {
-        const node = this.api.getNodeById(id);
-        if (node) {
-          this.api.updateNodeOBB(node, { x: (node.x as number) + 10 });
-        }
-      });
-      this.api.record();
+      const axis =
+        event.key === 'ArrowUp' || event.key === 'ArrowDown' ? 'y' : 'x';
+      const delta =
+        event.key === 'ArrowUp' || event.key === 'ArrowLeft' ? -10 : 10;
+      void nudgeLayers(this.api, layersSelected, axis, delta);
     } else if (event.key === 'Backspace') {
       event.preventDefault();
-      this.api.deleteNodesById(layersSelected);
-      this.api.record();
+      void deleteLayers(this.api, layersSelected);
     } else if (event.key === 'Escape') {
       event.preventDefault();
       this.api.selectNodes([]);
@@ -683,165 +697,173 @@ export class ContextMenu extends LitElement {
   /**
    * @see https://github.com/excalidraw/excalidraw/blob/master/packages/excalidraw/components/App.tsx#L10242
    */
-  private handleDrop = async (event: DragEvent) => {
+  private handleDrop = (event: DragEvent) => {
     event.preventDefault();
+    void this.drop(event).catch((error: unknown) => console.error(error));
+  };
 
-    const canvasPosition = this.api.viewport2Canvas(
-      this.api.client2Viewport({
+  private async drop(event: DragEvent) {
+    // Keep async preparation bound to the canvas that received this drop.
+    const api = this.api;
+    const appState = api.getAppState();
+
+    const canvasPosition = api.viewport2Canvas(
+      api.client2Viewport({
         x: event.clientX,
         y: event.clientY,
       }),
     );
 
+    // Capture protected drag data before image/SVG/Mermaid preparation awaits.
     const url = event.dataTransfer.getData('text/uri-list');
+    const text = event.dataTransfer.getData('text/plain');
+    const files = Array.from(event.dataTransfer.files);
     if (url) {
       try {
-        await this.api.createImageFromFile(url, { position: canvasPosition });
+        await api.createImageFromFile(url, { position: canvasPosition });
         return;
       } catch (error) {
         console.error(error);
       }
     }
-    const text = event.dataTransfer.getData('text/plain');
     if (text) {
       const trimmed = text.trim();
       if (
         isLikelyMermaidSyntax(trimmed) &&
         (await tryPasteMermaid(
-          this.api,
-          this.appState,
+          api,
+          appState,
           trimmed,
           canvasPosition,
         ))
       ) {
         return;
       }
-      createText(this.api, this.appState, text, canvasPosition);
+      await createText(api, appState, text, canvasPosition);
       return;
     }
 
-    for (const file of Array.from(event.dataTransfer.files)) {
+    for (const file of files) {
       if (isSupportedImageFileType(file.type)) {
         if (file.type === MIME_TYPES.svg) {
           const svg = await file.text();
-          createSVG(this.api, this.appState, svg, canvasPosition);
+          await createSVG(api, appState, svg, canvasPosition);
         } else {
-          await this.api.createImageFromFile(file, { position: canvasPosition });
+          await api.createImageFromFile(file, { position: canvasPosition });
         }
       }
     }
-  };
+  }
 
   private executeBringToFront() {
-    const node = this.api.getNodeById(this.appState.layersSelected[0]);
-    if (node) {
-      this.api.bringToFront(node);
-      this.api.record();
-    }
+    return editLayer(
+      this.api,
+      this.api.getAppState().layersSelected[0],
+      'bringToFront',
+    );
   }
 
   private executeBringForward() {
-    const node = this.api.getNodeById(this.appState.layersSelected[0]);
-    if (node) {
-      this.api.bringForward(node);
-      this.api.record();
-    }
+    return editLayer(
+      this.api,
+      this.api.getAppState().layersSelected[0],
+      'bringForward',
+    );
   }
 
   private executeSendBackward() {
-    const node = this.api.getNodeById(this.appState.layersSelected[0]);
-    if (node) {
-      this.api.sendBackward(node);
-      this.api.record();
-    }
+    return editLayer(
+      this.api,
+      this.api.getAppState().layersSelected[0],
+      'sendBackward',
+    );
   }
 
   private executeSendToBack() {
-    const node = this.api.getNodeById(this.appState.layersSelected[0]);
-    if (node) {
-      this.api.sendToBack(node);
-      this.api.record();
-    }
+    return editLayer(
+      this.api,
+      this.api.getAppState().layersSelected[0],
+      'sendToBack',
+    );
   }
 
   private executeToggleVisibility() {
-    const node = this.api.getNodeById(this.appState.layersSelected[0]);
-    if (node) {
-      this.api.updateNode(node, {
-        visibility: node.visibility === 'hidden' ? 'visible' : 'hidden',
-      });
-      this.api.record();
-    }
+    return editLayer(
+      this.api,
+      this.api.getAppState().layersSelected[0],
+      'toggleVisibility',
+    );
   }
 
   private executeToggleLock() {
-    const node = this.api.getNodeById(this.appState.layersSelected[0]);
-    if (node) {
-      const isLocked = !!node.locked;
-      this.api.updateNode(node, {
-        locked: !isLocked,
-      });
-      this.api.record();
-    }
+    return editLayer(
+      this.api,
+      this.api.getAppState().layersSelected[0],
+      'toggleLocked',
+    );
+  }
+
+  private editSelectedNodes(
+    update: (api: ExtendedAPI, nodes: SerializedNode[]) => void,
+  ) {
+    // Keep the command bound to its original canvas and targets, while resolving
+    // live nodes at the write boundary (a queued edit may have deleted them).
+    const api = this.api;
+    const ids = [...api.getAppState().layersSelected];
+    if (ids.length === 0) return;
+
+    void api.edit((editor) => {
+      const nodes = ids
+        .map((id) => editor.getNodeById(id))
+        .filter(
+          (node): node is SerializedNode =>
+            !!node && !node.isDeleted && !!editor.getEntity(node),
+        );
+      if (nodes.length > 0) update(editor, nodes);
+    }).catch((error: unknown) => console.error(error));
   }
 
   private executeCrop() {
-    const { layersSelected } = this.api.getAppState();
-
-    if (layersSelected.length === 1) {
-      const node = this.api.getNodeById(layersSelected[0]);
-      if (node.clipMode) {
-        this.api.setAppState({
-          layersCropping: layersSelected,
+    this.editSelectedNodes((api, children) => {
+      if (children.length === 1 && children[0].clipMode) {
+        api.setAppState({
+          layersCropping: [children[0].id],
           penbarSelected: Pen.SELECT,
         });
-        // already is a clipping node, do nothing
         return;
       }
-    }
 
-    const children = layersSelected.map((id) => this.api.getNodeById(id));
-    const bounds = this.api.getBounds(children);
-    const { minX, minY, maxX, maxY } = bounds;
-    // create a clip parent for all the selected nodes
-    const clipParent: RectSerializedNode = {
-      id: uuidv4(),
-      type: 'rect',
-      clipMode: 'clip',
-      x: minX,
-      y: minY,
-      width: maxX - minX,
-      height: maxY - minY,
-      zIndex: 0,
-    };
+      const { minX, minY, maxX, maxY } = api.getBounds(children);
+      if (![minX, minY, maxX, maxY].every(Number.isFinite)) return;
 
-    this.api.runAtNextTick(() => {
-      this.api.updateNodes([clipParent]);
-
-      children.forEach((child) => {
-        this.api.reparentNode(child, clipParent);
-      });
-
-      this.api.setAppState({
+      const clipParent: RectSerializedNode = {
+        id: uuidv4(),
+        type: 'rect',
+        clipMode: 'clip',
+        x: minX,
+        y: minY,
+        width: maxX - minX,
+        height: maxY - minY,
+        zIndex: 0,
+      };
+      api.updateNodes([clipParent]);
+      children.forEach((child) => api.reparentNode(child, clipParent));
+      api.setAppState({
         layersCropping: [clipParent.id],
         penbarSelected: Pen.SELECT,
       });
-
-      this.api.record();
     });
   }
 
   private executeGroup() {
-    this.api.runAtNextTick(() => {
-      this.api.group(this.appState.layersSelected.map((id) => this.api.getNodeById(id)));
-      this.api.record();
+    this.editSelectedNodes((api, nodes) => {
+      if (nodes.length >= 2) api.group(nodes);
     });
   }
 
   private executeUngroup() {
-    this.api.runAtNextTick(() => {
-      this.api.ungroup(this.api.getNodeById(this.appState.layersSelected[0]));
-      this.api.record();
+    this.editSelectedNodes((api, nodes) => {
+      if (nodes.length === 1 && nodes[0].type === 'g') api.ungroup(nodes[0]);
     });
   }
 

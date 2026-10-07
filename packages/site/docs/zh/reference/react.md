@@ -62,15 +62,23 @@ Next.js Client Component。默认入口和 `/spectrum` 目前导出同一个组�
 
 ## 可交互示例
 
-试试添加矩形、修改颜色、缩放，以及撤销和重做。拖动图形可观察选区变化。
+试试添加矩形、修改颜色、增加选中图形的宽度、删除图形，以及撤销和重做。
+“恢复示例文档”会替换当前画布的整份文档，该操作也可以撤销。拖动图形可观察选区和宽度变化。
 画布 A 和 B 分别使用独立的 Provider，并共享同一个 runtime；编辑其中一个，
 另一个的历史和缩放不会改变。
+
+使用 **适应全部图形** 可将场景居中显示在视口内，不会增加撤销记录。
+
+将矩形按钮拖入画布可在落点添加图形；点击或轻触按钮会在当前视图中心添加。
+插入和选中可以一次撤销。
 
 <ReactCanvasExample locale="zh" />
 
 取消勾选“显示第二个画布”，可以体验卸载一个画布后继续操作另一个。
 **重置示例**会重新创建画布，并清空编辑和历史记录。示例放在独立的 iframe 中，
-可与文档站其他画布示例共存。这里的修改只在当前示例中有效，不会保存。
+可与文档站其他画布示例共存。点击“本地保存”可在此浏览器保留文档，
+点击“导出 .ic”可下载文件。“重置示例”保留存档，点击“加载存档”即可恢复。
+每个画布使用独立的存储键。
 
 <a href="/zh/example/react-playground" target="_blank" rel="noopener">在独立页面打开示例</a>。
 
@@ -114,13 +122,13 @@ export function Editor() {
 ```
 
 `useCanvasAPI()` 在 SSR、就绪前、卸载或失败后返回 `null`，只在 API 改变时触发更新。
-两个 hooks 都必须在 Provider 内使用。同一个 Provider 同时挂载两个画布会报错；
+所有画布 hooks 都必须在 Provider 内使用。同一个 Provider 同时挂载两个画布会报错；
 多画布请分别包裹 Provider，并共享同一个 runtime。
 
 `useCanvasSelector(selector, isEqual?)` 从 `CanvasState` 中选择 `api`、`appState`、
-`nodes`、`canUndo` 或 `canRedo`。服务端和未就绪状态的 `api`、`appState` 为 `null`，
+`nodes`、`canUndo`、`canRedo`、`status` 或 `error`。服务端和未就绪状态的 `api`、`appState` 为 `null`，
 节点数组为空，两个历史标记为 `false`。selector 应保持纯函数，并把状态当作只读数据。
-默认用 `Object.is` 比较选中值，仅在选中值变化时由订阅触发渲染；返回对象或数组时
+默认用 `Object.is` 比较选中值，仅在选中值变化时由订阅触发渲染；返回新创建的对象或数组时
 可以传入比较函数：
 
 ```tsx
@@ -130,12 +138,316 @@ const history = useCanvasSelector(
 );
 ```
 
+`nodes` 由 store 持有副本，与 API 中可变的文档数据隔离。
+提交时未变更的节点保持原引用；节点内容与顺序都不变时，数组引用也保持稳定。
+直接返回其中的节点无需自定义比较函数：
+
+```tsx
+const rect = useCanvasSelector((state) =>
+    state.nodes.find((node) => node.id === 'rect'),
+);
+```
+
 节点与应用状态在 API 提交（`api.record()`）时更新；相机和选区事件也会立即刷新应用状态。
 初始化场景和 `api.record('NEVER')` 同样会通知订阅者，但不增加撤销记录。
 `initialNodes` 在准备完成后更新 selectors 和节点回调，无需额外调用 `record()`。
 编辑、撤销、重做和 `clearHistory()` 都会通知历史可用状态，无需轮询。
-直接调用 API 而未提交的修改，在下一次提交或事件时才反映到 hooks。
+直接修改节点后，使用 `api.edit()` 或 `api.record()` 发布文档变更；
+相机和选区事件仅刷新应用状态。
 API 可用表示 GPU 已就绪，此时异步 `onReady` 可能还未完成。
+
+## 初始化状态
+
+`useCanvasStatus()` 从当前 Provider 返回 `{ status, error }`，两个包入口都提供。
+SSR、没有挂载画布或 API 已销毁时为 `idle`；运行时/GPU 初始化、异步 `onReady`
+或初始场景提交期间为 `loading`；全部完成后为 `ready`；生命周期失败时为 `error`。
+`error` 是 `Error` 或 `null`。无关的文档、视图或历史变化不会改变返回对象的引用。
+
+```tsx
+const { status, error } = useCanvasStatus();
+const ready = status === 'ready';
+```
+
+编辑、保存和导入按钮可用 `ready` 控制是否启用。`useCanvasAPI()` 仍会在 GPU 就绪时
+提供 API，供 `onReady` 准备场景；API 非空不代表初始场景已准备完成。
+启动失败会清除 API，并保留错误直到移除或重建画布；后续语言更新失败会报告错误，
+但保留仍可用的 API。每个 Provider 的状态相互独立，旧画布的异步结果不会改变新画布的状态。
+
+## 节点、选区和历史 hooks
+
+以下 hooks 需要 `CanvasProvider`，两个包入口都提供：
+
+| Hook                   | 返回值                                                                                        |
+| ---------------------- | --------------------------------------------------------------------------------------------- |
+| `useCanvasNode(id?)`   | 节点的只读副本；ID 不存在或已删除时为 `null`。可传入 `null` 或 `undefined` 表示没有选中节点。 |
+| `useCanvasSelection()` | 按选区顺序返回节点的只读副本，忽略不存在或已删除的 ID。                                       |
+| `useCanvasHistory()`   | `{ canUndo, canRedo }`；历史操作使用 `useCanvasActions()`。                                   |
+
+SSR、就绪前和卸载后，分别返回 `null`、`[]` 和两个标记均为 `false` 的历史状态。
+选中内容不变时保持引用稳定，相机或其他节点更新不会触发无关渲染。
+这些 hooks 共享 store 中的节点副本，每次提交只复制变更节点一次，无需为每个使用方重复复制。
+副本还能检测提交后的原地 `api.updateNode()` 修改；请把副本及嵌套数据视为只读，
+通过 actions 或 API 编辑画布。
+只需要单个标量值时，可以继续使用 `useCanvasSelector`。
+
+```tsx
+import {
+    useCanvasActions,
+    useCanvasHistory,
+    useCanvasNode,
+    useCanvasSelection,
+} from '@infinite-canvas-tutorial/react';
+
+function Properties({ onError }: { onError: (error: unknown) => void }) {
+    const actions = useCanvasActions();
+    const selected = useCanvasSelection();
+    const node = useCanvasNode(selected[0]?.id);
+    const { canUndo } = useCanvasHistory();
+    return (
+        <div>
+            <output>{node?.width ?? '请选择图形'}</output>
+            <button disabled={!canUndo} onClick={actions.undo}>
+                撤销
+            </button>
+            <button
+                disabled={selected.length === 0}
+                onClick={() => {
+                    void actions
+                        .deleteNodes(selected.map((node) => node.id))
+                        .catch(onError);
+                }}
+            >
+                删除选中图形
+            </button>
+        </div>
+    );
+}
+```
+
+## 键盘快捷键
+
+`useCanvasShortcuts(options?)` 返回可展开到容器上的稳定 props。调用组件必须位于
+`CanvasProvider` 内；让这个容器同时包含画布和 React 工具栏。只有容器内的按键会被处理，
+聚焦工具栏按钮也可以操作当前画布。
+
+```tsx
+import { useState } from 'react';
+import {
+    CanvasProvider,
+    InfiniteCanvas,
+    useCanvasShortcuts,
+} from '@infinite-canvas-tutorial/react';
+
+function EditorSurface() {
+    const [error, setError] = useState<Error | null>(null);
+    const shortcuts = useCanvasShortcuts({ onError: setError });
+    return (
+        <section {...shortcuts} aria-label="画布编辑器">
+            <InfiniteCanvas style={{ height: 400 }} />
+            {error && <p role="alert">{error.message}</p>}
+        </section>
+    );
+}
+
+export function Editor() {
+    return <CanvasProvider><EditorSurface /></CanvasProvider>;
+}
+```
+
+| 按键 | 操作 |
+| --- | --- |
+| Ctrl/⌘+Z | 撤销 |
+| Ctrl/⌘+Shift+Z、Ctrl+Y | 重做 |
+| Ctrl/⌘+A | 全选未删除的节点，不增加撤销记录 |
+| Delete、Backspace | 删除当前选区，作为一次可撤销编辑 |
+
+请将返回的 props 一起展开到同一个元素上，包括 `onKeyDownCapture` 和
+`data-canvas-shortcuts`。捕获阶段处理可避免底层 Web Component 重复执行同一条命令。
+默认 `tabIndex` 为 `0`，可自行覆盖。hook 不安装全局键盘监听；嵌套容器只处理自己范围内
+的按键，渲染到容器外的 portal 不属于该范围。
+
+hook 仅在 `status === 'ready'` 时工作，重建画布后会使用最新 API。输入框、文本域、
+下拉框、可编辑祖先、textbox/combobox 角色、输入法组合输入、重复按键及已被阻止的事件
+不会触发这些操作。通过事件的 composed path，也能识别开放 Shadow DOM 中的输入控件。
+自定义编辑器或封闭 Shadow DOM 的宿主可以添加 `data-canvas-shortcuts-ignore`，让整个
+子树退出快捷键处理。全选和删除在 ECS 编辑阶段读取最新场景，连续排队的按键也能正确组合。
+
+`enabled: false` 暂停这个 hook，不会关闭 Web Component 自带的快捷键。编辑出错时，
+只要原画布仍然挂载，`onError` 就会收到错误；未提供回调时输出到 `console.error`。
+原有剪贴板、方向键等画布行为仍然可用。
+
+## 相机与视图控制
+
+`useCanvasCamera()` 返回当前 Provider 的只读 `{ x, y, zoom, rotation }` 快照，
+旋转角度使用弧度。无关的文档更新不会改变对象引用；平移、缩放和仅旋转都会更新快照。
+SSR、空 Provider 和画布卸载后返回 `{ x: 0, y: 0, zoom: 1, rotation: 0 }`。
+
+```tsx
+import {
+    useCanvasActions,
+    useCanvasCamera,
+    useCanvasStatus,
+} from '@infinite-canvas-tutorial/react';
+
+function ViewControls() {
+    const { zoom } = useCanvasCamera();
+    const actions = useCanvasActions();
+    const { status } = useCanvasStatus();
+    return (
+        <div>
+            <output aria-label="缩放比例">{Math.round(zoom * 100)}%</output>
+            <button disabled={status !== 'ready'} onClick={() => actions.zoomTo(1)}>
+                重置缩放
+            </button>
+            <button disabled={status !== 'ready'} onClick={() => actions.fitToScreen()}>
+                适应全部图形
+            </button>
+        </div>
+    );
+}
+```
+
+两个操作在没有挂载 API 时返回 `false`，转交给 API 后返回 `true`；这表示已发起操作，
+不代表动画完成。默认使用 300 毫秒的 `ease` 动画，可通过
+`CanvasCameraAnimationOptions` 传入 `duration`、`easing`、`onframe` 和 `onfinish`。
+传入 `{ duration: 0 }` 可立即切换。`zoomTo` 围绕视口中心缩放；有 API 时，非有限数或
+非正数缩放值会抛出 `RangeError`。`fitToScreen` 保留当前旋转角度，让场景边界适应视口，
+忽略编辑手柄；空场景下不改变视图。这些操作不增加文档撤销记录。保存下来的操作函数
+始终访问当前 Provider 的最新画布。
+
+需要监听事件时，`useCanvasEvent('ic-camera-changed', listener)` 的 `event.detail`
+包含完整的 `{ x, y, zoom, rotation }`。原有的缩放和位置事件仍然可用。
+
+## 坐标转换
+
+`useCanvasCoordinates()` 为最近的 `CanvasProvider` 返回稳定的坐标转换函数。
+两个包入口同时导出 `CanvasCoordinates` 和只读的
+`CanvasPoint` 类型（`{ x: number; y: number }`）。
+
+| 方法                      | 输入                            | 输出                 |
+| ------------------------- | ------------------------------- | -------------------- |
+| `clientToCanvas(point)`   | 浏览器客户区坐标（`clientX/Y`） | 画布世界坐标         |
+| `canvasToClient(point)`   | 画布世界坐标                    | 浏览器客户区坐标     |
+| `viewportToCanvas(point)` | 绘图视口内的局部坐标            | 画布世界坐标         |
+| `canvasToViewport(point)` | 画布世界坐标                    | 绘图视口内的局部坐标 |
+
+客户区和视口坐标均使用 CSS 像素。视口原点位于实际绘图画布，不包含编辑器工具栏。
+无需乘以 `devicePixelRatio`，也不要把页面坐标或相对元素的偏移当作客户区坐标传入。
+转换支持相机平移、缩放和旋转；涉及客户区时，还会读取当前画布边界，处理页面滚动
+和沿坐标轴的正向 CSS 缩放。不支持 DOM 容器的旋转、倾斜、透视变换或翻转。
+
+```tsx
+import type { PointerEvent } from 'react';
+import { useCanvasCoordinates } from '@infinite-canvas-tutorial/react';
+
+// 放在 CanvasProvider 内的组件中：
+const coordinates = useCanvasCoordinates();
+const onPointerMove = (event: PointerEvent) => {
+    const point = coordinates.clientToCanvas({
+        x: event.clientX,
+        y: event.clientY,
+    });
+    if (point) console.log('画布坐标', point.x, point.y);
+};
+```
+
+将 `onPointerMove` 传给 `InfiniteCanvas` 或其容器。函数在调用时读取最新 API 和页面位置；
+同一 Provider 中重建画布后，保存下来的函数也会访问新的画布。SSR、API 尚不可用或画布
+移除后，所有转换均返回 `null`。API 可用可能早于初始场景准备完成，因此编辑控件仍应使用
+`useCanvasStatus().status === 'ready'` 判断。转换不会修改输入或增加撤销记录。
+
+此 hook 不订阅相机或布局变化，应在事件中调用。需要让浮层跟随视图时，可结合
+`useCanvasCamera()` 响应相机变化，并按布局需要监听滚动和尺寸变化。
+客户区坐标可直接用于 `position: fixed` 浮层，其他定位方式需要再换算到对应包含块。
+
+交互示例用 `clientToCanvas` 将新矩形的中心放在落点，并通过一次 `actions.edit`
+提交插入和选中。在 `onDragOverCapture` / `onDropCapture` 中处理自定义拖放类型，
+可先于编辑器内置的文件拖入逻辑接收事件。点击或轻触矩形按钮会在当前视图中心添加，
+手机和键盘用户也能使用。
+
+## 订阅画布事件
+
+`useCanvasEvent(name, listener, options?)` 直接订阅当前 `CanvasProvider` 中画布元素的事件，
+两个包入口都提供。事件名会推导回调类型，例如 `ic-point-drawn` 的 `detail.x/y` 是数值，
+`ic-screenshot-downloaded` 提供 `detail.svg/dataURL`。也支持 `pointerdown` 等原生 DOM 事件。
+
+```tsx
+import { useState } from 'react';
+import {
+    useCanvasEvent,
+    useCanvasStatus,
+} from '@infinite-canvas-tutorial/react';
+
+function Coordinates() {
+    const { status } = useCanvasStatus();
+    const [point, setPoint] = useState<{ x: number; y: number } | null>(null);
+    useCanvasEvent(
+        'ic-point-drawn',
+        ({ detail: { x, y } }) => {
+            setPoint({ x, y });
+        },
+        { enabled: status === 'ready' },
+    );
+    return <output>{point ? `x: ${point.x}, y: ${point.y}` : ''}</output>;
+}
+```
+
+通过 `actions.setAppState({ penbarSelected: Pen.DRAW_POINT }, { capture: 'NEVER' })`
+启用取点工具，其中 `Pen` 来自 `@infinite-canvas-tutorial/ecs`。点击或轻触画布会返回考虑
+相机缩放和位置后的画布坐标。上方交互示例的 **取点坐标** 按钮展示了这个流程，取点后自动回到选择工具。
+
+hook 在 GPU-ready API 挂载后开始监听，并自动跟随画布重建。初始化使用 `onReady` 或
+`useCanvasStatus()`；首次 `ic-ready` 发生时，这个订阅还没有安装。订阅组件卸载或 API 销毁时
+会移除监听；已脱离 Provider 的旧画布也不会再把事件传给新画布的控件。
+
+`options.enabled` 默认为 `true`，传 `false` 可暂停监听。其余选项是原生的 `capture`、
+`passive`、`once` 和 `signal`。中止 signal 会移除监听，传入新的 signal 可重新订阅。
+回调更新会使用最近提交的回调，不会重复绑定；选项值相同的新对象也会保留订阅，因而重渲染不会
+重新启用已触发的 `once` 监听。事件名、选项值或画布变化时会创建新的订阅。
+
+## 保存与导入文档
+
+示例和两个框架 starter 提供“本地保存”“加载存档”“导出 .ic”和“导入 .ic”。
+保存需手动触发，每个画布在此浏览器的 `localStorage` 中保留一份原生文档。
+重置或刷新示例会保留存档，但不会自动加载；点击“加载存档”即可恢复。
+存储按网站来源和浏览器隔离，可导出文件在其他位置打开。存储或文件操作失败时，
+控件旁会显示错误。
+
+这些操作由宿主应用实现。starter 中的 `document-controls.tsx` 展示了完整实现，
+包括在画布移除时取消操作。浏览器 API 只在事件处理函数中访问，因此可以在
+Next.js Client Component 的 SSR 阶段导入此模块。
+
+原生 `.ic` 格式包含节点、设计变量、主题、选区，以及相机和 UI 状态。
+`replaceDocument` 只替换节点。先通过排队的编辑读取最新文档，再在编辑回调外导入：
+
+```tsx
+// 事件处理函数中，api 和 actions 来自 useCanvasAPI() / useCanvasActions()。
+await actions.edit(
+    (api) => {
+        localStorage.setItem(
+            'my-canvas:v1',
+            JSON.stringify(api.exportIcDocument()),
+        );
+    },
+    { capture: 'NEVER' },
+);
+
+const raw = localStorage.getItem('my-canvas:v1');
+if (api && raw !== null) {
+    await api.importIcDocument(raw, { signal: controller.signal });
+}
+```
+
+`api.importIcDocument` 接受原生文档对象或 JSON 字符串。在修改场景前校验格式、版本、
+节点 ID 和类型、层级，以及选区和视图字段；排队前复制输入，在 Edit 阶段提交一次。
+返回 `Promise<boolean>`：提交成功为 `true`，取消或画布销毁为 `false`。
+无效输入在排队前抛错，执行失败使 Promise reject，事件处理函数需捕获这两类错误。
+先用 `await file.text()` 读取文件，再调用导入；画布移除时取消尚未完成的读取和导入。
+
+一次导入为节点、变量、选区和 filter 创建一个撤销条目。相机、主题及其他 UI 设置
+沿用已有的不可撤销规则。传入 `{ recordHistory: false }` 可不增加撤销条目，
+如需丢弃之前的历史，再单独调用 `clearHistory()`。保存和导出使用 `capture: 'NEVER'`。
+任意运行时修改失败时，不会自动回滚已经完成的修改。
 
 ## 编辑操作 hooks
 
@@ -146,12 +458,13 @@ API 可用表示 GPU 已就绪，此时异步 `onReady` 可能还未完成。
 ```tsx
 import {
     useCanvasActions,
-    useCanvasSelector,
+    useCanvasStatus,
 } from '@infinite-canvas-tutorial/react';
 
 function EnlargeButton({ onError }: { onError: (error: unknown) => void }) {
     const actions = useCanvasActions();
-    const ready = useCanvasSelector((state) => state.api !== null);
+    const { status } = useCanvasStatus();
+    const ready = status === 'ready';
     const enlarge = () =>
         actions.updateNodes((nodes) =>
             nodes
@@ -174,18 +487,24 @@ function EnlargeButton({ onError }: { onError: (error: unknown) => void }) {
 }
 ```
 
-| 操作                                    | 行为                                                                                                             |
-| --------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| `updateNodes(nodesOrUpdater, options?)` | 按 ID 新增或更新，保留未提供的节点。数组在排队前复制；函数式更新在执行时读取最新节点，请返回新数据，不修改输入。 |
-| `setAppState(patchOrUpdater, options?)` | 按 API 语义合并状态；函数式更新读取执行时的最新状态。不参与历史记录的界面设置也会刷新 selectors。                |
-| `selectNodes(ids, options?)`            | 执行时解析 ID，忽略不存在或已删除的节点。`preserveSelection: true` 保留原有选区，传入 `[]` 清空选区。            |
-| `edit(callback, options?)`              | 在派生数据计算和渲染之前执行同步修改，并在回调结束后调用一次 `record()`。                                                   |
-| `undo()`、`redo()`、`clearHistory()`    | 使用当前画布的历史记录；撤销/重做排队执行，清空历史立即执行。                                                    |
+| 操作                                        | 行为                                                                                                             |
+| ------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `updateNodes(nodesOrUpdater, options?)`     | 按 ID 新增或更新，保留未提供的节点。数组在排队前复制；函数式更新在执行时读取最新节点，请返回新数据，不修改输入。 |
+| `deleteNodes(ids, options?)`                | 删除指定 ID 及其子节点，并清理被删除节点的选区；忽略不存在的 ID。                                                |
+| `replaceDocument(nodesOrUpdater, options?)` | 替换整份文档，删除未提供的 ID；执行前校验完整层级。数组在排队前复制，函数式更新读取最新节点。默认可以撤销。      |
+| `setAppState(patchOrUpdater, options?)`     | 按 API 语义合并状态；函数式更新读取执行时的最新状态。不参与历史记录的界面设置也会刷新 selectors。                |
+| `selectNodes(ids, options?)`                | 执行时解析 ID，忽略不存在或已删除的节点。`preserveSelection: true` 保留原有选区，传入 `[]` 清空选区。            |
+| `edit(callback, options?)`                  | 在派生数据计算和渲染之前执行同步修改，并在回调结束后调用一次 `record()`。                                        |
+| `undo()`、`redo()`、`clearHistory()`        | 使用当前画布的历史记录；撤销/重做排队执行，清空历史立即执行。                                                    |
 
-前四项返回 `Promise<boolean>`：提交成功后为 `true`，画布不可用或在执行前卸载时
+六项编辑操作返回 `Promise<boolean>`：提交成功后为 `true`，画布不可用或在执行前卸载时
 为 `false`。执行失败会拒绝 Promise，请在调用组件中处理。
 历史操作在 API 不可用时返回 `false`。操作的 API 可用时机与 `useCanvasAPI()`
 一致，表示 GPU 就绪。
+
+使用 `replaceDocument` 加载远程或已保存文档时，可以传入 `{ capture: 'NEVER' }`
+以提交内容而不增加撤销记录；清空文档可传入 `[]`。需要清空已有历史时，另行调用
+`clearHistory()`。它不会更改相机设置；`initialNodes` 的后续 prop 更新也不会替换文档。
 
 每次编辑调用分别提交。需要把多步操作合并成一条撤销记录时，在事件处理函数中
 使用 `edit`：
