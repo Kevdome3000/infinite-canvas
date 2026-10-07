@@ -46,7 +46,6 @@ import {
   GlobalRenderOrder,
   GlobalTransform,
   Mat3,
-  Opacity,
   SizeAttenuation,
   Stroke,
   Text,
@@ -266,8 +265,14 @@ export class SDFText extends Drawcall {
       // content,
       fontSize,
     } = this.shapes[0].read(Text);
-    const { font, fontMetrics } = this.shapes[0].read(ComputedTextMetrics);
+    const { fontMetrics } = this.shapes[0].read(ComputedTextMetrics);
     const fill = resolveSdfTextFillColorCss(this.shapes[0]);
+    // Glyphs are always rasterized at BASE_FONT_WIDTH. Display font size only
+    // changes quad layout; including it in the atlas key rerasterizes the
+    // entire alphabet and uploads a growing atlas on every resize frame.
+    const fontStack = JSON.stringify([
+      fontFamily, fontWeight, fontStyle, esdt, fill,
+    ]);
 
     // const hasEmoji = containsEmoji(content);
     const hasEmoji = true;
@@ -287,7 +292,7 @@ export class SDFText extends Drawcall {
         .map((text: Entity) => text.read(ComputedTextMetrics).bidiChars)
         .join('');
       this.#glyphManager.generateAtlas(
-        font,
+        fontStack,
         fontFamily,
         fontWeight.toString(),
         fontStyle,
@@ -311,7 +316,7 @@ export class SDFText extends Drawcall {
       } = this.buildTextBuffers({
         object,
         lines,
-        fontStack: font,
+        fontStack: bitmapFont ? font : fontStack,
         lineHeight,
         letterSpacing: letterSpacing,
         indicesOffset: indicesOff,
@@ -1027,7 +1032,7 @@ export class SDFText extends Drawcall {
       fillCss && fillCss !== 'none' ? fillCss : 'transparent',
     );
 
-    const opacity = shape.has(Opacity) ? shape.read(Opacity).opacity : 1;
+    const opacity = this.getOpacity(shape);
 
     const strokeColor = resolveGpuStrokeColor(shape);
     const width = shape.has(Stroke) ? shape.read(Stroke).width : 0;
@@ -1138,7 +1143,7 @@ export class SDFText extends Drawcall {
     bitmapFont: BitmapFont;
     fontScale: number;
   }) {
-    const { textAlign, bitmapFontKerning } = object.read(Text);
+    const { textAlign, bitmapFontKerning, path } = object.read(Text);
 
     const metrics = object.read(ComputedTextMetrics);
     const globalRenderOrder = object.has(GlobalRenderOrder)
@@ -1160,6 +1165,7 @@ export class SDFText extends Drawcall {
       fontBoundingBoxAscent = 0,
     } = metrics.fontMetrics;
     y = fontBoundingBoxAscent;
+    if (path) x = y = 0;
 
     const charUVOffsetBuffer: number[] = [];
     const charPositionsBuffer: number[] = [];
@@ -1167,18 +1173,22 @@ export class SDFText extends Drawcall {
 
     let i = indicesOffset;
 
-    const positionedGlyphs = this.#glyphManager.layout(
-      lines,
-      fontStack,
-      lineHeight,
-      textAlign,
-      letterSpacing,
-      bitmapFont,
-      fontScale,
-      bitmapFontKerning,
-      0,
-      (lineHeight - metrics.fontMetrics.fontSize) / 2,
-    );
+    const positionedGlyphs = path
+      ? metrics.pathGlyphs.map((glyph) => ({
+          ...glyph, fontStack, scale: fontScale,
+        }))
+      : this.#glyphManager.layout(
+        lines,
+        fontStack,
+        lineHeight,
+        textAlign,
+        letterSpacing,
+        bitmapFont,
+        fontScale,
+        bitmapFontKerning,
+        0,
+        (lineHeight - metrics.fontMetrics.fontSize) / 2,
+      );
 
     let positions: GlyphPositions;
     if (bitmapFont) {
@@ -1191,7 +1201,7 @@ export class SDFText extends Drawcall {
               width: xAdvance,
               height: bitmapFont.lineHeight,
               left: xOffset,
-              top: -yOffset,
+              top: (path ? bitmapFont.lineHeight : 0) - yOffset,
               advance: xAdvance,
             },
           };

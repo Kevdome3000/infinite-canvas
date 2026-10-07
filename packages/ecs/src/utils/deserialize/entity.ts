@@ -1396,6 +1396,10 @@ export function serializedNodesToEntities(
       }
     } else if (type === 'text') {
       const {
+        path = '',
+        side = 'left',
+        startOffset = 0,
+        pathOffset = 0,
         anchorX,
         anchorY,
         content,
@@ -1457,6 +1461,10 @@ export function serializedNodesToEntities(
 
       entityCommands.insert(
         new Text({
+          path,
+          side,
+          startOffset,
+          pathOffset,
           anchorX,
           anchorY,
           content,

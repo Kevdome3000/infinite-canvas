@@ -43,10 +43,33 @@ Resize checks exercise corners, edges, endpoints, multi-selection, aspect-ratio
 and centered scaling, rotated handles, guide cleanup and undo/redo. The WebKit
 suite also checks touch attraction/release and padded-corner object snapping.
 
+Multi-selection rotation checks compare the rendered frame and all anchors with
+the rotating shapes, including reversal, angle wrapping, a pinned pivot,
+consecutive gestures, Escape and undo/redo. The WebKit suite also checks touch
+rotation and the final frame after release.
+
+Flip regressions cover all corner/edge handles, reversing across zero size,
+aspect-ratio and centered constraints, rotated and previously mirrored shapes,
+multi-selection, rotation after flipping, undo/redo and rendered gradient pixels.
+Asymmetric path, polyline and vector-network checks catch double reflection; the
+WebKit suite also checks flipping from a padded touch corner.
+
 CI runs these checks in `.github/workflows/browser-regression.yml` and uploads
 failure screenshots and traces from `.test-results/browser` and
 `.test-results/webkit`. The existing ECS suite remains a separate regression
 check.
+
+Lesson 12 dash rendering checks run in Chromium and WebKit. They compare rendered
+stroke interiors with native Canvas2D for all cap/join combinations, offsets,
+closed paths and rectangles, sharp corners, zoom, short dashes, dots, independent
+subpaths, alignment and solid strokes. Edge antialiasing kernels may differ, so
+the comparison ignores partially covered pixels. Offset animation also checks
+that geometry is not rebuilt. These fixtures use the independent lesson 12
+renderer. The same comparison cases also run against ECS, with additional
+coverage for independent path/dash caps, screen-space stroke sizing, gradients,
+paths, vector networks and sampled ellipses. ECS currently rebuilds geometry on
+every Stroke write, so only the lesson fixture asserts uniform-only offset
+updates. The core renderer is not covered by these fixtures.
 
 ## React playground touch regression
 
@@ -67,6 +90,12 @@ second canvas. These are interaction checks, not a physical iOS or WebKit visual
 rendering check. The React 18/19 CI matrix runs both browsers and uploads failure
 traces and screenshots from `.test-results/react` and `.test-results/react-webkit`.
 
+Drawing preference checks in `__tests__/react/browser/drawing-preferences.spec.ts`
+mount the real settings controls with two React canvases. They cover history and
+redo preservation, uncommitted document changes, validation and recovery,
+canvas/tool isolation, legacy and layered paint, and actual rectangle/pencil
+creation. The React 18/19 matrix runs these checks in Chromium and WebKit.
+
 ## Commit checks
 
 `pnpm test:tooling` verifies that ESLint actually checks TypeScript, TSX, and Vue,
@@ -85,3 +114,17 @@ Markdown processing runs sequentially: case corrections, Prettier, then
 MarkdownLint. Prettier owns list numbering and spacing (`MD029` and `MD030` are
 disabled), avoiding conflicts with the repository's four-space Markdown indent.
 Nested lists use the same four-space indent in MarkdownLint (`MD007`).
+
+### ECS text rendering and editing
+
+`ecs-text.spec.ts` uses local Gaegu and Noto fonts, the ECS renderer, and the Spectrum text editor. It compares glyph ink against Canvas, counts rasterization and atlas uploads during actual transformer resize gestures, checks atlas invalidation for new content/fonts, and verifies editor corners after rotation, camera changes, flips, and parent transforms. Both Chromium and WebKit run this suite.
+
+Manual check: open `/example/pretext`, enlarge the text containing `hijk`, resize repeatedly, rotate from outside a corner, and double-click to edit. The `j` descender should remain complete, resizing should reuse existing glyphs, and the editor should retain the text angle.
+
+Blend-mode regressions compare GPU pixels (including alpha) with native Canvas2D
+for the 16 CSS modes, and with clamped channel-sum references for linear burn and
+dodge. They cover node and paint-layer blending, transparent backdrops, node
+opacity, path fills plus strokes, text, clipping, three-layer accumulation and a
+normal draw after the blended nodes. Chromium and WebKit both run these checks,
+including a forced WebGL1 fallback. The SDF cases also guard against mediump
+packed-flag overflow on mobile GPUs.

@@ -117,7 +117,17 @@ test('a real double click edits text and one undo restores its contents', async 
   page,
 }) => {
   const { input, errors } = await ready(page);
+  // Keep the real pointer gesture clear of the retained fork toolbar.
+  await page.evaluate(() => window.apis.left.setAppState({ penbarVisible: false }));
   const point = await page.evaluate(() => window.editingProbe.point('text-0'));
+  const position = await page.evaluate(
+    (point) => window.apis.left.client2Viewport(point),
+    point,
+  );
+  await page.getByTestId('left-shortcuts').locator('canvas').click({
+    position,
+    trial: true,
+  });
   await page.mouse.dblclick(point.x, point.y);
   await expect(input).toHaveValue('Alpha');
   await input.fill('Pointer edit');

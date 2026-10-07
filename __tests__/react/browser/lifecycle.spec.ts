@@ -377,6 +377,8 @@ test('React event hooks receive current comment coordinates and deferred SVG exp
     return window.actions.left.setAppState(
       {
         penbarSelected: 'comment' as Pen,
+        // Keep this scene click clear of the retained fork toolbar.
+        penbarVisible: false,
         cameraZoom: 2,
       },
       { capture: 'NEVER' },
@@ -384,6 +386,10 @@ test('React event hooks receive current comment coordinates and deferred SVG exp
   });
   await expect(page.getByTestId('left-zoom')).toHaveText('2');
   const canvas = page.locator('ic-spectrum-canvas').first();
+  await canvas.locator('canvas').click({
+    position: { x: 120, y: 100 },
+    trial: true,
+  });
   await canvas.locator('canvas').click({ position: { x: 120, y: 100 } });
   await expect(canvas).toHaveAttribute('data-comment-probe', /actual/);
   const coordinates = JSON.parse(

@@ -1,4 +1,5 @@
 import { Entity, type ComponentType } from '@lastolivegames/becsy';
+import { hitTestTextPath } from './utils/glyph/measure-text-path';
 import { IPointData } from '@pixi/math';
 import { mat3, vec2 } from 'gl-matrix';
 import { isEntityAlive, updateGlobalTransform } from './systems/Transform';
@@ -118,6 +119,7 @@ import {
   Selected3D,
   Stroke,
   Text,
+  ComputedTextMetrics,
   Theme,
   mergeThemeState,
   resolveThemeModeFromPreference,
@@ -450,6 +452,7 @@ export class API {
   setAppState(
     appState: Partial<AppState>,
     options?: {
+      /** Record changed variable definitions, never a theme-only refresh. */
       recordDesignVariableUndo?: boolean;
       /** When true 'variables' replaces the entire table (for removing keys, etc.), merges with the old key by default */
       replaceVariables?: boolean;
@@ -606,8 +609,14 @@ export class API {
             }
           }
         }
-        // 撤销/重做应用 AppState 时不要再次 record（见 {@link AppStateChange.applyTo}）
-        if (options?.recordDesignVariableUndo !== false) {
+        // Theme is a display preference, outside document history. Refreshing
+        // its bindings must neither capture pending edits nor advance their
+        // baseline via record(NEVER). Variable definitions remain document edits.
+        // Undo/redo opts out when applying AppStateChange as well.
+        if (
+          variablesActuallyChanged &&
+          options?.recordDesignVariableUndo !== false
+        ) {
           this.record();
         }
       };
@@ -901,8 +910,8 @@ export class API {
         width,
         height,
         rotation,
-        scaleX: scale[0],
-        scaleY: scale[1],
+        scaleX: scale.x,
+        scaleY: scale.y,
       };
     } else {
       return {
@@ -1284,6 +1293,10 @@ export class API {
             isIntersected = ctx.isPointInPath(path, x, y);
           }
         }
+      } else if (entity.has(Text) && entity.read(Text).path) {
+        isIntersected = hitTestTextPath(
+          entity.read(ComputedTextMetrics).pathGlyphs ?? [], x, y, offset,
+        );
       } else {
         isIntersected = true;
       }
@@ -2344,6 +2357,8 @@ export class API {
     lockAspectRatio = false,
     delta?: mat3,
     oldNode?: SerializedNode,
+    // Fraction of the original text box that stays fixed while its font reflows.
+    textResizeOrigin?: { x: number; y: number },
   ) {
     const { x, y, width, height, rotation, scaleX, scaleY } = obb;
 
@@ -2385,16 +2400,50 @@ export class API {
         (diff as { flexHugHeight?: boolean }).flexHugHeight = false;
     }
 
-    if (delta) {
-      // geomDelta 是新 local 变换的线性部分，仍含节点旋转 R(θ)。直接把它烘焙进
-      // d/points，而 Transform 又保留 R(θ)，会叠加成双重旋转（旋转后再 resize 形变错误）。
-      // 左乘 R(-θ) 去掉节点旋转，只保留局部缩放/翻转；θ=0 时与原逻辑完全一致。
-      let geomDelta = mat3WithoutTranslation(delta);
-      const oldRotation = oldNode?.rotation ?? node.rotation ?? 0;
-      if (oldRotation) {
-        const unrotate = mat3.fromRotation(mat3.create(), -oldRotation);
-        geomDelta = mat3.multiply(mat3.create(), unrotate, geomDelta);
+    if (node.type === 'text' && node.path) {
+      // Keep the curve and its glyphs in one coordinate system. Baking only
+      // fontSize would lose horizontal scale and distort curved baselines.
+      const original = (oldNode ?? node) as TextSerializedNode;
+      const entity = this.getEntity(node);
+      const bounds = entity?.has(ComputedBounds)
+        ? entity.read(ComputedBounds).geometryBounds
+        : Text.getGeometryBounds(original, measureText(original));
+      const localWidth = bounds.maxX - bounds.minX;
+      const localHeight = bounds.maxY - bounds.minY;
+      if (delta) {
+        const { scale } = decompose(delta);
+        diff.scaleX = scale[0];
+        diff.scaleY = scale[1];
+      } else {
+        if (isNil(scaleX) && !isNil(diff.width) && localWidth > 0)
+          diff.scaleX = ((original.scaleX ?? 1) * diff.width) / localWidth;
+        if (isNil(scaleY) && !isNil(diff.height) && localHeight > 0)
+          diff.scaleY = ((original.scaleY ?? 1) * diff.height) / localHeight;
       }
+      diff.width = localWidth;
+      diff.height = localHeight;
+      this.updateNode(node, diff);
+      return;
+    }
+
+    if (delta) {
+      // Bake only the residual geometry transform. Rotation and reflection are
+      // already retained on the node; baking either again mirrors/rotates twice.
+      const retained = mat3.fromRotation(
+        mat3.create(),
+        rotation ?? oldNode?.rotation ?? node.rotation ?? 0,
+      );
+      mat3.scale(retained, retained, [
+        scaleX ?? oldNode?.scaleX ?? node.scaleX ?? 1,
+        scaleY ?? oldNode?.scaleY ?? node.scaleY ?? 1,
+      ]);
+      const inverse = mat3.invert(mat3.create(), retained);
+      if (!inverse) return;
+      const geomDelta = mat3.multiply(
+        mat3.create(),
+        inverse,
+        mat3WithoutTranslation(delta),
+      );
       if (node.type === 'polyline' || node.type === 'rough-polyline') {
         const { strokeAlignment = 'center', strokeWidth = 1 } = node;
         const shiftedPoints = maybeShiftPoints(
@@ -2498,38 +2547,7 @@ export class API {
         );
       } else if (node.type === 'text') {
         const textOld = (oldNode ?? node) as TextSerializedNode;
-        const metrics = measureText(textOld);
-        const { minX, minY, maxX, maxY } = Text.getGeometryBounds(
-          textOld,
-          metrics,
-        );
-
-        const corners: [number, number][] = [
-          [minX, minY],
-          [maxX, minY],
-          [maxX, maxY],
-          [minX, maxY],
-        ];
-        let nxMin = Infinity;
-        let nyMin = Infinity;
-        let nxMax = -Infinity;
-        let nyMax = -Infinity;
-        for (const [px, py] of corners) {
-          const [nx, ny] = vec2.transformMat3(vec2.create(), [px, py], delta);
-          nxMin = Math.min(nxMin, nx);
-          nyMin = Math.min(nyMin, ny);
-          nxMax = Math.max(nxMax, nx);
-          nyMax = Math.max(nyMax, ny);
-        }
-        const [naX, naY] = vec2.transformMat3(
-          vec2.create(),
-          [textOld.anchorX ?? 0, textOld.anchorY ?? 0],
-          delta,
-        );
-        (diff as TextSerializedNode).anchorX = naX - nxMin;
-        (diff as TextSerializedNode).anchorY = naY - nyMin;
-
-        const { scale } = decompose(delta);
+        const { scale } = decompose(geomDelta);
         const sX = Math.abs(scale[0]);
         const sY = Math.abs(scale[1]);
         const fs = textOld.fontSize;
@@ -2544,6 +2562,36 @@ export class API {
         const ww = textOld.wordWrapWidth ?? 0;
         if (ww > 0) {
           (diff as TextSerializedNode).wordWrapWidth = ww * sX;
+        }
+
+        // Font metrics are rounded and wrapping can change the number of lines;
+        // neither dimension is necessarily the requested affine box size.
+        // Rebase the measured local box, not a rotated parent-space AABB, so
+        // baseline/alignment offsets remain local and the frame hugs the text.
+        const resizedText = { ...textOld, ...diff, anchorX: 0, anchorY: 0 };
+        const bounds = Text.getGeometryBounds(
+          resizedText,
+          measureText(resizedText),
+        );
+        (diff as TextSerializedNode).anchorX = -bounds.minX;
+        (diff as TextSerializedNode).anchorY = -bounds.minY;
+        diff.width = bounds.maxX - bounds.minX;
+        diff.height = bounds.maxY - bounds.minY;
+
+        if (textResizeOrigin) {
+          const { x: ox, y: oy } = textResizeOrigin;
+          const fixed = vec2.transformMat3(
+            vec2.create(),
+            [(textOld.width ?? 0) * ox, (textOld.height ?? 0) * oy],
+            delta,
+          );
+          const offset = vec2.transformMat3(
+            vec2.create(),
+            [diff.width * ox, diff.height * oy],
+            retained,
+          );
+          diff.x = fixed[0] - offset[0];
+          diff.y = fixed[1] - offset[1];
         }
       }
     }

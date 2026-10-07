@@ -13,6 +13,7 @@ import { DOMAdapter } from '../../environment';
 
 export type PositionedGlyph = {
   glyph: string;
+  rotation?: number;
   x: number;
   y: number;
   scale: number;
@@ -151,7 +152,7 @@ export class GlyphManager {
     );
 
     if (newChars.length) {
-      const glyphMap = newChars
+      const glyphMap = Array.from(new Set(newChars))
         .map((char) => {
           return this.generateSDF(
             fontStack,

@@ -1394,37 +1394,11 @@ export function calculateOBBRecursive(entities: Entity[]): OBB {
  */
 export function getOBB(camera: Entity): OBB {
   const tf = camera.read(Transformable);
-  const { selecteds, status, resizeWidth, resizeHeight } = tf;
-
-  if (selecteds.length === 1) {
-    const selected = selecteds[0];
-    if (selected.has(ComputedBounds)) {
-      const { selectionOBB } = selected.read(ComputedBounds);
-      if (
-        status === TransformableStatus.RESIZING &&
-        resizeWidth >= 0 &&
-        resizeHeight >= 0 &&
-        selected.has(Text)
-      ) {
-        const text = selected.read(Text);
-        if (text.wordWrap && (text.wordWrapWidth ?? 0) > 0) {
-          const o = selectionOBB;
-          return new OBB({
-            x: o.x,
-            y: o.y,
-            width: resizeWidth,
-            height: resizeHeight,
-            rotation: o.rotation,
-            scaleX: o.scaleX,
-            scaleY: o.scaleY,
-          });
-        }
-      }
-    }
-  }
+  const { selecteds, status } = tf;
 
   /**
-   * 多选旋转时 union AABB 每帧重算会跳动；用手势开始时的 gestureFrozenSelectionOBB。
+   * During multi-selection rotation, Select supplies the transformed initial
+   * frame. Recomputing the union AABB would change its dimensions and pivot.
    */
   if (
     status === TransformableStatus.ROTATING &&

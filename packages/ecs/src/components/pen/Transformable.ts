@@ -92,18 +92,18 @@ export class Transformable {
   })
   declare status: TransformableStatus;
 
-  /**
-   * During resize, local width/height from the drag (Konva delta), for word-wrapped text only.
-   * When reflow reduces line count, intrinsic text height can shrink while the handle rect does not — use these for the transformer so the box does not "collapse" mid-drag. -1 means unset.
-   */
+  /** @deprecated The transformer now follows measured text bounds during resize. */
   @field({ type: Type.float32, default: -1 }) declare resizeWidth: number;
+  /** @deprecated Retained for compatibility; no longer overrides the text frame. */
   @field({ type: Type.float32, default: -1 }) declare resizeHeight: number;
   @field({ type: Type.float32, default: NaN }) declare rotatePivotX: number;
   @field({ type: Type.float32, default: NaN }) declare rotatePivotY: number;
   @field({ type: Type.boolean, default: false }) declare rotatePivotPinned: boolean;
 
   /**
-   * 多选旋转时：{@link getOBB} 返回此快照而非实时 union AABB，避免拖拽中包围盒跳动导致枢轴与 transformer 框漂移。
+   * During multi-selection rotation, render the initial frame transformed by the
+   * current gesture, instead of recomputing a world-axis-aligned union each frame.
+   * Width/height stay fixed; Select updates its origin and rotation per sample.
    */
   @field({ type: Type.boolean, default: false }) declare transformerObbFrozenDuringRotate: boolean;
   @field(obbType) declare gestureFrozenSelectionOBB: OBB;
