@@ -1,3 +1,5 @@
+> Tolaria fork maintainers: read the [fork-sync handoff and workaround retirement guide](docs/tolaria-fork-sync.md) before the next upstream reconciliation.
+
 # An Infinite Canvas Tutorial
 
 [![Infinite canvas tutorial is released under the MIT license](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/xiaoiver/infinite-canvas-tutorial/blob/master/LICENSE)
