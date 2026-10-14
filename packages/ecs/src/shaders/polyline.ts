@@ -190,6 +190,12 @@ void main() {
     return;
   }
   v_Arc = vec4(0.0);
+  #ifdef USE_ADAPTIVE_PATH
+    // Distances and the AA fringe use physical pixels, including exports.
+    vec3 pixelBasis = u_ProjectionMatrix * u_ViewMatrix * vec3(1.0, 0.0, 0.0);
+    float dpr = max(length(pixelBasis.xy * u_Viewport * 0.5), 0.000001);
+    float expand = 1.0 / dpr;
+  #endif
   strokeWidth *= 0.5;
   float strokeAlignmentFactor = 2.0 * strokeAlignment - 1.0;
 
@@ -256,12 +262,23 @@ void main() {
     }
     norm2 *= sign2;
 
+    vec2 straightNormal = norm;
+    #ifdef USE_ADAPTIVE_PATH
+      // Dense curve samples often fall below the straight-join threshold.
+      // Both incident segments must still share the same cross-section:
+      // separate normals leave cracks outside the bend and overlap inside it.
+      // This symmetric expression produces the same offset from either side.
+      if (abs(D) < 0.01 && dot(norm, norm2) > 0.0) {
+        straightNormal = (norm + norm2) / (1.0 + dot(norm, norm2));
+      }
+    #endif
+
     if (abs(strokeAlignmentFactor) > 0.01) {
       float shift = strokeWidth * strokeAlignmentFactor;
       pointA += norm * shift;
       pointB += norm * shift;
       if (abs(D) < 0.01) {
-        base += norm * shift;
+        base += straightNormal * shift;
       } else {
         base += doBisect(norm, len, norm2, len2, shift, 0.0);
       }
@@ -280,7 +297,7 @@ void main() {
 
     if (vertexNum < 3.5) {
       if (abs(D) < 0.01) {
-        pos = dy * norm;
+        pos = dy * straightNormal;
       } else {
         if (flag < 0.5 && inner < 0.5) {
           pos = dy * norm;
@@ -335,7 +352,7 @@ void main() {
       v_Arc.w = strokeWidth;
       v_Type = 3.0;
     } else if (abs(D) < 0.01) {
-      pos = dy * norm;
+      pos = dy * straightNormal;
     } else {
       if (type >= ROUND && type < ROUND + 1.5) {
         if (inner > 0.5) {
@@ -658,8 +675,13 @@ void main() {
   if (v_Type < 0.5) {
     float left = max(d1 - 0.5, -w);
     float right = min(d1 + 0.5, w);
+    #ifdef USE_ADAPTIVE_PATH
+      // Coverage is already in pixels. Differentiating it again inflates edges.
+      alpha = clamp(right - left, 0.0, 1.0) * pixelLine(-d2) * pixelLine(-d3);
+    #else
     // Avoid cancellation of large clipping sentinels on mediump GPUs.
     alpha = antialias(right - left) * pixelLine(-d2) * pixelLine(-d3);
+    #endif
   } else if (v_Type < 1.5) {
     float a1 = pixelLine(d1 - w);
     float a2 = pixelLine(d1 + w);
@@ -669,7 +691,11 @@ void main() {
     float left = max(d1 - 0.5, -w);
     float right = min(d1 + 0.5, w);
     
-    alpha = antialias(a2 * b2 - a1 * b1);
+    #ifdef USE_ADAPTIVE_PATH
+      alpha = clamp(a2 * b2 - a1 * b1, 0.0, 1.0);
+    #else
+      alpha = antialias(a2 * b2 - a1 * b1);
+    #endif
   } else if (v_Type < 2.5) {
     alpha *= max(min(d1 + 0.5, 1.0), 0.0);
     alpha *= max(min(d2 + 0.5, 1.0), 0.0);
@@ -692,7 +718,11 @@ void main() {
     float a2 = pixelLine(d1 + w);
     float b1 = pixelLine(d2 - w);
     float b2 = pixelLine(d2 + w);
-    alpha = antialias(a2 * b2 - a1 * b1);
+    #ifdef USE_ADAPTIVE_PATH
+      alpha = clamp(a2 * b2 - a1 * b1, 0.0, 1.0);
+    #else
+      alpha = antialias(a2 * b2 - a1 * b1);
+    #endif
     alpha *= pixelLine(d3);
   }
 

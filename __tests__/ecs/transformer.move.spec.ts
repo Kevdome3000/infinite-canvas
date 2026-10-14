@@ -1,7 +1,6 @@
 import _gl from 'gl';
 import '../useSnapshotMatchers';
 import {
-  App,
   Camera,
   Canvas,
   Children,
@@ -38,35 +37,12 @@ import {
   Transformable,
   TransformableStatus,
 } from '../../packages/ecs/src';
-import { NodeJSAdapter } from '../utils';
-
-// The installed DOM adapter exposes PointerEvent, so EventWriter registers
-// pointer listeners rather than its mouse-event fallback.
-function createPointerEvent(type: string, options: PointerEventInit) {
-  const window = NodeJSAdapter.getWindow();
-  return new window.PointerEvent(type, {
-    bubbles: true,
-    cancelable: true,
-    composed: true,
-    pointerId: 1,
-    pointerType: 'mouse',
-    isPrimary: true,
-    button: 0,
-    buttons: type === 'pointerup' ? 0 : 1,
-    ...options,
-  });
-}
-
-// Advance frames explicitly so pointer events cannot overtake the render loop.
-DOMAdapter.set({
-  ...NodeJSAdapter,
-  requestAnimationFrame: () => 0,
-  cancelAnimationFrame: () => {},
-});
+import { createECSInteraction } from '../helpers/ecs-interaction';
 
 describe('Transformer', () => {
   it('should move rect correctly', async () => {
-    const app = new App();
+    const interaction = createECSInteraction();
+    const { app, frames } = interaction;
 
     let $canvas: HTMLCanvasElement | undefined;
     let canvasEntity: Entity | undefined;
@@ -149,30 +125,18 @@ describe('Transformer', () => {
 
     app.addPlugins(...DefaultPlugins, MyPlugin);
 
-    await app.run();
     try {
-      await app.world.execute();
-      await app.world.execute();
+      await app.run();
+      await frames();
 
       if ($canvas) {
-        $canvas.dispatchEvent(
-          createPointerEvent('pointerdown', { clientX: 100, clientY: 75 }),
-        );
-        await app.world.execute();
-        $canvas.dispatchEvent(
-          createPointerEvent('pointermove', { clientX: 100, clientY: 75 }),
-        );
-        await app.world.execute();
-        $canvas.dispatchEvent(
-          createPointerEvent('pointermove', { clientX: 100, clientY: 100 }),
-        );
-        await app.world.execute();
-        $canvas.dispatchEvent(
-          createPointerEvent('pointerup', { clientX: 100, clientY: 100 }),
-        );
+        await interaction.mouse($canvas!, 'mousedown', 100, 75);
+        await interaction.mouse($canvas!, 'mousemove', 100, 75);
+        await interaction.mouse($canvas!, 'mousemove', 100, 100);
+        await interaction.mouse($canvas!, 'mouseup', 100, 100);
       }
 
-      for (let frame = 0; frame < 6; frame++) await app.world.execute();
+      await frames(6);
 
       expect(entity!.read(Transform).translation).toMatchObject({
         x: 50,
@@ -193,7 +157,7 @@ describe('Transformer', () => {
       );
 
       api!.undo();
-      for (let frame = 0; frame < 6; frame++) await app.world.execute();
+      await frames(6);
       expect(entity!.read(Transform).translation).toMatchObject({
         x: 50,
         y: 50,
@@ -202,14 +166,14 @@ describe('Transformer', () => {
       expect(api!.isRedoStackEmpty()).toBe(false);
 
       api!.redo();
-      for (let frame = 0; frame < 6; frame++) await app.world.execute();
+      await frames(6);
       expect(entity!.read(Transform).translation).toMatchObject({
         x: 50,
         y: 75,
       });
       expect(api!.isRedoStackEmpty()).toBe(true);
     } finally {
-      await app.exit();
+      await interaction.dispose();
     }
   });
 });

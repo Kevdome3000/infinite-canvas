@@ -49,8 +49,6 @@ import {
   Group,
   IconFont,
   Extrude3D,
-  Light3D,
-  Mesh3DNode,
   Canvas3DScope,
   AnimationPlayer,
 } from '../../components';
@@ -88,11 +86,7 @@ import type {
   FlexboxLayoutAttributes,
 } from '../../types/serialized-node';
 import { resolveExtrude3DDepth } from '../extrude3d';
-import {
-  normalizeGeometry,
-  parseLight3DColor,
-  parseMesh3DBaseColor,
-} from '../mesh3d-node';
+import { mesh3DNodeFromWire, light3DFromWire } from '../mesh3d-wire';
 import {
   serializePoints,
   shiftPath,
@@ -109,6 +103,7 @@ import { deserializeBrushPoints, deserializePoints } from './points';
 import { Commands, EntityCommands } from '../../commands';
 import {
   resolveDesignVariableValue,
+  resolveDesignVariableNumber,
   designVariableRefKeyFromWire,
   resolveFillLayerItemsForEcs,
   type DesignVariablesMap,
@@ -1221,7 +1216,6 @@ export function serializedNodesToEntities(
       );
     } else if (type === 'mesh3d') {
       const attrs = attributes as Mesh3DNodeSerializedNode;
-      const mat = attrs.material3d ?? {};
       entityCommands.insert(
         new Rect({
           x: 0,
@@ -1231,47 +1225,13 @@ export function serializedNodesToEntities(
           cornerRadius: 0,
         }),
       );
-      entityCommands.insert(
-        new Mesh3DNode({
-          geometry: normalizeGeometry(attrs.geometry),
-          z: attrs.z ?? 0,
-          rotation3d: attrs.rotation3d ?? [0, 0, 0],
-          scale3d: attrs.scale3d ?? 100,
-          baseColor: parseMesh3DBaseColor(mat.baseColor),
-          ambient: mat.ambient ?? 0.25,
-          diffuse: mat.diffuse ?? 0.75,
-          specular: mat.specular ?? 0.4,
-          shininess: mat.shininess ?? 48,
-          metallic: mat.metallic ?? 0,
-          roughness: mat.roughness ?? 1,
-          map: mat.map ?? null,
-          specularMap: mat.specularMap ?? null,
-          bumpMap: mat.bumpMap ?? null,
-          bumpScale: mat.bumpScale ?? 1,
-          camera3d: attrs.camera3d,
-        }),
-      );
+      entityCommands.insert(mesh3DNodeFromWire(attrs));
       if (options?.canvas) {
         entityCommands.insert(new Canvas3DScope({ canvas: options.canvas }));
       }
     } else if (type === 'light3d') {
       const attrs = attributes as Light3DNodeSerializedNode;
-      entityCommands.insert(
-        new Light3D({
-          type: attrs.lightType,
-          color: parseLight3DColor(attrs.color),
-          intensity: attrs.intensity ?? 1,
-          direction: attrs.direction ?? [-0.5, -0.7, -0.5],
-          position: [absoluteX, absoluteY, attrs.z ?? 0],
-          range: attrs.range ?? 0,
-          ...(attrs.innerConeAngle != null
-            ? { innerConeAngle: attrs.innerConeAngle }
-            : {}),
-          ...(attrs.outerConeAngle != null
-            ? { outerConeAngle: attrs.outerConeAngle }
-            : {}),
-        }),
-      );
+      entityCommands.insert(light3DFromWire(attrs));
       if (options?.canvas) {
         entityCommands.insert(new Canvas3DScope({ canvas: options.canvas }));
       }
@@ -1290,21 +1250,7 @@ export function serializedNodesToEntities(
       }
     } else if (type === 'rect' || type === 'rough-rect') {
       const { cornerRadius } = attributes as RectSerializedNode;
-      const resolvedCr = resolveDesignVariableValue(
-        cornerRadius,
-        designVariables,
-        themeMode,
-      );
-      const crNum = (() => {
-        if (resolvedCr === undefined || resolvedCr === null) {
-          return undefined;
-        }
-        const n =
-          typeof resolvedCr === 'number'
-            ? resolvedCr
-            : parseFloat(String(resolvedCr));
-        return Number.isFinite(n) ? Math.max(0, n) : undefined;
-      })();
+      const crNum = Math.max(0, resolveDesignVariableNumber(cornerRadius, designVariables, themeMode, 0));
       entityCommands.insert(
         new Rect({
           x: 0,
@@ -1379,8 +1325,9 @@ export function serializedNodesToEntities(
         loadImage(brushStamp, entityCommands.id());
       }
     } else if (type === 'path' || type === 'rough-path') {
-      const { d, fillRule, tessellationMethod, hitStrokeWidth } =
+      const { d, tessellationMethod, hitStrokeWidth } =
         attributes as PathSerializedNode;
+      const { fillRule } = wireMergedAttrs as PathSerializedNode;
       entityCommands.insert(
         new Path({
           d,
@@ -1403,18 +1350,20 @@ export function serializedNodesToEntities(
         anchorX,
         anchorY,
         content,
-        fontFamily,
-        fontSize,
+        fontFamily = 'sans-serif',
+        fontSize = 12,
         fontWeight = 'normal',
         fontStyle = 'normal',
         fontVariant = 'normal',
         fontKerning = true,
         letterSpacing = 0,
         lineHeight = 0,
+        leading = 0,
         whiteSpace = 'normal',
         wordWrap = false,
         wordWrapWidth,
         maxLines,
+        textOverflow = 'ellipsis',
         textAlign = 'start',
         textBaseline = 'alphabetic',
         decorationThickness = 0,
@@ -1429,11 +1378,8 @@ export function serializedNodesToEntities(
         edgeLabelOffset,
       } = attributes as TextSerializedNode;
 
-      const resolvedFontSize = resolveDesignVariableValue(
-        fontSize,
-        designVariables,
-        themeMode,
-      );
+      const resolvedFontSize = resolveDesignVariableNumber(fontSize, designVariables, themeMode, 12);
+      const resolvedFontFamily = String(resolveDesignVariableValue(fontFamily, designVariables, themeMode) || 'sans-serif');
       const resolvedDecorationColor = resolveDesignVariableValue(
         decorationColor,
         designVariables,
@@ -1456,7 +1402,7 @@ export function serializedNodesToEntities(
 
       const bitmapFonts = fonts.map((font) => font.read(Font).bitmapFont);
       const bitmapFont = bitmapFonts.find(
-        (font) => font.fontFamily === fontFamily,
+        (font) => font.fontFamily === resolvedFontFamily,
       );
 
       entityCommands.insert(
@@ -1468,22 +1414,21 @@ export function serializedNodesToEntities(
           anchorX,
           anchorY,
           content,
-          fontFamily,
-          fontSize:
-            typeof resolvedFontSize === 'number'
-              ? resolvedFontSize
-              : Number(resolvedFontSize),
+          fontFamily: resolvedFontFamily,
+          fontSize: resolvedFontSize,
           fontSizeVariableRef: designVariableRefKeyFromWire(fontSize),
           fontWeight,
           fontStyle,
-          fontVariant,
+          fontVariant: String(resolveDesignVariableValue(fontVariant, designVariables, themeMode) ?? 'normal'),
           fontKerning,
-          letterSpacing,
-          lineHeight,
+          letterSpacing: resolveDesignVariableNumber(letterSpacing, designVariables, themeMode, 0),
+          lineHeight: Math.max(0, resolveDesignVariableNumber(lineHeight, designVariables, themeMode, 0)),
+          leading,
           whiteSpace,
           wordWrap,
           wordWrapWidth,
           maxLines,
+          textOverflow,
           textAlign,
           textBaseline,
           bitmapFont,
@@ -1681,14 +1626,16 @@ export function serializedNodesToEntities(
       (resolvedStrokeLayerItems != null &&
         resolvedStrokeLayerItems.length > 0) ||
       (resolvedStrokeWidth !== undefined && resolvedStrokeWidth !== null) ||
-      strokeWidth !== undefined;
+      strokeWidth !== undefined ||
+      strokeLinecap != null ||
+      strokeLinejoin != null;
     if (hasStrokeGeometry && !skipParentFillStroke) {
       const rawW =
         resolvedStrokeWidth !== undefined ? resolvedStrokeWidth : strokeWidth;
       const widthInit =
         rawW !== undefined && rawW !== null
           ? {
-            width: typeof rawW === 'number' ? rawW : Number(rawW),
+            width: resolveDesignVariableNumber(rawW, designVariables, themeMode, 1),
           }
           : {};
       const dashPair =

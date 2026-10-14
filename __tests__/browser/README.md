@@ -54,10 +54,40 @@ multi-selection, rotation after flipping, undo/redo and rendered gradient pixels
 Asymmetric path, polyline and vector-network checks catch double reflection; the
 WebKit suite also checks flipping from a padded touch corner.
 
-CI runs these checks in `.github/workflows/browser-regression.yml` and uploads
-failure screenshots and traces from `.test-results/browser` and
-`.test-results/webkit`. The existing ECS suite remains a separate regression
-check.
+CI runs `.github/workflows/browser-regression.yml` with four independent test
+runners: two Chromium shards, WebKit Lottie, and the remaining WebKit suites.
+Each runner still uses one worker and the existing WebKit browser isolation.
+The WebKit split balances measured duration: the Lottie renderer used roughly
+as much time as all other WebKit tests combined. Static checks run alongside
+the browser jobs. The existing `browser-regression` check succeeds only when
+all jobs succeed; failure, cancellation and skipping cannot pass the gate.
+New commits cancel older runs for the same PR or branch.
+
+Run the same groups locally (one at a time; the fixture uses a fixed port):
+
+```sh
+pnpm test:browser --shard=1/2
+pnpm test:browser --shard=2/2
+PLAYWRIGHT_WEBKIT_GROUP=lottie pnpm test:browser:webkit
+PLAYWRIGHT_WEBKIT_GROUP=other pnpm test:browser:webkit
+```
+
+Without `PLAYWRIGHT_WEBKIT_GROUP`, the WebKit command still runs every suite.
+`pnpm test:tooling` discovers the actual Playwright cases and checks that the
+workflow groups cover each browser's tests exactly once.
+
+Every completed group uploads its JSON results, timing report and any failure
+screenshots/traces under a unique `browser-regression-*` artifact for seven
+days. The job summary lists slow files and test attempts, including setup,
+body and teardown durations. To produce the same report locally:
+
+```sh
+pnpm test:browser --reporter=list,./scripts/browser-timing-reporter.mjs
+```
+
+The reports are written to `.test-results/browser-timings.json` and
+`.test-results/browser-timings.md`. The existing ECS suite remains a separate
+regression check.
 
 Lesson 12 dash rendering checks run in Chromium and WebKit. They compare rendered
 stroke interiors with native Canvas2D for all cap/join combinations, offsets,
@@ -87,8 +117,42 @@ Both browsers use native taps to select shapes and activate undo/redo. Chromium
 uses trusted touch drags; WebKit uses DOM touch PointerEvents for resizing.
 Assertions cover geometry, the React inspector, history, and isolation from the
 second canvas. These are interaction checks, not a physical iOS or WebKit visual
-rendering check. The React 18/19 CI matrix runs both browsers and uploads failure
-traces and screenshots from `.test-results/react` and `.test-results/react-webkit`.
+rendering check. The React 18/19 CI matrix runs both browsers.
+
+`.github/workflows/react.yml` builds and checks each React version once, then
+restores its ESM/CJS build artifact into independent browser jobs. Each version
+runs two Chromium shards and three WebKit shards, with one worker per runner
+and the existing per-test WebKit isolation. Sharding distributes individual cases
+evenly rather than keeping large files together; tests still run sequentially on
+each runner. Only the selected browser is installed
+on each runner. New commits cancel obsolete runs for the same PR or branch.
+
+The existing `react (18.2.0)` and `react (19.2.3)` checks remain the merge gates.
+Both require the complete checks/browser matrix to succeed; failures, skipped
+jobs and cancellations cannot turn either gate green. `pnpm test:tooling`
+discovers the actual tests and verifies each browser's shards cover them exactly
+once for both React versions. Local unsharded commands still run the entire suite.
+
+To run a CI shard locally, after the package build:
+
+```sh
+pnpm test:react:browser --shard=1/2
+pnpm test:react:browser:webkit --shard=1/3
+```
+
+Each browser job uploads JSON results, setup/body/teardown timing summaries, and
+failure screenshots/traces for seven days, including hidden files. Reports are
+available for successful runs too. Use `--reporter=list,./scripts/browser-timing-reporter.mjs`
+to generate timing reports locally. Set `PLAYWRIGHT_JSON_OUTPUT_FILE` and add the
+`json` reporter to also save machine-readable results.
+
+React suites using `isolated-webkit-test` attach a bounded `browser-lifecycle`
+event trail on failure: navigation, page close/crash, Vite messages, page errors,
+failed requests, and Chromium execution-context destruction. Capture uses
+host-side state, so it also works when `page.evaluate()` cannot run. This adds
+diagnostic evidence for the intermittent React 19 selection failure; it does not
+claim that its underlying cause has been fixed. Keep assertions and retry policy
+unchanged while investigating.
 
 Drawing preference checks in `__tests__/react/browser/drawing-preferences.spec.ts`
 mount the real settings controls with two React canvases. They cover history and
@@ -128,3 +192,19 @@ opacity, path fills plus strokes, text, clipping, three-layer accumulation and a
 normal draw after the blended nodes. Chromium and WebKit both run these checks,
 including a forced WebGL1 fallback. The SDF cases also guard against mediump
 packed-flag overflow on mobile GPUs.
+
+## Lottie import baseline
+
+`lottie.spec.ts` compares fixed frames of ECS output against the pinned
+`lottie-web` Canvas renderer: position animation, animated single-path trim
+returning to full coverage, reversed trim endpoints, wrapped offsets and empty
+static round-cap trims. Silhouette comparisons allow a one-pixel edge difference;
+interior color/alpha checks still detect missing geometry or unintended fading.
+The same fixture verifies autoplay=false, seek/stop, repeat rendering, unrelated
+node preservation and cleanup on player/canvas destruction. Pure ECS-folder
+specs cover clock continuity, finite/infinite loops, forward/reverse segments,
+trim arithmetic and non-mutating JSON-pointer diagnostics.
+
+These are scoped import regressions, not a whole-format compatibility suite.
+Text, masks, effects, multi-path/fill trim and other unsupported features remain
+listed in lesson 36. Lottie tests run in Chromium and the separate WebKit suite.

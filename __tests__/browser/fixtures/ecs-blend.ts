@@ -39,6 +39,8 @@ import {
 import { NodeLayerBlendMode, Text } from '@infinite-canvas-tutorial/ecs';
 import type { FillLayerBlendMode } from '../../../packages/ecs/src/types/fill-layer-blend';
 import { toCSSMixBlendMode } from '../../../packages/ecs/src/utils/blend-mode';
+import { settleECSFrames } from './ecs-frames';
+import { getFillLayerDecodedBitmap } from '../../../packages/ecs/src/utils/fill-layer-image-url-raster';
 
 const actual = document.querySelector<HTMLCanvasElement>('#actual')!;
 const reference = document.querySelector<HTMLCanvasElement>('#reference')!;
@@ -130,6 +132,11 @@ const rendered = () =>
   );
 const probe = {
   api: () => api,
+  imageRasterSize: (url: string) => {
+    const bitmap = getFillLayerDecodedBitmap(url);
+    return bitmap ? [bitmap.width, bitmap.height] : null;
+  },
+  settle: () => settleECSFrames(api, 12),
   async render(options: BlendCase) {
     const { backdrop, source, opacity = 1, kind = 'node' } = options;
     const ctx = reference.getContext('2d')!;

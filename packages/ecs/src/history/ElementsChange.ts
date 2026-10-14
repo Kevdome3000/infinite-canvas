@@ -17,23 +17,21 @@ import {
 import { hasRasterPostEffects } from '../utils/filter';
 import { resolveExtrude3DDepth } from '../utils/extrude3d';
 import {
-  normalizeGeometry,
-  parseLight3DColor,
-  parseMesh3DBaseColor,
   rebuildMesh3DNodeCompanionGeometry,
   syncMesh3DNodeCompanionFromSource,
 } from '../utils/mesh3d-node';
+import { mesh3DNodeFromWire, light3DFromWire } from '../utils/mesh3d-wire';
 import { requestGltfMeshLoad } from '../utils/gltf/request-gltf-mesh-load';
 import { isEntityAlive } from '../systems/Transform';
 import { AnimationController, Keyframe, AnimationOptions } from '../animation';
 import {
   resolveDesignVariableValue,
+  resolveDesignVariableNumber,
   designVariableRefKeyFromWire,
   resolveFillLayerItemsForEcs,
 } from '../utils/design-variables';
 import type {
   FillAttributes,
-  GSerializedNode,
   IconFontSerializedNode,
   SerializedFillLayerItem,
   Light3DNodeSerializedNode,
@@ -348,9 +346,9 @@ function syncIconFontChildrenFromUpdatedNode(
   node: IconFontSerializedNode,
   api: API,
 ) {
-  if (!rootEntity.has(Parent)) {
-    return;
-  }
+  // An unresolved icon starts as a rectangle without children. It must still
+  // be able to become a vector icon when its name or family changes.
+  safeAddComponent(rootEntity, Parent);
   const designVariables = api.getAppState().variables;
   const themeMode = api.getAppState().themeMode;
   const w = node.width ?? 0;
@@ -428,6 +426,9 @@ function syncIconFontChildrenFromUpdatedNode(
   }
 
   const zForChild = node.zIndex != null ? node.zIndex : 0;
+  safeRemoveComponent(rootEntity, Rect);
+  safeRemoveComponent(rootEntity, FillLayers);
+  safeRemoveComponent(rootEntity, StrokeLayers);
   const childVisibility =
     (node.visibility as 'inherited' | 'hidden' | 'visible' | undefined) ??
     'inherited';
@@ -472,6 +473,8 @@ function syncIconFontChildrenFromUpdatedNode(
       safeAddComponent(child, StrokeLayers, {
         layers: [{ type: 'solid', value: iconStrokeColor }],
       });
+    } else {
+      safeRemoveComponent(child, StrokeLayers);
     }
 
     const fillPart = pickChildFill(
@@ -1061,6 +1064,74 @@ function applyStrokesWireMutation(
   return true;
 }
 
+function strokeDashPair(value: string | undefined): [number, number] {
+  if (value === undefined || value === 'none') return [0, 0];
+  const parts = value.trim().split(/[\s,]+/);
+  const a = Number(parts[0]);
+  const b = Number(parts[1] ?? parts[0]);
+  return [Number.isFinite(a) ? a : 0, Number.isFinite(b) ? b : 0];
+}
+
+/** Refresh computed paint without copying inherited values into document/history. */
+export function syncInheritedPresentation(
+  entity: Entity,
+  node: SerializedNode,
+  inherited: Record<string, unknown>,
+  api: API,
+) {
+  const attrs = { ...node, ...inherited } as SerializedNodeAttributes;
+  const { variables, themeMode } = api.getAppState();
+  if (node.type === 'iconfont' || (node.type as string) === 'icon_font') {
+    syncIconFontChildrenFromUpdatedNode(
+      entity,
+      attrs as IconFontSerializedNode,
+      api,
+    );
+  } else {
+    applyFillsWireMutation(entity, attrs, variables, themeMode);
+    applyStrokesWireMutation(
+      entity,
+      attrs as StrokeAttributes,
+      variables,
+      themeMode,
+    );
+    const hasStrokeGeometry =
+      attrs.strokes?.length > 0 ||
+      attrs.strokeWidth != null ||
+      attrs.strokeLinecap != null ||
+      attrs.strokeLinejoin != null;
+    if (hasStrokeGeometry) {
+      safeAddComponent(entity, Stroke, {
+        width: resolveDesignVariableNumber(
+          attrs.strokeWidth, variables, themeMode, 1,
+        ),
+        widthVariableRef: designVariableRefKeyFromWire(attrs.strokeWidth),
+        linecap: attrs.strokeLinecap ?? 'butt',
+        linejoin: attrs.strokeLinejoin ?? 'miter',
+        alignment: attrs.strokeAlignment ?? 'center',
+        miterlimit: attrs.strokeMiterlimit ?? 4,
+        dasharray: strokeDashPair(attrs.strokeDasharray),
+        dashoffset: attrs.strokeDashoffset ?? 0,
+        dashcap: normalizeStrokeDashCap(attrs.strokeDashCap) ?? 'none',
+      });
+    } else {
+      safeRemoveComponent(entity, Stroke);
+    }
+    if (entity.has(Path) && entity.read(Path).fillRule !== (attrs.fillRule ?? 'nonzero')) {
+      entity.write(Path).fillRule = attrs.fillRule ?? 'nonzero';
+      safeAddComponent(entity, GeometryDirty);
+    }
+    if (node.type === 'g') {
+      safeAddComponent(
+        entity, Group, buildGroupWirePresentation(attrs, variables, themeMode),
+      );
+    }
+    if (entity.has(Rough)) refreshComputedRoughForEntity(entity);
+  }
+  safeAddComponent(entity, Opacity, { opacity: attrs.opacity ?? 1 });
+  safeAddComponent(entity, MaterialDirty);
+}
+
 // This function tracks updates of text elements for the purposes for collaboration.
 // The version is used to compare updates when more than one user is working in
 // the same drawing. Note: this will trigger the component to update. Make sure you
@@ -1108,23 +1179,12 @@ export const mutateElement = <TElement extends Mutable<SerializedNode>>(
   const designVariables = api.getAppState().variables;
   const themeMode = api.getAppState().themeMode;
   const elNode = element as SerializedNode;
-  const scenePatched = api
-    .getNodes()
-    .map((n) => (n.id === elNode.id ? elNode : n));
-  const withInheritPaint = {
-    ...elNode,
-    ...getComputedInheritGroupWireForId(elNode.id, scenePatched),
-  };
 
   const { name, visibility } = updates;
   const {
     parentId,
     zIndex,
-    strokeWidth,
-    strokeLinecap,
-    strokeLinejoin,
     strokeAlignment,
-    opacity,
     innerShadowColor,
     innerShadowBlurRadius,
     innerShadowOffsetX,
@@ -1133,7 +1193,7 @@ export const mutateElement = <TElement extends Mutable<SerializedNode>>(
     dropShadowBlurRadius,
     dropShadowOffsetX,
     dropShadowOffsetY,
-    fontSize,
+    fontSize = 12,
     x,
     y,
     width,
@@ -1144,14 +1204,14 @@ export const mutateElement = <TElement extends Mutable<SerializedNode>>(
     scaleY,
     points,
     d,
-    anchorX,
-    anchorY,
-    fontWeight,
-    fontStyle,
-    fontKerning,
-    textAlign,
-    textBaseline,
-    content,
+    anchorX = 0,
+    anchorY = 0,
+    fontWeight = 'normal',
+    fontStyle = 'normal',
+    fontKerning = true,
+    textAlign = 'start',
+    textBaseline = 'alphabetic',
+    content = '',
     sizeAttenuation,
     strokeAttenuation,
     decorationColor,
@@ -1230,21 +1290,6 @@ export const mutateElement = <TElement extends Mutable<SerializedNode>>(
     entity.write(Visibility).value = visibility;
   }
 
-  if (
-    ('fills' in updates || 'fill' in updates || 'fillLayers' in updates) &&
-    !isIconFontWireNode
-  ) {
-    applyFillsWireMutation(
-      entity,
-      element as FillAttributes,
-      designVariables,
-      themeMode,
-    );
-    if (entity.has(Rough)) {
-      refreshComputedRoughForEntity(entity);
-      safeAddComponent(entity, GeometryDirty);
-    }
-  }
   if ('brushStamp' in updates) {
     if (isDataUrl(brushStamp) || isUrl(brushStamp)) {
       loadImage(brushStamp, entity);
@@ -1258,62 +1303,13 @@ export const mutateElement = <TElement extends Mutable<SerializedNode>>(
       safeAddComponent(child, MaterialDirty);
     });
   }
-  if (
-    ('strokes' in updates ||
-      'stroke' in updates ||
-      'strokeOpacity' in updates) &&
-    !isIconFontWireNode
-  ) {
-    applyStrokesWireMutation(
-      entity,
-      element as StrokeAttributes,
-      designVariables,
-      themeMode,
-    );
-    if (entity.has(Rough)) {
-      refreshComputedRoughForEntity(entity);
-      safeAddComponent(entity, GeometryDirty);
-    }
-  }
-  if ('strokeWidth' in updates && !isIconFontWireNode) {
-    const w = resolveDesignVariableValue(
-      strokeWidth,
-      designVariables,
-      themeMode,
-    );
-    safeAddComponent(entity, Stroke, {
-      ...(w !== undefined && w !== null
-        ? { width: typeof w === 'number' ? w : Number(w) }
-        : {}),
-      widthVariableRef: designVariableRefKeyFromWire(strokeWidth),
-    });
-  }
-  if ('strokeLinecap' in updates && !isIconFontWireNode) {
-    safeAddComponent(entity, Stroke, { linecap: strokeLinecap });
-  }
-  if ('strokeLinejoin' in updates && !isIconFontWireNode) {
-    safeAddComponent(entity, Stroke, { linejoin: strokeLinejoin });
-  }
   if ('strokeAlignment' in updates && !isIconFontWireNode) {
     safeAddComponent(entity, Stroke, { alignment: strokeAlignment });
   }
   if ('strokeDasharray' in updates && !isIconFontWireNode) {
-    const sd = (element as StrokeAttributes).strokeDasharray;
-    const pair: [number, number] =
-      sd === 'none' || sd === undefined
-        ? [0, 0]
-        : (() => {
-            const parts = sd.includes(',')
-              ? sd.split(',')
-              : sd.trim().split(/\s+/).filter(Boolean);
-            const a = Number(parts[0]);
-            const b = Number(parts[1] ?? parts[0]);
-            return [Number.isFinite(a) ? a : 0, Number.isFinite(b) ? b : 0] as [
-              number,
-              number,
-            ];
-          })();
-    safeAddComponent(entity, Stroke, { dasharray: pair });
+    safeAddComponent(entity, Stroke, {
+      dasharray: strokeDashPair((element as StrokeAttributes).strokeDasharray),
+    });
   }
   if ('strokeDashoffset' in updates && !isIconFontWireNode) {
     const raw = (element as StrokeAttributes).strokeDashoffset;
@@ -1327,9 +1323,6 @@ export const mutateElement = <TElement extends Mutable<SerializedNode>>(
     safeAddComponent(entity, Stroke, {
       dashcap: normalizeStrokeDashCap(raw) ?? 'none',
     });
-  }
-  if ('opacity' in updates) {
-    safeAddComponent(entity, Opacity, { opacity });
   }
   if ('animation' in updates) {
     const animation = (updates as Record<string, unknown>).animation as
@@ -1426,67 +1419,67 @@ export const mutateElement = <TElement extends Mutable<SerializedNode>>(
     });
   }
   if ('roughRoughness' in updates) {
-    safeAddComponent(entity, Rough, { roughness: roughRoughness });
+    safeAddComponent(entity, Rough, { roughness: roughRoughness ?? 1 });
   }
   if ('roughBowing' in updates) {
-    safeAddComponent(entity, Rough, { bowing: roughBowing });
+    safeAddComponent(entity, Rough, { bowing: roughBowing ?? 1 });
   }
   if ('roughFillStyle' in updates) {
-    safeAddComponent(entity, Rough, { fillStyle: roughFillStyle });
+    safeAddComponent(entity, Rough, { fillStyle: roughFillStyle ?? 'hachure' });
     safeAddComponent(entity, MaterialDirty);
   }
   if ('roughFillWeight' in updates) {
-    safeAddComponent(entity, Rough, { fillWeight: roughFillWeight });
+    safeAddComponent(entity, Rough, { fillWeight: roughFillWeight ?? -1 });
   }
   if ('roughHachureAngle' in updates) {
-    safeAddComponent(entity, Rough, { hachureAngle: roughHachureAngle });
+    safeAddComponent(entity, Rough, { hachureAngle: roughHachureAngle ?? -41 });
   }
   if ('roughHachureGap' in updates) {
-    safeAddComponent(entity, Rough, { hachureGap: roughHachureGap });
+    safeAddComponent(entity, Rough, { hachureGap: roughHachureGap ?? -1 });
   }
   if ('roughCurveStepCount' in updates) {
-    safeAddComponent(entity, Rough, { curveStepCount: roughCurveStepCount });
+    safeAddComponent(entity, Rough, { curveStepCount: roughCurveStepCount ?? 9 });
   }
   if ('roughCurveFitting' in updates) {
-    safeAddComponent(entity, Rough, { curveFitting: roughCurveFitting });
+    safeAddComponent(entity, Rough, { curveFitting: roughCurveFitting ?? 0.95 });
   }
   if ('roughDisableMultiStroke' in updates) {
     safeAddComponent(entity, Rough, {
-      disableMultiStroke: roughDisableMultiStroke,
+      disableMultiStroke: roughDisableMultiStroke ?? false,
     });
   }
   if ('roughDisableMultiStrokeFill' in updates) {
     safeAddComponent(entity, Rough, {
-      disableMultiStrokeFill: roughDisableMultiStrokeFill,
+      disableMultiStrokeFill: roughDisableMultiStrokeFill ?? false,
     });
   }
   if ('roughSimplification' in updates) {
-    safeAddComponent(entity, Rough, { simplification: roughSimplification });
+    safeAddComponent(entity, Rough, { simplification: roughSimplification ?? 0 });
   }
   if ('roughDashOffset' in updates) {
-    safeAddComponent(entity, Rough, { dashOffset: roughDashOffset });
+    safeAddComponent(entity, Rough, { dashOffset: roughDashOffset ?? -1 });
   }
   if ('roughDashGap' in updates) {
-    safeAddComponent(entity, Rough, { dashGap: roughDashGap });
+    safeAddComponent(entity, Rough, { dashGap: roughDashGap ?? -1 });
   }
   if ('roughZigzagOffset' in updates) {
-    safeAddComponent(entity, Rough, { zigzagOffset: roughZigzagOffset });
+    safeAddComponent(entity, Rough, { zigzagOffset: roughZigzagOffset ?? -1 });
   }
   if ('roughPreserveVertices' in updates) {
     safeAddComponent(entity, Rough, {
-      preserveVertices: roughPreserveVertices,
+      preserveVertices: roughPreserveVertices ?? false,
     });
   }
   if ('roughFillLineDash' in updates) {
-    safeAddComponent(entity, Rough, { fillLineDash: roughFillLineDash });
+    safeAddComponent(entity, Rough, { fillLineDash: roughFillLineDash ?? [] });
   }
   if ('roughFillLineDashOffset' in updates) {
     safeAddComponent(entity, Rough, {
-      fillLineDashOffset: roughFillLineDashOffset,
+      fillLineDashOffset: roughFillLineDashOffset ?? 0,
     });
   }
   if ('roughSeed' in updates) {
-    safeAddComponent(entity, Rough, { seed: roughSeed });
+    safeAddComponent(entity, Rough, { seed: roughSeed ?? 1 });
   }
 
   if ('markerStart' in updates) {
@@ -1500,11 +1493,19 @@ export const mutateElement = <TElement extends Mutable<SerializedNode>>(
   }
 
   if (element.type === 'text') {
-    for (const key of ['path', 'side', 'startOffset', 'pathOffset'] as const) {
+    const defaults = {
+      path: '',
+      side: 'left' as const,
+      startOffset: 0,
+      pathOffset: 0,
+      wordWrap: false,
+      whiteSpace: 'normal' as const,
+      maxLines: 0,
+      textOverflow: 'ellipsis' as const,
+      leading: 0,
+    };
+    for (const key of Object.keys(defaults)) {
       if (key in updates) {
-        const defaults = {
-          path: '', side: 'left' as const, startOffset: 0, pathOffset: 0,
-        };
         // Preserve clearing a setting in undo/redo as well as explicit updates.
         Object.assign(entity.write(Text), { [key]: updates[key] ?? defaults[key] });
       }
@@ -1517,16 +1518,15 @@ export const mutateElement = <TElement extends Mutable<SerializedNode>>(
     entity.write(Text).anchorY = anchorY;
   }
   if ('fontSize' in updates) {
-    const fs = resolveDesignVariableValue(fontSize, designVariables, themeMode);
-    entity.write(Text).fontSize = typeof fs === 'number' ? fs : Number(fs);
+    entity.write(Text).fontSize = resolveDesignVariableNumber(
+      fontSize, designVariables, themeMode, 12,
+    );
     entity.write(Text).fontSizeVariableRef =
       designVariableRefKeyFromWire(fontSize);
   }
   if ('wordWrapWidth' in updates) {
     const w = (updates as { wordWrapWidth?: number }).wordWrapWidth;
-    if (w !== undefined) {
-      entity.write(Text).wordWrapWidth = w;
-    }
+    entity.write(Text).wordWrapWidth = w ?? 0;
   }
   if ('fontFamily' in updates) {
     const raw = (updates as { fontFamily?: string }).fontFamily;
@@ -1554,45 +1554,25 @@ export const mutateElement = <TElement extends Mutable<SerializedNode>>(
       designVariables,
       themeMode,
     );
-    if (resolved != null) {
-      entity.write(Text).fontVariant = String(resolved);
-    }
+    entity.write(Text).fontVariant = String(resolved ?? 'normal');
   }
   if ('fontKerning' in updates) {
     entity.write(Text).fontKerning = fontKerning;
   }
   if ('letterSpacing' in updates) {
-    const raw = (updates as { letterSpacing?: number | string }).letterSpacing;
-    const resolved = resolveDesignVariableValue(
-      raw,
-      designVariables,
-      themeMode,
+    entity.write(Text).letterSpacing = resolveDesignVariableNumber(
+      updates['letterSpacing'], designVariables, themeMode, 0,
     );
-    const n =
-      typeof resolved === 'number'
-        ? resolved
-        : parseFloat(String(resolved ?? ''));
-    if (Number.isFinite(n)) {
-      entity.write(Text).letterSpacing = n;
-    }
   }
   if ('lineHeight' in updates) {
-    const raw = (updates as { lineHeight?: number | string }).lineHeight;
-    const resolved = resolveDesignVariableValue(
-      raw,
-      designVariables,
-      themeMode,
-    );
-    const n =
-      typeof resolved === 'number'
-        ? resolved
-        : parseFloat(String(resolved ?? ''));
-    if (Number.isFinite(n) && n >= 0) {
-      entity.write(Text).lineHeight = n;
-    }
+    entity.write(Text).lineHeight = Math.max(0, resolveDesignVariableNumber(
+      updates['lineHeight'], designVariables, themeMode, 0,
+    ));
   }
   if (
     ('textAlign' in updates || 'textBaseline' in updates) &&
+    // Full snapshots already specify the desired anchors (or their defaults).
+    !Object.is(updates, element) &&
     !('anchorX' in updates) &&
     !('anchorY' in updates) &&
     entity.has(Text) &&
@@ -1728,25 +1708,13 @@ export const mutateElement = <TElement extends Mutable<SerializedNode>>(
       safeAddComponent(entity, MaterialDirty);
     });
   }
-  if (
-    'cornerRadius' in updates &&
-    cornerRadius !== undefined &&
-    entity.has(Rect)
-  ) {
-    const resolved = resolveDesignVariableValue(
-      cornerRadius,
-      designVariables,
-      themeMode,
+  if ('cornerRadius' in updates && entity.has(Rect)) {
+    entity.write(Rect).cornerRadius = Math.max(
+      0,
+      resolveDesignVariableNumber(cornerRadius, designVariables, themeMode, 0),
     );
-    const n =
-      typeof resolved === 'number'
-        ? resolved
-        : parseFloat(String(resolved ?? ''));
-    if (Number.isFinite(n)) {
-      entity.write(Rect).cornerRadius = Math.max(0, n);
-      safeAddComponent(entity, GeometryDirty);
-      safeAddComponent(entity, MaterialDirty);
-    }
+    safeAddComponent(entity, GeometryDirty);
+    safeAddComponent(entity, MaterialDirty);
   }
   if ('points' in updates) {
     if (entity.has(Polyline)) {
@@ -1843,7 +1811,11 @@ export const mutateElement = <TElement extends Mutable<SerializedNode>>(
   }
 
   if ('filter' in updates) {
-    safeAddComponent(entity, Filter, { value: filter });
+    if (filter) {
+      safeAddComponent(entity, Filter, { value: filter });
+    } else {
+      safeRemoveComponent(entity, Filter);
+    }
     safeAddComponent(entity, MaterialDirty);
     if (entity.has(IconFont)) {
       getDescendants(entity).forEach((child) => {
@@ -1874,7 +1846,6 @@ export const mutateElement = <TElement extends Mutable<SerializedNode>>(
   }
 
   if (elNode.type === 'mesh3d') {
-    const patch = updates as Partial<Mesh3DNodeSerializedNode>;
     const touchesMesh3DNode =
       'z' in updates ||
       'rotation3d' in updates ||
@@ -1888,36 +1859,12 @@ export const mutateElement = <TElement extends Mutable<SerializedNode>>(
       'height' in updates;
     if (touchesMesh3DNode) {
       const meshNode = entity.write(Mesh3DNode);
-      if ('geometry' in updates && patch.geometry != null) {
-        meshNode.geometry = normalizeGeometry(patch.geometry);
-      }
-      if ('z' in updates && patch.z != null) {
-        meshNode.z = patch.z;
-      }
-      if ('rotation3d' in updates && patch.rotation3d) {
-        meshNode.rotation3d = [...patch.rotation3d];
-      }
-      if ('scale3d' in updates && patch.scale3d != null) {
-        meshNode.scale3d = patch.scale3d;
-      }
-      if ('material3d' in updates && patch.material3d) {
-        const mat = patch.material3d;
-        if (mat.baseColor != null) {
-          meshNode.baseColor = parseMesh3DBaseColor(mat.baseColor);
-        }
-        if (mat.ambient != null) meshNode.ambient = mat.ambient;
-        if (mat.diffuse != null) meshNode.diffuse = mat.diffuse;
-        if (mat.specular != null) meshNode.specular = mat.specular;
-        if (mat.shininess != null) meshNode.shininess = mat.shininess;
-        if (mat.metallic != null) meshNode.metallic = mat.metallic;
-        if (mat.roughness != null) meshNode.roughness = mat.roughness;
-        if ('map' in mat) meshNode.map = mat.map ?? null;
-        if ('specularMap' in mat) {
-          meshNode.specularMap = mat.specularMap ?? null;
-        }
-        if ('bumpMap' in mat) meshNode.bumpMap = mat.bumpMap ?? null;
-        if (mat.bumpScale != null) meshNode.bumpScale = mat.bumpScale;
-      }
+      // Nested material3d is a complete wire value, not a merge into the old
+      // component. Omitted/removed fields must restore the same defaults as load.
+      Object.assign(
+        meshNode,
+        mesh3DNodeFromWire(elNode as Mesh3DNodeSerializedNode),
+      );
       const meshEntity = meshNode.meshEntity;
       const needsCompanionSync =
         meshEntity &&
@@ -1955,40 +1902,10 @@ export const mutateElement = <TElement extends Mutable<SerializedNode>>(
   }
 
   if (elNode.type === 'light3d') {
-    const light = entity.write(Light3D);
-    const patch = updates as Partial<Light3DNodeSerializedNode>;
-    if ('lightType' in updates && patch.lightType) {
-      light.type = patch.lightType;
-    }
-    if ('color' in updates) {
-      light.color = parseLight3DColor(patch.color);
-    }
-    if ('intensity' in updates && patch.intensity != null) {
-      light.intensity = patch.intensity;
-    }
-    if ('direction' in updates && patch.direction) {
-      light.direction = [...patch.direction];
-    }
-    if ('range' in updates && patch.range != null) {
-      light.range = patch.range;
-    }
-    if ('innerConeAngle' in updates && patch.innerConeAngle != null) {
-      light.innerConeAngle = patch.innerConeAngle;
-    }
-    if ('outerConeAngle' in updates && patch.outerConeAngle != null) {
-      light.outerConeAngle = patch.outerConeAngle;
-    }
-    if (
-      ('x' in updates || 'y' in updates || 'z' in updates) &&
-      entity.has(Transform)
-    ) {
-      const t = entity.read(Transform).translation;
-      light.position = [
-        'x' in updates && patch.x != null ? patch.x : t.x,
-        'y' in updates && patch.y != null ? patch.y : t.y,
-        patch.z ?? light.position[2],
-      ];
-    }
+    Object.assign(
+      entity.write(Light3D),
+      light3DFromWire(elNode as Light3DNodeSerializedNode),
+    );
   }
 
   if ('display' in updates) {
@@ -2079,6 +1996,7 @@ export const mutateElement = <TElement extends Mutable<SerializedNode>>(
         'strokeDashCap' in updates ||
         'width' in updates ||
         'height' in updates ||
+        'filter' in updates ||
         'iconFontName' in updates ||
         'iconFontFamily' in updates)
     ) {
@@ -2086,35 +2004,6 @@ export const mutateElement = <TElement extends Mutable<SerializedNode>>(
         entity,
         element as IconFontSerializedNode,
         api,
-      );
-    }
-  }
-
-  {
-    const gType = (element as SerializedNode).type;
-    if (
-      gType === 'g' &&
-      ('fills' in updates ||
-        'strokes' in updates ||
-        'stroke' in updates ||
-        'strokeOpacity' in updates ||
-        'strokeWidth' in updates ||
-        'fillRule' in updates ||
-        'opacity' in updates ||
-        'strokeLinecap' in updates ||
-        'strokeLinejoin' in updates ||
-        'strokeDasharray' in updates ||
-        'strokeDashoffset' in updates ||
-        'strokeDashCap' in updates)
-    ) {
-      safeAddComponent(
-        entity,
-        Group,
-        buildGroupWirePresentation(
-          withInheritPaint as GSerializedNode,
-          designVariables,
-          themeMode,
-        ),
       );
     }
   }

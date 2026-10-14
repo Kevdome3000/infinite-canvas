@@ -21,24 +21,19 @@ const yaml = resolveFrom(yamlFile, 'js-yaml');
 const argparse = resolveFrom(yaml, 'argparse');
 const { sprintf, vsprintf } = createRequire(argparse)('sprintf-js');
 
-test('audit exceptions are backed by registered patches for installed tooling', () => {
+test('installed tooling mitigations are registered without suppressing audit findings', () => {
   const { pnpm } = JSON.parse(
     readFileSync(new URL('../../package.json', import.meta.url)),
   );
-  assert.deepEqual(pnpm.auditConfig.ignoreCves.toSorted(), [
-    'CVE-2026-93687',
-    'CVE-2026-93748',
-    'CVE-2026-97058',
-  ]);
-  for (const [name, version, cve] of [
-    ['braces', '3.0.3', 'CVE-2026-93687'],
-    ['http-cache-semantics', '4.1.1', 'CVE-2026-93748'],
-    ['sprintf-js', '1.0.3', 'CVE-2026-97058'],
+  assert.deepEqual(pnpm.auditConfig?.ignoreCves ?? [], []);
+  for (const [name, version] of [
+    ['braces', '3.0.3'],
+    ['http-cache-semantics', '4.1.1'],
+    ['sprintf-js', '1.0.3'],
   ]) {
     const patch = pnpm.patchedDependencies[`${name}@${version}`];
     assert.equal(patch, `patches/${name}@${version}.patch`);
     assert(readFileSync(new URL(`../../${patch}`, import.meta.url)).length > 0);
-    assert(pnpm.auditConfig.ignoreCves.includes(cve));
     const parent = {
       braces: micromatch,
       'http-cache-semantics': fetch,
@@ -48,7 +43,7 @@ test('audit exceptions are backed by registered patches for installed tooling', 
     assert.equal(
       JSON.parse(readFileSync(installed)).version,
       version,
-      'Review the local patch and audit exception when upgrading this dependency',
+      'Review the local patch and mitigation evidence when upgrading this dependency',
     );
   }
 });

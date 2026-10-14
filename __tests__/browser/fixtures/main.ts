@@ -1,4 +1,5 @@
 import { YogaPlugin } from '../../../packages/plugin-yoga/src';
+import { settleECSFrames } from './ecs-frames';
 import '../../../packages/webcomponents/src/spectrum/context-vector-network-edit-bar';
 import '../../../packages/webcomponents/src/spectrum/infinite-canvas';
 import '../../../packages/webcomponents/src/spectrum/fill-icon';
@@ -172,7 +173,11 @@ class Bootstrap extends System {
   initialize() {
     commands = new Commands(this);
     create('left');
-    create('right');
+    // Additional collaboration tabs only use the left canvas. Avoid starting
+    // an unrelated WebGL context in each replica; lifecycle cases keep both.
+    if (!new URLSearchParams(location.search).has('single-canvas')) {
+      create('right');
+    }
   }
 }
 window.lifecycleProbes?.capturePageListeners();
@@ -279,13 +284,8 @@ const harness = {
     ].filter((entity) => entity && !entity.has(Culled)).length;
   },
   async settleFrames() {
-    // App awaits world.execute() before scheduling another animation frame.
-    // Browser RAFs alone can run while that asynchronous ECS work is pending.
-    for (let i = 0; i < 2; i++) {
-      const side = slots.keys().next().value as Side | undefined;
-      if (!side) return;
-      await act(side, () => {});
-    }
+    const slot = slots.values().next().value as Slot | undefined;
+    if (slot) await settleECSFrames(slot.api);
   },
   setScene(side: Side, nodes: SerializedNode[], selectedIds: string | string[]) {
     return act(side, ({ api }) => {

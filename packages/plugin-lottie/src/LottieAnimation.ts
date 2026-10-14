@@ -6,7 +6,7 @@ import type {
   KeyframeAnimationKeyframe,
   ParseContext,
 } from './parser';
-import { AnimationController, API, EllipseSerializedNode, filterUndefined, GSerializedNode, PathSerializedNode, RectSerializedNode, SerializedNode } from '@infinite-canvas-tutorial/ecs';
+import { AnimationController, AnimationPlayer, API, DOMAdapter, EllipseSerializedNode, filterUndefined, GSerializedNode, PathSerializedNode, RectSerializedNode, SerializedNode, type AnimationOptions } from '@infinite-canvas-tutorial/ecs';
 import { v4 as uuidv4 } from 'uuid';
 import {
   getShapePerimeter,
@@ -15,6 +15,10 @@ import {
   readLottieTrim,
   strokeDasharrayToWireString,
 } from './trim-paths';
+
+import type { LottieDiagnostic } from './diagnostics';
+import { LottiePlayback } from './playback';
+import { SampledAnimation } from './SampledAnimation';
 
 const eps = 0.0001;
 
@@ -44,6 +48,7 @@ function applyLottieTrimPathsToSerializedNode(
   elementType: string | undefined,
   shape: Record<string, unknown> | undefined,
   pathD?: string,
+  animatedTrim = false,
 ): void {
   if (
     !shape
@@ -55,12 +60,16 @@ function applyLottieTrimPathsToSerializedNode(
   const { trimStart, trimEnd, trimOffset } = readLottieTrim(shape);
   const perimeter = getShapePerimeter(elementType, shape, pathD);
   const dash = lottieTrimToStrokeDash(perimeter, trimStart, trimEnd, trimOffset);
+  // Full static trim must preserve an existing dashed stroke.
+  if (dash.dasharray[0] > 0 && dash.dasharray[1] === 0) return;
   const wire = node as SerializedNode & {
     strokeDasharray?: string;
     strokeDashoffset?: number;
+    strokeOpacity?: number;
   };
   wire.strokeDasharray = strokeDasharrayToWireString(dash.dasharray);
   wire.strokeDashoffset = dash.dashoffset;
+  if (!animatedTrim && dash.dasharray[0] === 0) wire.strokeOpacity = 0;
 }
 
 function applyLottieTrimPathsToKeyframe(
@@ -87,8 +96,10 @@ function applyLottieTrimPathsToKeyframe(
   const { trimStart, trimEnd, trimOffset } = readLottieTrim(mergedShape);
   const perimeter = getShapePerimeter(element.type, mergedShape, pathD);
   const dash = lottieTrimToStrokeDash(perimeter, trimStart, trimEnd, trimOffset);
-  keyframe.strokeDasharray = dash.dasharray;
-  keyframe.strokeDashoffset = dash.dashoffset;
+  const originalDash = element.style?.strokeDasharray;
+  const restoreDash = dash.dasharray[0] > 0 && dash.dasharray[1] === 0 && Array.isArray(originalDash);
+  keyframe.strokeDasharray = restoreDash ? originalDash : dash.dasharray;
+  keyframe.strokeDashoffset = restoreDash ? element.style?.strokeDashoffset ?? 0 : dash.dashoffset;
 }
 
 /**
@@ -521,7 +532,10 @@ export class LottieAnimation {
     private height: number,
     private elements: CustomElementOption[],
     private context: ParseContext,
+    private diagnostics: LottieDiagnostic[] = [],
   ) {
+    this.playback = new LottiePlayback(this.getDuration() * 1000, context.iterations);
+    this.autoplayPending = context.autoplay;
     this.displayObjects = this.elements.flatMap((element) =>
       this.buildHierachy(element),
     );
@@ -530,7 +544,47 @@ export class LottieAnimation {
     // TODO: preload fonts
   }
 
+  private readonly playback: LottiePlayback;
+  private autoplayPending: boolean;
+  private renderApi?: API;
+  private disposeCanvas?: () => void;
+  private frame?: number;
+  private destroyed = false;
+  private destruction?: Promise<void>;
   private displayObjects: SerializedNode[];
+
+  getDiagnostics(): readonly LottieDiagnostic[] {
+    return this.diagnostics.map((diagnostic) => ({ ...diagnostic }));
+  }
+
+  getPlayState() {
+    return this.playback.state;
+  }
+
+  /** Current composition-relative position, in seconds or frames. */
+  getCurrentTime(inFrames = false) {
+    return this.playback.currentTime / 1000 * (inFrames ? this.fps() : 1);
+  }
+
+  private sample() {
+    this.animations.forEach((animation) => animation.seek(this.playback.currentTime));
+  }
+
+  private schedule() {
+    if (!this.renderApi || this.destroyed || this.frame !== undefined || this.playback.state !== 'running') return;
+    this.frame = DOMAdapter.get().requestAnimationFrame((now) => {
+      this.frame = undefined;
+      if (this.destroyed) return;
+      this.playback.tick(now);
+      this.sample();
+      this.schedule();
+    });
+  }
+
+  private cancelFrame() {
+    if (this.frame !== undefined) DOMAdapter.get().cancelAnimationFrame(this.frame);
+    this.frame = undefined;
+  }
   private keyframeAnimationMap = new WeakMap<
     SerializedNode,
     KeyframeAnimation[]
@@ -542,7 +596,16 @@ export class LottieAnimation {
 
   private animations: AnimationController[] = [];
 
-  private buildHierachy(element: CustomElementOption, parentId?: string): SerializedNode[] {
+  private buildHierachy(
+    element: CustomElementOption,
+    parentId?: string,
+    inheritedOpacity: CustomElementOption['opacityMultiplier'] = 1,
+  ): SerializedNode[] {
+    const ownOpacity = element.opacityMultiplier ?? 1;
+    const opacityMultiplier = typeof inheritedOpacity === 'number' && typeof ownOpacity === 'number'
+      ? inheritedOpacity * ownOpacity
+      : (time: number) => (typeof inheritedOpacity === 'number' ? inheritedOpacity : inheritedOpacity(time))
+        * (typeof ownOpacity === 'number' ? ownOpacity : ownOpacity(time));
     const {
       type,
       name,
@@ -563,10 +626,7 @@ export class LottieAnimation {
 
     let displayObject: SerializedNode;
 
-    // TODO: repeater @see https://lottiefiles.github.io/lottie-docs/shapes/#repeater
-
     // @see https://lottiefiles.github.io/lottie-docs/shapes/#shape
-    // TODO: polystar, convert to Bezier @see https://lottiefiles.github.io/lottie-docs/rendering/#polystar
     if (type === 'g') {
       displayObject = {
         id: uuidv4(),
@@ -659,14 +719,24 @@ export class LottieAnimation {
     if (!isNil(rotation)) {
       displayObject.rotation = rotRad;
     }
+    if (element.sampleTransform) {
+      Object.assign(displayObject, element.sampleTransform(0));
+    }
 
     // TODO: match name `mn`, used in expressions
 
     if (style) {
       // { fill, fillOpacity, fillRule, opacity, strokeDasharray, strokeDashoffset, strokeLinejoin, strokeLinecap, strokeWidth }
       Object.keys(style).forEach((key) => {
-        displayObject[key] = style[key];
+        displayObject[key] = key === 'strokeDasharray' && Array.isArray(style[key])
+          ? style[key].join(' ')
+          : style[key];
       });
+    }
+    // ECS primitives default to a one-pixel stroke. A Lottie fill-only shape
+    // must not blend that invisible border into the fill's antialias band.
+    if (style?.stroke === 'none' && style.strokeWidth == null) {
+      displayObject['strokeWidth'] = 0;
     }
 
     applyLottieTrimPathsToSerializedNode(
@@ -674,6 +744,7 @@ export class LottieAnimation {
       type,
       shape,
       type === 'path' ? (displayObject as PathSerializedNode).d : undefined,
+      keyframeAnimation?.some((track) => track.keyframes.some((frame) => hasLottieTrim(frame.shape))),
     );
 
     if (keyframeAnimation) {
@@ -695,11 +766,17 @@ export class LottieAnimation {
 
 
     displayObject.version = 0;
+    if (type !== 'g' && (displayObject.type === 'path' || displayObject.type === 'ellipse' || displayObject.type === 'rect')) {
+      displayObject.opacity = (displayObject.opacity ?? 1) * (typeof opacityMultiplier === 'number' ? opacityMultiplier : opacityMultiplier(0));
+    }
 
-    this.displayObjectElementMap.set(displayObject, element);
+    this.displayObjectElementMap.set(displayObject, {
+      ...element,
+      opacityMultiplier: type === 'g' ? undefined : opacityMultiplier,
+    });
 
     if (children) {
-      const childNodes = children.map((child) => this.buildHierachy(child, displayObject.id));
+      const childNodes = children.map((child) => this.buildHierachy(child, displayObject.id, opacityMultiplier));
       return [displayObject, ...childNodes.flat()];
     } else {
       return [displayObject];
@@ -707,7 +784,7 @@ export class LottieAnimation {
   }
 
   getAnimations() {
-    return this.animations;
+    return [...this.animations];
   }
 
   /**
@@ -803,6 +880,13 @@ export class LottieAnimation {
       // @see https://lottiefiles.github.io/lottie-docs/concepts/#bezier
       // The nth bezier segment is defined as:
       // v[n], v[n]+o[n], v[n+1]+i[n+1], v[n+1]
+      // A cubic with both controls at its endpoints is exactly a line. Preserve
+      // that primitive rather than tessellating it into many collinear dash joins.
+      if (out[n - 1][0] === v[n - 1][0] && out[n - 1][1] === v[n - 1][1]
+        && i[n][0] === v[n][0] && i[n][1] === v[n][1]) {
+        d.push(['L', v[n][0], v[n][1]]);
+        continue;
+      }
       d.push([
         'C',
         out[n - 1][0],
@@ -815,6 +899,12 @@ export class LottieAnimation {
     }
 
     if (close) {
+      const last = v.length - 1;
+      if (out[last][0] === v[last][0] && out[last][1] === v[last][1]
+        && i[0][0] === x0 && i[0][1] === y0) {
+        d.push(['Z']);
+        return d;
+      }
       d.push([
         'C',
         out[v.length - 1][0],
@@ -834,6 +924,13 @@ export class LottieAnimation {
    * render Lottie Group to canvas or a mounted display object
    */
   render(api: API) {
+    if (this.destroyed) throw new Error('Cannot render a destroyed Lottie animation.');
+    if (this.renderApi) {
+      if (this.renderApi !== api) throw new Error('A Lottie animation belongs to one canvas. Load a separate instance for another canvas.');
+      return;
+    }
+    this.renderApi = api;
+    this.disposeCanvas = api.onDestroy(() => { void this.destroy(); });
     api.updateNodes(this.displayObjects);
 
     this.displayObjects.forEach((child) => {
@@ -895,6 +992,15 @@ export class LottieAnimation {
         ];
       }
 
+      const needsSampler = element?.sampleShape
+        || element?.sampleTransform
+        || typeof element?.opacityMultiplier === 'function';
+      if (needsSampler && !keyframeAnimation?.length) {
+        keyframeAnimation = [{
+          duration: this.getDuration() * 1000,
+          keyframes: [{ offset: 0 }],
+        }];
+      }
       if (keyframeAnimation && keyframeAnimation.length) {
         const keyframesOptions: [
           KeyframeAnimationKeyframe[],
@@ -910,7 +1016,7 @@ export class LottieAnimation {
               delay,
               duration,
               easing,
-              iterations: this.context.iterations,
+              iterations: 1,
               fill: this.context.fill,
               ...(transformOrigin
                 && typeof transformOrigin.x === 'number'
@@ -975,9 +1081,44 @@ export class LottieAnimation {
 
               // console.log('formatted', formatted, options, child);
 
-              if (formatted.length) {
-                // @ts-expect-error 
-                const animation = api.animate(child, formatted, options);
+              if (formatted.length || needsSampler) {
+                let animation = api.animate(
+                  child,
+                  formatted.length ? formatted : [{ offset: 0 }],
+                  options as AnimationOptions,
+                );
+                if (needsSampler || (element?.opacityMultiplier != null && element.opacityMultiplier !== 1)) {
+                  let previousShape: ReturnType<typeof element.sampleShape>;
+                  let d: string;
+                  const properties = [
+                    ...(element.sampleShape ? ['d'] : []),
+                    ...(element.sampleTransform ? Object.keys(element.sampleTransform(0)) : []),
+                    ...(element.opacityMultiplier != null ? ['opacity'] : []),
+                  ];
+                  animation = new SampledAnimation(
+                    formatted,
+                    options as AnimationOptions,
+                    properties,
+                    (time, values) => {
+                      if (element.sampleShape) {
+                        const shape = element.sampleShape(time);
+                        if (shape !== previousShape) {
+                          previousShape = shape;
+                          d = path2String(this.generatePathFromShape(shape));
+                        }
+                        values.d = d;
+                      }
+                      if (element.sampleTransform) Object.assign(values, element.sampleTransform(time));
+                      const multiplier = element.opacityMultiplier;
+                      if (multiplier != null)
+                        values.opacity = ((values.opacity as number | undefined) ?? element.style?.opacity ?? 1)
+                          * (typeof multiplier === 'number' ? multiplier : multiplier(time));
+                      return values;
+                    },
+                  );
+                  api.getEntity(child).write(AnimationPlayer).controller =
+                    animation;
+                }
                 if (
                   !isNil(visibilityStartOffset) &&
                   !isNil(visibilityEndOffset)
@@ -996,9 +1137,9 @@ export class LottieAnimation {
                   // };
                 }
 
-                if (!this.context.autoplay) {
-                  animation.pause();
-                }
+                // Keep ECS tracks paused and sample them from one composition clock.
+                // seek() also pauses an idle controller before the ECS system can autoplay it.
+                animation?.seek(this.playback.currentTime);
                 return animation;
               }
 
@@ -1008,6 +1149,8 @@ export class LottieAnimation {
         );
       }
     });
+    if (this.autoplayPending) this.play();
+    else this.schedule();
   }
 
   private formatKeyframes(
@@ -1070,6 +1213,7 @@ export class LottieAnimation {
         element?.type === 'path'
         && keyframe.shape
         && typeof keyframe.shape === 'object'
+        && (Array.isArray(keyframe.shape.v) || Array.isArray(keyframe.shape.compounds))
       ) {
         keyframe.d = path2String(
           this.generatePathFromShape(keyframe.shape as Record<string, any>),
@@ -1185,11 +1329,29 @@ export class LottieAnimation {
   /**
    * Destroy all internal displayobjects.
    */
-  destroy() {
-    // Use API to destroy the animation
-    // this.displayObjects.forEach((object) => {
-    //   object.destroy();
-    // });
+  destroy(): Promise<void> {
+    if (this.destroyed) return this.destruction ?? Promise.resolve();
+    this.destroyed = true;
+    this.autoplayPending = false;
+    this.cancelFrame();
+    this.playback.pause(performance.now());
+    this.animations.forEach((animation) => animation.cancel());
+    this.animations = [];
+    const api = this.renderApi;
+    this.renderApi = undefined;
+    this.disposeCanvas?.();
+    this.disposeCanvas = undefined;
+    const ids = this.displayObjects.map((object) => object.id);
+    this.displayObjects = [];
+    this.elements = [];
+    this.context.animation = undefined;
+    this.context.expressionLayer = undefined;
+    this.context.assetsMap.clear();
+    // api.edit also cancels safely when called from api.onDestroy.
+    this.destruction = api
+      ? api.edit(() => api.deleteNodesById(ids), { capture: 'NEVER' }).then(() => undefined)
+      : Promise.resolve();
+    return this.destruction;
   }
 
   /**
@@ -1207,109 +1369,62 @@ export class LottieAnimation {
     return this.context.version;
   }
 
-  private isPaused = false;
   play() {
-    this.isPaused = false;
-    this.animations.forEach((animation) => {
-      animation.play();
-    });
+    if (this.destroyed) return;
+    this.autoplayPending = false;
+    this.playback.play(performance.now());
+    this.sample();
+    this.schedule();
   }
 
-  /**
-   * Can contain 2 numeric values that will be used as first and last frame of the animation.
-   * @see https://github.com/airbnb/lottie-web#playsegmentssegments-forceflag
-   */
-  playSegments(segments: [number, number]) {
-    const [firstFrame] = segments;
-
-    this.isPaused = false;
-    this.animations.forEach((animation) => {
-      animation.seek((firstFrame / this.fps()) * 1000);
-      // const originOnFrame = animation.onframe;
-      // animation.onframe = (e) => {
-      //   if (originOnFrame) {
-      //     // @ts-ignore
-      //     originOnFrame(e);
-      //   }
-
-      //   if (animation.currentTime >= (lastFrame / this.fps()) * 1000) {
-      //     animation.finish();
-
-      //     if (originOnFrame) {
-      //       animation.onframe = originOnFrame;
-      //     } else {
-      //       animation.onframe = null;
-      //     }
-      //   }
-      // };
-      animation.play();
-    });
+  /** Play a composition-relative frame range, respecting loop and speed. */
+  playSegments([firstFrame, lastFrame]: [number, number]) {
+    if (this.destroyed) return;
+    this.autoplayPending = false;
+    this.playback.playSegments(firstFrame / this.fps() * 1000, lastFrame / this.fps() * 1000, performance.now());
+    this.sample();
+    this.schedule();
   }
 
   pause() {
-    this.isPaused = true;
-    this.animations.forEach((animation) => {
-      animation.pause();
-    });
+    if (this.destroyed) return;
+    this.autoplayPending = false;
+    this.playback.pause(performance.now());
+    this.cancelFrame();
+    this.sample();
   }
 
-  /**
-   *
-   */
   togglePause() {
-    if (this.isPaused) {
-      this.play();
-    } else {
-      this.pause();
-    }
+    if (this.playback.state === 'running' || this.autoplayPending) this.pause();
+    else this.play();
   }
 
-  /**
-   * Goto and stop at a specific time(in seconds) or frame.
-   * Split goToAndStop/Play into goTo & stop/play
-   * @see https://github.com/airbnb/lottie-web
-   */
+  /** Seek in seconds (default) or composition-relative frames; preserves play/pause state. */
   goTo(value: number, isFrame = false) {
-    if (isFrame) {
-      this.animations.forEach((animation) => {
-        animation.seek((value / this.fps()) * 1000);
-      });
-    } else {
-      this.animations.forEach((animation) => {
-        animation.seek(value * 1000);
-      });
-    }
+    if (this.destroyed) return;
+    this.playback.seek(isFrame ? value / this.fps() * 1000 : value * 1000, performance.now());
+    this.sample();
   }
 
-  /**
-   * @see https://github.com/airbnb/lottie-web#stop
-   */
+  /** Pause and return to frame zero, clearing any active segment. */
   stop() {
-    this.animations.forEach((animation) => {
-      animation.finish();
-    });
+    if (this.destroyed) return;
+    this.autoplayPending = false;
+    this.cancelFrame();
+    this.playback.stop();
+    this.sample();
   }
 
-  /**
-   * 1 is normal speed.
-   * @see https://github.com/airbnb/lottie-web#setspeedspeed
-   */
+  /** Positive multiplier; use setDirection() to reverse without changing speed. */
   setSpeed(speed: number) {
-    this.animations.forEach((animation) => {
-      animation.setPlaybackRate(speed * this.direction);
-    });
+    if (this.destroyed) return;
+    this.playback.setSpeed(speed, performance.now());
+    this.sample();
   }
 
-  private direction = 1;
-
-  /**
-   * 1 is forward, -1 is reverse.
-   * @see https://github.com/airbnb/lottie-web#setdirectiondirection
-   */
   setDirection(direction: 1 | -1) {
-    this.direction = direction;
-    this.animations.forEach((animation) => {
-      animation.setPlaybackRate(direction);
-    });
+    if (this.destroyed) return;
+    this.playback.setDirection(direction, performance.now());
+    this.sample();
   }
 }

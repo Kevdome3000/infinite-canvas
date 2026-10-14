@@ -2,6 +2,7 @@
 outline: deep
 description: 'Implement selection tools.'
 ---
+
 <script setup>
 import MultiSelection from '../components/MultiSelection.vue'
 import Lasso from '../components/Lasso.vue'
@@ -151,15 +152,22 @@ First, convert the point coordinates from the viewport coordinate system to the 
 ```ts
 import simplify from 'simplify-js';
 
-let lassoPath = super
+const lassoPath = super
     .getCurrentTrail()
-    ?.originalPoints?.map((p) => ({ x: p[0], y: p[1] }));
+    ?.originalPoints?.map(([x, y]) => this.api.viewport2Canvas({ x, y }));
 
 const simplifyDistance = 5 / this.api.getAppState().cameraZoom;
-selectByLassoPath(simplify(lassoPath, simplifyDistance).map((p) => [p.x, p.y]));
+const points = simplify(lassoPath, simplifyDistance).map((p) => [p.x, p.y]);
+// Hit-test the current path as it changes for preview, and again on pointerup
+// before clearing the trail to commit the final selection.
+const selected = selectByLassoPath(this.api, points);
 ```
 
 <Lasso />
+
+Drag around the shapes to preview hits immediately: outlines appear or disappear as the lasso changes. The unfinished lasso closes automatically back to its starting point for hit testing. Release to commit the final selection in one undo step. Press Escape, cancel the touch gesture, start a pinch, or switch tools to clear the preview without selecting. Taps and tiny movements do not select anything. Choose the lasso tool again for another selection. Mask drawing mode creates its path only on release and does not preview shape selection.
+
+Hit testing uses world coordinates, including each shape's parent transforms, rotation and flips. Open polylines are tested segment by segment without an implicit closing edge. Locked and hidden shapes are excluded.
 
 ### Intersection detection of polygons {#polygon-intersection}
 
@@ -187,7 +195,7 @@ function selectByLassoPath(api: API, lassoPath: [number, number][]) {
         lassoBounds[3],
     );
 
-    // TODO: filter locked elements
+    // elementsFromBBox excludes locked elements; also filter UI and hidden nodes.
 }
 ```
 

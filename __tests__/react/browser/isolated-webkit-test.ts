@@ -1,25 +1,72 @@
-import { test as base } from '@playwright/test';
+import type { CDPSession } from '@playwright/test';
+import { test as base } from '../../isolated-webkit-test';
 
-// Long sequences of canvas pages stall during initialization/teardown when CI
-// reuses one Linux WebKit process. Give each WebKit case its own browser process
-// while preserving the normal Chromium fixture. Playwright applies the configured
-// device/context defaults and records traces for the contexts created here.
+// Preserve WebKit's per-test browser isolation. Record a bounded event trail
+// because Chromium can report a destroyed execution context without navigation.
 export const test = base.extend({
-  context: async ({ context, browserName, playwright }, use) => {
-    if (browserName !== 'webkit') {
-      await use(context);
-      return;
-    }
-    const browser = await playwright.webkit.launch();
-    try {
-      const isolated = await browser.newContext();
+  page: async ({ page, browserName }, use, testInfo) => {
+    const started = Date.now();
+    const events: { elapsed: number; type: string; detail: unknown }[] = [];
+    const record = (type: string, detail: unknown = null) => {
+      events.push({ elapsed: Date.now() - started, type, detail });
+      if (events.length > 50) events.shift();
+    };
+    page.on('framenavigated', (frame) => {
+      if (frame === page.mainFrame())
+        record('navigation', frame.url().slice(0, 1000));
+    });
+    page.on('close', () => record('close'));
+    page.on('crash', () => record('crash'));
+    page.on('pageerror', (error) =>
+      record('page-error', error.message.slice(0, 1000)),
+    );
+    page.on('console', (message) => {
+      if (message.text().startsWith('[vite]'))
+        record('vite', message.text().slice(0, 1000));
+    });
+    page.on('requestfailed', (request) =>
+      record('request-failed', {
+        url: request.url().slice(0, 1000),
+        error: request.failure()?.errorText,
+      }),
+    );
+    let session: CDPSession | undefined;
+    if (browserName === 'chromium') {
       try {
-        await use(isolated);
-      } finally {
-        await isolated.close();
+        session = await page.context().newCDPSession(page);
+        session.on('Runtime.executionContextDestroyed', (event) =>
+          record('context-destroyed', event),
+        );
+        session.on('Runtime.executionContextsCleared', () =>
+          record('contexts-cleared'),
+        );
+        await session.send('Runtime.enable');
+      } catch (error) {
+        record('diagnostic-unavailable', String(error).slice(0, 1000));
       }
+    }
+    try {
+      await use(page);
     } finally {
-      await browser.close();
+      if (testInfo.status !== testInfo.expectedStatus) {
+        // Use only host-side state: page.evaluate() can fail or hang precisely
+        // when this attachment is needed. Keep the original test failure.
+        await testInfo.attach('browser-lifecycle', {
+          body: JSON.stringify(
+            {
+              browser: browserName,
+              url: page.url().slice(0, 1000),
+              closed: page.isClosed(),
+              connected: page.context().browser()?.isConnected(),
+              events,
+            },
+            null,
+            2,
+          ),
+          contentType: 'application/json',
+        });
+      }
+      await session?.detach().catch(() => {});
     }
   },
 });

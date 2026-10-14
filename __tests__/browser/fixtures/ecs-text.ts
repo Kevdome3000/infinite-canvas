@@ -4,6 +4,7 @@ import {
   Text,
   Pen,
   ComputedBounds,
+  ComputedTextMetrics,
   Transformable,
   App,
   Canvas,
@@ -156,6 +157,7 @@ editor.appState = api.getAppState();
 editor.requestUpdate();
 window.textTest = {
   api,
+  dispose: () => app.exit(),
   counts: () => ({ draws, uploads, rasterMs }),
   resetCounts: () => {
     draws = 0;
@@ -163,6 +165,9 @@ window.textTest = {
     rasterMs = 0;
   },
   rendered,
+  lines: () => [
+    ...api.getEntity(api.getNodeById('text')!).read(ComputedTextMetrics).lines,
+  ],
   async render(attrs = {}) {
     await api.edit(() => {
       api.deleteNodesById(['text']);
@@ -227,9 +232,11 @@ declare global {
   interface Window {
     textTest: {
       api: API;
+      dispose: () => Promise<void>;
       counts: () => { draws: number; uploads: number; rasterMs: number };
       resetCounts: () => void;
       rendered: () => Promise<void>;
+      lines: () => string[];
       render: (
         attrs?: Partial<
           import('@infinite-canvas-tutorial/ecs').TextSerializedNode

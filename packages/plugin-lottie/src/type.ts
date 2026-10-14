@@ -611,6 +611,20 @@ export type EllipseShape = ShapeElement & {
   s: MultiDimensional;
 };
 
+export type PolyStarShape = ShapeElement & {
+  /** 1 = star, 2 = polygon. */
+  sy: 1 | 2;
+  /** 3 reverses path winding. */
+  d?: number;
+  pt: Value;
+  p: MultiDimensional;
+  r: Value;
+  or: Value;
+  os: Value;
+  ir?: Value;
+  is?: Value;
+};
+
 export type MultiDimensional = {
   /**
    * number[]: Non-animated value.
@@ -699,7 +713,10 @@ export type TransformShape = ShapeElement & {
 
 export type RepeatShape = ShapeElement & {
   c: Value;
-  tr: Transform;
+  o?: Value;
+  /** Composite copies above (1) or below (2) the original. */
+  m?: 1 | 2;
+  tr: Transform & { so?: Value; eo?: Value };
 };
 
 export type TrimShape = ShapeElement & {

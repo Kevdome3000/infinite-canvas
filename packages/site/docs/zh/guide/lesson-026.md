@@ -4,6 +4,7 @@ description: '实现选择工具。'
 head:
     - ['meta', { property: 'og:title', content: '课程 26 - 选择工具' }]
 ---
+
 <script setup>
 import MultiSelection from '../../components/MultiSelection.vue'
 import Lasso from '../../components/Lasso.vue'
@@ -153,15 +154,22 @@ if (input.key === 'Escape') {
 ```ts
 import simplify from 'simplify-js';
 
-let lassoPath = super
+const lassoPath = super
     .getCurrentTrail()
-    ?.originalPoints?.map((p) => ({ x: p[0], y: p[1] }));
+    ?.originalPoints?.map(([x, y]) => this.api.viewport2Canvas({ x, y }));
 
 const simplifyDistance = 5 / this.api.getAppState().cameraZoom;
-selectByLassoPath(simplify(lassoPath, simplifyDistance).map((p) => [p.x, p.y]));
+const points = simplify(lassoPath, simplifyDistance).map((p) => [p.x, p.y]);
+// 路径变化时检测命中并显示预览；松手时再次检测，
+// 在清除轨迹前提交最终选区。
+const selected = selectByLassoPath(this.api, points);
 ```
 
 <Lasso />
+
+按住并拖动以圈住图形，绘制过程中即可看到命中图形的轮廓高亮；套索范围变化时，高亮也会同步增加或移除。命中检测会将尚未闭合的套索连接回起点。松手后提交最终选区，撤销一次即可还原。按 Escape、取消触摸、开始双指缩放或切换工具，都会清除预览而不提交选择。点击和轻微移动不会误触发选择。再次圈选时，重新点击套索工具即可。遮罩绘制模式仍只在松手后创建路径，不显示图形选择预览。
+
+命中检测使用世界坐标，包含图形及父节点的旋转、缩放与翻转。开放折线逐段检测，不会增加虚构的闭合边。锁定和隐藏的图形不会被选中。
 
 ### 多边形的相交性检测 {#polygon-intersection}
 
@@ -189,7 +197,7 @@ function selectByLassoPath(api: API, lassoPath: [number, number][]) {
         lassoBounds[3],
     );
 
-    // TODO: filter locked elements
+    // elementsFromBBox excludes locked elements; also filter UI and hidden nodes.
 }
 ```
 

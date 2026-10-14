@@ -3,7 +3,13 @@ import { defineConfig, devices } from '@playwright/test';
 export default defineConfig({
   testDir: './__tests__/browser',
   testMatch: '*.spec.ts',
-  testIgnore: 'touch-webkit.spec.ts',
+  // These suites target retired core/lesson packages. Their consumed-engine
+  // equivalents remain in ecs-text-path and ecs-dash-rendering.
+  testIgnore: [
+    'touch-webkit.spec.ts',
+    '**/text-path.spec.ts',
+    '**/dash-rendering.spec.ts',
+  ],
   outputDir: '.test-results/browser',
   timeout: 30000,
   fullyParallel: false,

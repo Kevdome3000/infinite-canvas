@@ -6,7 +6,7 @@ import { JSDOM } from 'jsdom';
 import { XMLSerializer, DOMParser } from '@xmldom/xmldom';
 import GraphemeSplitter from 'grapheme-splitter';
 import parsePNG from 'pngparse-sync';
-import { Adapter } from '../packages/core/src/environment';
+import type { Adapter } from '../packages/ecs/src/environment/adapter';
 
 /** One JSDOM per Jest worker so MouseEvent/CustomEvent share a realm with mocked canvases. */
 let testJsdom: JSDOM | null = null;

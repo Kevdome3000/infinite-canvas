@@ -1,9 +1,24 @@
 import { Entity, field, Type } from '@lastolivegames/becsy';
 
-export class Input {
-  @field.int32.vector(2) declare pointerClient: [number, number];
+export interface PointerSample {
+  phase: 'down' | 'move' | 'up';
+  x: number;
+  y: number;
+  timeStamp: number;
+  pressure: number;
+  pointerType: 'mouse' | 'touch' | 'pen';
+}
 
-  @field.int32.vector(2) declare pointerViewport: [number, number];
+export class Input {
+  /** Active-pointer samples since the previous frame, in viewport CSS pixels. */
+  @field({ type: Type.object, default: [] })
+  declare pointerSamples: PointerSample[];
+
+  // PointerEvent and CSS transforms provide subpixel coordinates. Truncating
+  // either end of a gesture shifts resize anchors and snapping thresholds.
+  @field.float64.vector(2) declare pointerClient: [number, number];
+
+  @field.float64.vector(2) declare pointerViewport: [number, number];
 
   @field.boolean declare pointerDownTrigger: boolean;
 
@@ -12,7 +27,7 @@ export class Input {
   /** Remains cancelled until the next press, including across render frames. */
   @field.boolean declare pointerCancelled: boolean;
 
-  @field.int32.vector(2) declare pointerDownViewport: [number, number];
+  @field.float64.vector(2) declare pointerDownViewport: [number, number];
 
   @field.boolean declare pointerInside: boolean;
 
@@ -63,7 +78,7 @@ export class InputPoint {
   /**
    * In viewport coordinates.
    */
-  @field.int32.vector(2) declare prevPoint: [number, number];
+  @field.float64.vector(2) declare prevPoint: [number, number];
 
   /**
    * Canvas target.

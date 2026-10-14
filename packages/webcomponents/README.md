@@ -199,9 +199,27 @@ empty insertion, cancellation, or canvas destruction. It rejects on edit errors.
 does not guarantee a rendered frame or rollback on failure.
 
 Clipboard insertion and `createImageFromFile()` await this commit. The image
-method retains its prepared-node return value; the helper's boolean result can
-be used when callers need an explicit cancellation result. Pending insertions
-cannot change a destroyed canvas or a replacement canvas.
+method resolves with the inserted node and accepts an optional `signal` alongside
+`position` and `heuristicResize`. Cancellation or canvas destruction before
+commit rejects with `AbortError`; other preparation and edit errors propagate.
+Coordinates are copied before asynchronous preparation, and the temporary bitmap
+used for measuring dimensions is released. Upload failure still falls back to
+the local data URL. Cancellation discards late results; it does not guarantee
+cancellation of an underlying decoder, file picker, or upload request.
+
+The Spectrum image tool captures its canvas and viewport center when opened.
+After a file is chosen, it restores the selection tool before preparing and
+committing the image, so the ECS selection system retains the inserted image's
+selection. Tool changes, API replacement, disconnection, and canvas destruction
+cancel the pending toolbar request. An older request cannot reset a newer tool
+or insert into another canvas. Context changes cancel synchronously, including a
+tool change queued before image insertion in the same ECS frame. Tool restoration never records document history;
+image insertion and selection remain one undo step. Toolbar keyboard listeners
+are removed on disconnection, API replacement, and destruction, and rebound on
+reconnection, retaining the last drawing tool for each canvas. Browsers without
+the File System Access API open a native file input with `click()` rather than
+relying on WebKit's incomplete file `showPicker()` support. Change and cancel
+events remove the temporary input without focus timers or polling.
 
 ### Asynchronous image edits
 
@@ -345,6 +363,32 @@ destruction cancel pending coupling commands.
 It retains a non-recording next-tick callback: even `api.edit(callback, { capture: 'NEVER' })`
 would advance the document history baseline and consume unrelated pending changes.
 This migration preserves the core API's no-rollback contract.
+
+### Crop panel sessions
+
+Crop aspect, image scale, and apply/exit controls submit through `api.edit()`.
+Each effective input produces one undo entry; nested aspect-menu events are
+handled once. The session retains its canvas, clip, and child entity identities.
+Switching targets (even with the same selection count), exiting/re-entering crop,
+changing tools, deleting/reparenting/replacing a target, undo/redo, disconnection,
+API replacement, or destruction invalidates pending commands. Context updates
+invalidate synchronously, including earlier edits in the same ECS frame. An exit
+already writing completes its single commit while cancelling later commands.
+
+Scale is relative to the image's dimensions when the session begins (1–4 times),
+retaining its aspect ratio and current geometric center. Aspect commands use live
+geometry and preserve image placement under rotated/flipped clip transforms.
+Original uses the image's bounding rectangle in clip coordinates. Geometry
+controls require one rectangular child with finite, positive dimensions and a
+nonsingular transform; multi-child crops can still be applied or exited together.
+Invalid, unchanged, or stale commands do not advance history; failed commands
+restore the scale control and can be retried. Core crop exit safely ignores absent
+or deleted targets.
+
+`cancelCrop()` and Escape retain their existing behavior of exiting with the
+current crop geometry. Undo restores earlier edits; full draft rollback and
+coalescing a continuous scale gesture into one history entry are separate work.
+The core edit API still does not roll back partial mutations on failure.
 
 ### Queued layer commands
 
