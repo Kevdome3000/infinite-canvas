@@ -1,4 +1,4 @@
-> Tolaria fork maintainers: read the [fork-sync handoff and workaround retirement guide](docs/tolaria-fork-sync.md) before the next upstream reconciliation.
+> Tolaria fork maintainers: read the [fork-sync handoff and workaround retirement guide](docs/tolaria-fork-sync.md) before the next upstream reconciliation. Reconciled through upstream `b81a5fe8` (2026-10-15).
 
 # An Infinite Canvas Tutorial
 
