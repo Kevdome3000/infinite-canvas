@@ -8,6 +8,7 @@ import Cube from '../components/Cube.vue'
 import CubePerspective from '../components/CubePerspective.vue'
 import Lighting from '../components/Lighting.vue'
 import GltfDuck from '../components/GltfDuck.vue'
+import SvgExtrusion from '../components/SvgExtrusion.vue'
 </script>
 
 # Lesson 39 - 3D Mesh Rendering
@@ -174,12 +175,65 @@ This keeps “what you see is what you pick” when panning/zooming the infinite
 
 ### Drag constraints
 
-After a gizmo hit, **`Pick3D.handleDrag`** keeps casting a ray each frame and intersects it with a **constraint plane** (`intersectRayWithPlane`):
+A gizmo press creates a `GizmoSession` with the initial pose and a fixed projection.
+For ordinary cameras, pointer movement intersects a ray with the active constraint
+plane. Linked cameras invert the displayed handle projection, including its Z
+screen offset. Translation follows the selected axis or plane; rotation follows
+the local ring axis. Invalid or degenerate samples leave the preview unchanged.
 
--   **Translate** (arrow / plane): plane normal follows the active axis or plane widget.
--   **Rotate** (ring): plane normal is the ring’s rotation axis; angle delta comes from `angleOnRotationPlane`.
+The session updates runtime components during movement. On release, a declarative
+source publishes one document edit and one undo entry. Escape, pointer cancellation
+or leaving the canvas restores the starting pose without recording an edit.
 
-The delta from the initial hit point (`dragHitStart`) is written back to **`Transform3D`**.
+Changing the active camera, its projection/view, or the canvas size cancels a
+held gesture. External edits to the source's pose, geometry, or an ancestor's
+transform also cancel it: the runtime preview returns to the **current document**,
+so an old pointer release cannot overwrite an API edit or undo. Unrelated edits,
+such as names and colors, can merge with a drag that continues normally. Changes
+on another canvas do not interrupt it. Press a handle again to start in the new view.
+
+Computed layout is also part of the gesture context. Yoga can change a source's
+position or size without changing those document fields; these changes, including
+ancestor transforms, cancel the preview. Cancellation preserves the new layout
+and restores only coordinates still owned by the preview. Escape on an otherwise
+unchanged layout returns to the computed starting position, even when it differs
+from the document. The session's own preview writes do not invalidate it.
+
+`GizmoSourceFrame` snapshots local source/ancestor geometry, avoiding false
+interruptions from delayed world-matrix updates. While a pointer session owns
+the source preview, companion synchronization does not write that source again.
+Integrations that manipulate a companion directly retain their reverse sync.
+
+Unchanged frames do not rewrite companion transforms or materials, and pose or
+material edits reuse generated CPU geometry. Geometry configuration changes
+invalidate that cache independently.
+
+`MeshPipeline3D` also reuses GPU vertex, normal, UV, index and per-mesh uniform
+buffers during pose/material edits. Only `Mesh3D` writes invalidate geometry;
+when editing arrays directly, acquire the component with `entity.write(Mesh3D)`
+first. The cache consumes those writes after companion synchronization, retains
+them across skipped draws, and uploads the replacement once on the next draw.
+Each canvas owns its cache and scene uniforms. Removing a mesh or moving it to
+another canvas releases the old buffers, and disposing the canvas releases its
+resources before the device. Failed allocations are rolled back and can be
+retried without replacing the previous complete cache entry.
+
+Model and normal matrices are recalculated only when the pose changes. Model
+uniform uploads also skip unchanged frames and camera-only changes; material
+edits and completed texture loads update the uniforms without rebuilding those
+matrices. In-place edits to transform/color arrays are compared by value.
+
+Scene uniforms are cached per canvas. Camera and linked 2D view changes update
+scene matrices; light changes repack lighting without rebuilding those matrices.
+Unchanged draws reuse both the scene data and each mesh's draw bindings. Texture
+readiness or replacement, geometry rebuilds and GPU resource replacement invalidate
+the affected bindings. Bindings are released before the buffers and textures they
+reference. Failed scene uploads and binding allocations remain retryable.
+
+The 3D layer list follows ECS geometry, metadata, scope and membership changes,
+instead of scanning every mesh each idle frame. Selection membership is tracked
+separately, so hovering gizmo handles does not rebuild the list. Layer entries
+retain stable entity references for later selection, including after undo/redo.
 
 See [3D transform Gizmo](#gizmo) for handle colors, axes, and the full pointer flow.
 
@@ -191,16 +245,18 @@ With the **Select tool** (`penbarSelected === Pen.SELECT`), clicking a 3D mesh a
 
 ```plaintext
 pointer down (Select tool)
-  └─ Pick3D.handlePointerDown
-       ├─ probePick3DAtViewport: gizmo first, then Mesh3D
-       ├─ hit gizmo → record activeAxis, dragHitStart, dragging = true
-       └─ hit mesh → add Selected3D; miss → remove existing Selected3D
+  └─ Pick3D: probe gizmo first, then Mesh3D
+       ├─ hit gizmo → capture pose/projection, create GizmoSession
+       └─ hit mesh → select; miss → clear selection
 
 pointer move (held)
-  └─ Pick3D.handleDrag: ray vs constraint plane, delta = current hit − dragHitStart
+  └─ GizmoSession.update → constrained runtime preview
 
 pointer up
-  └─ end drag, clear activeAxis / dragHitStart
+  └─ finish(true) → publish source pose once, record history
+
+Escape / pointer cancel / leave
+  └─ finish(false) → restore pose, clear gesture state
 ```
 
 ### Coordinates and handle meaning {#gizmo-axes}
@@ -220,6 +276,93 @@ Consistent with [Unified 3D space](#unified-space), the gizmo uses **canvas coor
 -   Drag **arrow / plane** → updates `Transform3D.translation`; drag **ring** → updates `Transform3D.rotation` (local Euler angles, same as the mesh).
 -   Rings follow the object’s current orientation; arrows stay in canvas world axes (X right, Y down, Z depth).
 -   Picking uses screen-space **nearest** hit; when overlapping, arrows are on top so translate wins. `scale` is reserved for later.
+
+### Editing extruded rectangles {#extrude-editing}
+
+A `rect` with `extrude3d` uses the same gizmo as a declarative mesh. Its serializable
+options now include elevation and a local 3D rotation:
+
+```ts
+const node: RectSerializedNode = {
+    id: 'extruded-card',
+    type: 'rect',
+    zIndex: 0,
+    x: 100,
+    y: 80,
+    width: 160,
+    height: 100,
+    extrude3d: { depth: 80, z: 20, rotation: [0.2, 0.3, 0] },
+    fills: [{ type: 'solid', value: '#3377dd' }],
+};
+```
+
+-   XY translation writes the source rectangle's `x`/`y` in its parent's coordinates,
+    including rotated, scaled or flipped parents. A singular parent transform rejects
+    the preview because its inverse does not exist.
+-   Z translation changes `extrude3d.z`, preserving `depth`. With zero 3D rotation,
+    `z` is the front plane's elevation; the companion center is at `z - depth / 2`.
+-   Ring rotation writes `extrude3d.rotation`: XYZ Euler angles in radians, relative
+    to the source's existing world-space 2D rotation. It leaves the source's 2D
+    `rotation` intact. The companion composes `Rz(sourceAngle) × Rx(x) × Ry(y) × Rz(z)`.
+
+Release commits once; cancellation restores the preview. Undo/redo and document
+reload restore the same pose. Disabling extrusion or replacing its companion
+interrupts the gesture and restores the current document instead of recreating
+an obsolete companion.
+
+`extrude3d: true` still means a depth of 100, and a number still specifies depth.
+Object values default to depth 100, elevation 0 and rotation `[0, 0, 0]`. An update
+replaces the whole option value: omitted fields return to those defaults. There
+are no scale handles yet; use rectangle dimensions and `depth` to change size.
+The existing world-AABB-based extrusion footprint is unchanged, so this does not
+add exact extrusion geometry for sheared or rotated rectangular footprints.
+
+### Extruding a closed Path {#extrude-path}
+
+A closed Path with one solid fill can use the same `extrude3d` option. Its front
+and back faces follow the filled contours, including holes; editing `d` or
+`fillRule` rebuilds the mesh while moving or rotating the source reuses it.
+
+```ts
+const vector: PathSerializedNode = {
+    id: 'extruded-vector',
+    type: 'path',
+    zIndex: 0,
+    x: 100,
+    y: 80,
+    d: 'M100 80 L200 80 L200 180 L100 180 Z M125 105 L125 155 L175 155 L175 105 Z',
+    fillRule: 'evenodd',
+    fills: [{ type: 'solid', value: '#3377dd' }],
+    extrude3d: { depth: 40, z: 0 },
+};
+```
+
+All subpaths must be closed. Open paths, stroke layers, multiple or non-solid
+fills, non-manifold contours and sheared transforms remain visible in 2D. The
+Path keeps its original document node and supports gizmo edits, undo and reload.
+SVG `<path>` and `<polygon>` elements can be imported as extrusion sources with
+`svgElementsToExtrudedNodes`. The helper preserves other imported shapes in 2D;
+invalid depth is rejected instead of silently changing it to a default.
+
+```ts
+import { svgElementsToExtrudedNodes } from '@infinite-canvas-tutorial/ecs';
+
+const svg = new DOMParser().parseFromString(source, 'image/svg+xml');
+const nodes = svgElementsToExtrudedNodes(
+    Array.from(svg.documentElement.children) as SVGElement[],
+    40,
+);
+api.updateNodes(nodes);
+```
+
+The converter accepts closed contours with one solid fill and no visible stroke;
+SVG's `stroke="none"` placeholder is ignored. It preserves `fill-rule`, including
+`evenodd` holes. Open contours, stroked shapes, gradients and unsupported SVG
+shapes remain in 2D. Shearing a Path on the canvas also keeps it in 2D. SVG
+transforms and viewBox scaling follow the existing importer, which does not
+faithfully preserve shear; avoid sheared SVG input until that importer supports it.
+
+<SvgExtrusion />
 
 ## Lighting {#lighting}
 

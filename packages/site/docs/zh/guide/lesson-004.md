@@ -453,6 +453,8 @@ function moveCamera(e: MouseEvent) {
 
 可以回到页面顶部的例子中，尝试拖拽画布。
 
+ECS 画布还支持滚轮和双指触摸平移。这些位移以视口像素为单位，改变相机位置前需要按当前旋转角转换到世界坐标，再除以缩放值。双指移动时取相反的相机位移，让画布跟随手指。如果同一帧还发生了捏合缩放，应在更新后的相机变换上继续应用平移。
+
 ### 旋转 {#rotation}
 
 旋转对于画布来说显然不是一个重要的特性，但一位 FigJam 用户在论坛提过能否支持：[Rotate canvas]，因为画布稍稍旋转一定角度更符合自己平时的使用习惯。
@@ -474,6 +476,8 @@ function handleMouseMove(e: MouseEvent) {
 ```
 
 在旋转相机模式下，鼠标移动的距离将作为旋转角度。接下来构造世界坐标系下绕指定点旋转的变换矩阵，可以参考 [transform-origin]，然后对相机矩阵应用这个变换，最后从矩阵中提取各个参数：
+
+按下时的指针坐标需要保存为独立的值；跨帧持有 ECS 输入向量的实时引用会使旋转手势失效。
 
 ```ts
 function rotateCamera(e: MouseEvent) {
@@ -657,6 +661,8 @@ if (duration === 0) {
 this.cancelLandmarkAnimation();
 
 let timeStart: number | undefined;
+const startPosition: vec2 = [this.#x, this.#y];
+const startZoomRotation: vec2 = [this.zoom, this.#rotation];
 const destPosition: vec2 = [x, y];
 const destZoomRotation: vec2 = [zoom, rotation];
 const animate = (timestamp: number) => {
@@ -690,8 +696,8 @@ const t = EASING_FUNCTION[easing](elapsed / duration);
 const interPosition = vec2.create();
 const interZoomRotation = vec2.fromValues(1, 0);
 
-vec2.lerp(interPosition, [this.#x, this.#y], destPosition, t);
-vec2.lerp(interZoomRotation, [this.zoom, this.#rotation], destZoomRotation, t);
+vec2.lerp(interPosition, startPosition, destPosition, t);
+vec2.lerp(interZoomRotation, startZoomRotation, destZoomRotation, t);
 
 this.#x = interPosition[0];
 this.#y = interPosition[1];
@@ -700,11 +706,13 @@ this.#rotation = interZoomRotation[1];
 this.updateMatrix();
 ```
 
-这里还有一个小优化点，过程中可以计算相机位置的偏移量，如果距离小于阈值则没必要进行后续的动画了，直接结束：
+动画开始时只记录一次起始状态。若每帧都从已更新的相机状态插值，缓动曲线会改变，结果也会依赖帧率。只有位置和缩放／旋转都达到目标值时才能提前结束；仅检查位置会跳过只改变缩放的动画：
 
 ```ts
-const dist = vec2.dist(interPosition, destPosition);
-if (dist <= EPSILON) {
+if (
+  vec2.dist(interPosition, destPosition) <= EPSILON &&
+  vec2.dist(interZoomRotation, destZoomRotation) <= EPSILON
+) {
     endAnimation();
     return;
 }

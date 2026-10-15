@@ -4,12 +4,14 @@ import reactConfig from './playwright.react.config';
 export default defineConfig({
   ...reactConfig,
   testMatch: [
+    'runtime-capacity.spec.ts',
     'mobile.spec.ts',
     'text-edits.spec.ts',
     'drawing-preferences.spec.ts',
     'design-variable-edits.spec.ts',
     'theme-preferences.spec.ts',
     'selection-edits.spec.ts',
+    'selection-layout.spec.ts',
     'image-tool.spec.ts',
     'crop-edits.spec.ts',
   ],

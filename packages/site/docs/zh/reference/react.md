@@ -548,6 +548,10 @@ Promise 成功表示编辑已提交，不等待画面渲染，也不等待图片
 
 ## 框架接入示例
 
+使用 `renderer="webgpu"` 且省略 `shaderCompilerPath` 时，会按需加载 device 包内配套的编译器。
+Vite 依赖预打包配置和自定义 URL 的用法见 [WebGPU 编译器配置](/zh/reference/create-app#shader-compiler)。
+WebGL 和 SSR 不会加载该编译器。
+
 [Vite 和 Next.js 最小示例](https://github.com/xiaoiver/infinite-canvas-tutorial/tree/master/examples)
 包含 Provider、初始场景、响应式图形计数和撤销/重做工具栏。
 Next.js 示例在 Server Component 页面中使用 Client Component 编辑器，支持 SSR 加载占位。
@@ -597,6 +601,33 @@ export function Compare() {
 StrictMode 的立即挂载、清理、再次挂载会复用正在启动的 App。
 
 React children 会放入 Web Component 的 light DOM，可使用已有的具名 slot。
+
+## ECS 容量
+
+对于规模有限的场景，可以通过 `appOptions` 减少 ECS 启动时的内存分配：
+
+```tsx
+const runtime = createCanvasRuntime({
+    appOptions: {
+        maxEntities: 16_384,
+        maxLimboComponents: 32_768,
+    },
+});
+
+<InfiniteCanvas runtime={runtime} style={{ height: 400 }} />;
+```
+
+使用同一个运行时的所有画布共享容量预算，其中也包含内部实体。
+`maxEntities` 默认为 `4_194_304`；`maxLimboComponents` 默认等于 `maxEntities`，
+限制等待回收的已移除组件数量。这些上限不会自动增长，需要为场景增长和批量删除留出余量；
+`16_384` 只是示例值，并非适合所有应用的推荐上限。范围与容量估算请参阅
+[ECS 容量配置](/zh/reference/create-app#ecs-capacity)。
+
+配置在调用 `createCanvasRuntime()` 时复制，每次 App 重启都使用同一份配置。
+如需修改，应卸载所有画布并创建新的运行时。创建运行时仍可安全用于 SSR：
+依赖加载、内存分配和参数校验都推迟到获取运行时租约时执行。
+无效参数会使 `acquire().ready` 拒绝；`<InfiniteCanvas>` 通过 `onError` 和
+`renderError` 报告这一启动错误。
 
 ## 异步准备
 

@@ -173,15 +173,16 @@ class Bootstrap extends System {
   initialize() {
     commands = new Commands(this);
     create('left');
-    // Additional collaboration tabs only use the left canvas. Avoid starting
-    // an unrelated WebGL context in each replica; lifecycle cases keep both.
+    // Collaboration tabs only use the left canvas. Avoid starting an unrelated
+    // WebGL context in each replica; lifecycle cases keep both.
     if (!new URLSearchParams(location.search).has('single-canvas')) {
       create('right');
     }
   }
 }
 window.lifecycleProbes?.capturePageListeners();
-const app = new App().addPlugins(
+// This fixture has a bounded scene; every canvas shares this entity budget.
+const app = new App({ maxEntities: 16_384 }).addPlugins(
   ...DefaultPlugins,
   ...(new URLSearchParams(location.search).has('yoga') ? [YogaPlugin] : []),
   () => {
@@ -287,7 +288,11 @@ const harness = {
     const slot = slots.values().next().value as Slot | undefined;
     if (slot) await settleECSFrames(slot.api);
   },
-  setScene(side: Side, nodes: SerializedNode[], selectedIds: string | string[]) {
+  setScene(
+    side: Side,
+    nodes: SerializedNode[],
+    selectedIds: string | string[],
+  ) {
     return act(side, ({ api }) => {
       api.replaceDocument(nodes);
       api.setAppState({ penbarSelected: Pen.SELECT });

@@ -418,10 +418,19 @@ export interface FilterAttributes {
 
 import type { Mesh3DNodeGeometry } from '../components/geometry3d/Mesh3DNode';
 
-/** Spline-style 3D extrusion of a rect layer (canvas x/y/width/height). */
+/** 3D extrusion of a supported 2D layer (rect or closed Path). */
 export interface Extrude3DAttributes {
-  /** `true` uses default depth; number sets depth in canvas world units. */
-  extrude3d?: boolean | number;
+  /** `true` uses default depth; number sets depth; object also stores a 3D pose. */
+  extrude3d?: boolean | number | Extrude3DOptions;
+}
+
+export interface Extrude3DOptions {
+  /** Thickness in canvas world units. Defaults to 100. */
+  depth?: number;
+  /** Elevation relative to the original front plane; independent of thickness. */
+  z?: number;
+  /** Local XYZ Euler rotation, in radians, composed after the source's 2D rotation. */
+  rotation?: [number, number, number];
 }
 
 export type Camera3DNodeConfig = {
@@ -610,6 +619,7 @@ export interface PathSerializedNode
   Partial<WireframeAttributes>,
   Partial<MarkerAttributes>,
   Partial<FilterAttributes>,
+  Partial<Extrude3DAttributes>,
   Partial<BindingAttributes>,
   Partial<BindedAttributes> { }
 

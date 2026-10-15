@@ -15,7 +15,7 @@ import {
   deserializeBrushPoints,
 } from '../utils';
 import { hasRasterPostEffects } from '../utils/filter';
-import { resolveExtrude3DDepth } from '../utils/extrude3d';
+import { extrude3DFromWire } from '../utils/extrude3d';
 import {
   rebuildMesh3DNodeCompanionGeometry,
   syncMesh3DNodeCompanionFromSource,
@@ -36,8 +36,11 @@ import type {
   SerializedFillLayerItem,
   Light3DNodeSerializedNode,
   Mesh3DNodeSerializedNode,
+  PathSerializedNode,
+  RectSerializedNode,
   SerializedNode,
   SerializedNodeAttributes,
+  TextSerializedNode,
   StrokeAttributes,
 } from '../types/serialized-node';
 import { API } from '../API';
@@ -52,6 +55,7 @@ import {
   Ellipse,
   Rect,
   Text,
+  EdgeLabel,
   Opacity,
   DropShadow,
   Polyline,
@@ -91,6 +95,9 @@ import {
 } from '../components';
 import { getDescendants } from '../systems';
 import { syncEdgeBindingForEntity } from '../utils/binding/sync-edge-entity';
+import { getEdgeLabelPoints } from '../utils/deserialize/entity';
+import { layoutTextAnchoredInParent } from '../utils/edge-label';
+import { pointAndNormalAlongPolylineByT } from '../utils/polyline-arclength';
 import {
   buildIconFontScalablePrimitives,
   mapSvgLineCap,
@@ -1180,6 +1187,41 @@ export const mutateElement = <TElement extends Mutable<SerializedNode>>(
   const themeMode = api.getAppState().themeMode;
   const elNode = element as SerializedNode;
 
+  if (
+    elNode.type === 'text' &&
+    ('edgeLabelPosition' in updates || 'edgeLabelOffset' in updates)
+  ) {
+    const label = element as TextSerializedNode;
+    if (
+      label.edgeLabelPosition == null ||
+      Number.isNaN(label.edgeLabelPosition)
+    ) {
+      safeRemoveComponent(entity, EdgeLabel);
+    } else {
+      const position = label.edgeLabelPosition;
+      const offset = label.edgeLabelOffset ?? 0;
+      safeAddComponent(entity, EdgeLabel, {
+        labelPosition: position,
+        labelOffset: offset,
+      });
+      const parent = api.getNodeById(label.parentId);
+      const points = parent && getEdgeLabelPoints(parent);
+      if (points && points.length >= 2) {
+        const {
+          point: [px, py],
+          normal: [nx, ny],
+        } = pointAndNormalAlongPolylineByT(points, position);
+        const layout = layoutTextAnchoredInParent(
+          label,
+          px + nx * offset,
+          py + ny * offset,
+        );
+        Object.assign(element, layout);
+        updates = { ...updates, ...layout };
+      }
+    }
+  }
+
   const { name, visibility } = updates;
   const {
     parentId,
@@ -1204,6 +1246,7 @@ export const mutateElement = <TElement extends Mutable<SerializedNode>>(
     scaleY,
     points,
     d,
+    tessellationMethod,
     anchorX = 0,
     anchorY = 0,
     fontWeight = 'normal',
@@ -1304,7 +1347,7 @@ export const mutateElement = <TElement extends Mutable<SerializedNode>>(
     });
   }
   if ('strokeAlignment' in updates && !isIconFontWireNode) {
-    safeAddComponent(entity, Stroke, { alignment: strokeAlignment });
+    safeAddComponent(entity, Stroke, { alignment: strokeAlignment ?? 'center' });
   }
   if ('strokeDasharray' in updates && !isIconFontWireNode) {
     safeAddComponent(entity, Stroke, {
@@ -1728,6 +1771,11 @@ export const mutateElement = <TElement extends Mutable<SerializedNode>>(
       entity.write(Path).d = d;
     }
   }
+  if ('tessellationMethod' in updates && entity.has(Path)) {
+    entity.write(Path).tessellationMethod =
+      tessellationMethod ?? TesselationMethod.EARCUT;
+    safeAddComponent(entity, GeometryDirty);
+  }
   if ('vertices' in updates || 'segments' in updates || 'regions' in updates) {
     if (entity.has(VectorNetwork)) {
       const vn = entity.write(VectorNetwork);
@@ -1834,14 +1882,14 @@ export const mutateElement = <TElement extends Mutable<SerializedNode>>(
     safeAddComponent(entity, MaterialDirty);
   }
 
-  if ('extrude3d' in updates && entity.has(Rect)) {
-    const depth = resolveExtrude3DDepth(
-      (updates as { extrude3d?: boolean | number }).extrude3d,
+  if ('extrude3d' in updates && (entity.has(Rect) || entity.has(Path))) {
+    const extrude = extrude3DFromWire(
+      (elNode as RectSerializedNode | PathSerializedNode).extrude3d,
     );
-    if (depth === undefined) {
+    if (!extrude) {
       safeRemoveComponent(entity, Extrude3D);
     } else {
-      safeAddComponent(entity, Extrude3D, { depth });
+      safeAddComponent(entity, Extrude3D, extrude);
     }
   }
 

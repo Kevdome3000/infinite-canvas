@@ -76,6 +76,7 @@ import {
   Light3D,
   Mesh3D,
   Mesh3DNode,
+  Extrude3DTarget,
   Mesh3DNodeTarget,
   Material3D,
   Transform3D,
@@ -409,6 +410,7 @@ export class Select extends System {
             IconFontEllipseStrokeRasterPlaceholder,
             Filter,
             Mesh3DNode,
+            Extrude3DTarget,
             Mesh3DNodeTarget,
             Light3D,
             Extrude3D,
@@ -431,7 +433,7 @@ export class Select extends System {
     viewportX: number,
     viewportY: number,
   ): boolean {
-    if (is3DGizmoDragging()) {
+    if (is3DGizmoDragging(canvas)) {
       return true;
     }
     const probe = this.probePick3DAt(canvas, viewportX, viewportY);
@@ -444,7 +446,7 @@ export class Select extends System {
     viewportX: number,
     viewportY: number,
   ): boolean {
-    if (is3DGizmoDragging()) {
+    if (is3DGizmoDragging(canvas)) {
       return true;
     }
     const probe = this.probePick3DAt(canvas, viewportX, viewportY);
@@ -2086,6 +2088,17 @@ export class Select extends System {
           selected.read(Editable).isEditing;
         const [x, y] = input.pointerDownViewport;
 
+        // Gizmos render above the document. A handle can overlap a node's 2D
+        // bounds, where reselecting that node would remove Selected3D before
+        // Pick3D sees this press. Give the visible handle first refusal.
+        if (this.shouldSuppress2DMove(canvas, x, y)) {
+          selection.mode = SelectionMode.IDLE;
+          delete selection.resizePointerOffset;
+          selection.pointerMoveViewportX = NaN;
+          selection.pointerMoveViewportY = NaN;
+          return;
+        }
+
         if (!vectorNetworkEditing) {
           const allowPivot = input.pointerType !== 'touch' &&
             selection.mode === SelectionMode.READY_TO_MOVE_PIVOT;
@@ -2426,7 +2439,7 @@ export class Select extends System {
           selection.mode === SelectionMode.READY_TO_BRUSH ||
           selection.mode === SelectionMode.BRUSH
         ) {
-          if (is3DGizmoDragging()) {
+          if (is3DGizmoDragging(canvas)) {
             this.hideBrush(selection);
             selection.mode = SelectionMode.IDLE;
             return;
@@ -2434,7 +2447,7 @@ export class Select extends System {
           this.handleBrushing(api, x, y);
           selection.mode = SelectionMode.BRUSH;
         } else if (selection.mode === SelectionMode.MOVE) {
-          if (is3DGizmoDragging()) {
+          if (is3DGizmoDragging(canvas)) {
             return;
           }
           if (layersCropping.length > 0) {

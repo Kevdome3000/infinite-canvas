@@ -461,6 +461,10 @@ interface BindingAttributes {
 
 In the following example, we have defined anchor points `[1, 0]` and `[0, 1]` on the gray and green rectangles respectively.
 
+The endpoint coordinates `exitX/exitY` and `entryX/entryY` must be finite numbers. If either coordinate is invalid, the endpoint falls back to the shape perimeter instead of producing a non-finite path. Invalid pixel offsets (`exitDx/exitDy` or `entryDx/entryDy`) are ignored while a valid anchor remains fixed.
+
+With the arrow tool, click once to choose the source and move the pointer to preview the connection. The preview follows horizontal and vertical movement, including when either endpoint is on empty canvas. Click again to finish, or press Escape to cancel.
+
 <BindingConstraint />
 
 ## Routing rules {#routing rules}
@@ -671,6 +675,32 @@ if ((n - 1) % 3 === 0) {
 ```
 
 <BindingBezier />
+
+### Preserving editable curves {#editable-curves}
+
+An ECS `path` or `rough-path` with a single editable `Q` or `C` segment retains
+its control points when loading a document or updating its bindings. Moving a
+bound endpoint also moves its adjacent cubic control. When one quadratic connects
+both endpoints directly, its shared control moves by the average of their
+displacements. Moving both ends by the same amount therefore translates that
+curve without changing its shape.
+An unbound endpoint keeps its edited geometry even if a saved `sourcePoint` or
+`targetPoint` is stale. Rotation, reflection and scale are included when applying
+these changes. Routes with multiple Bezier segments continue to use the router.
+
+### Edge labels {#edge-labels}
+
+A child `text` node can use `edgeLabelPosition` to specify a position on its parent
+edge. Values are clamped to `[0, 1]`. `edgeLabelOffset` is a signed distance along
+the normal; positive values put the label below a horizontal edge running left to
+right. Editing either property updates the label immediately and supports undo,
+redo and document reload. Clearing `edgeLabelOffset` restores zero; clearing
+`edgeLabelPosition` disables automatic placement.
+
+Path labels currently interpolate along the polyline of command endpoints, using
+a chord for each curved segment. The supported commands include `H/V`, `S/T` and
+`A` as well as `L`, `Q` and `C`. This is an approximation of curve length, rather
+than exact placement along the curved contour.
 
 ## [WIP] Export SVG {#export-svg}
 

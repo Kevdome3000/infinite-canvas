@@ -218,6 +218,7 @@ type PostEffectChainPass = {
   effect: Effect;
   /** Kawase sub-pass kernel (pixels); only for blur chain steps. */
   kawaseKernel?: number;
+  uniformData?: Float32Array;
   liquidMetalPoissonAttempt?: boolean;
   heatmapPreprocessAttempt?: boolean;
   gemSmokePoissonAttempt?: boolean;
@@ -348,11 +349,10 @@ function postEffectUniformFloatCount(effect: Effect): number {
     case 'blur':
       return 8;
     case 'drop-shadow':
-      return 2;
     case 'fxaa':
-      return 1;
     default:
-      return 1;
+      // Even a scalar-only std140 block has a 16-byte minimum size.
+      return 4;
   }
 }
 
@@ -408,7 +408,7 @@ function setPostEffectUniformData(
   textureHeight?: number,
   device?: Device,
   kawaseKernel?: number,
-): void {
+): Float32Array {
   const count = postEffectUniformFloatCount(effect);
   const data = new Float32Array(count);
   let i = 0;
@@ -679,6 +679,7 @@ function setPostEffectUniformData(
       break;
   }
   buffer.setSubData(0, new Uint8Array(data.buffer));
+  return data;
 }
 
 type PostEffectBuildItem = {
@@ -838,10 +839,9 @@ export class DrawcallPostChain {
     this.state().filterVertexBuffer.destroy();
     this.state().filterIndexBuffer.destroy();
     this.state().filterUniformBuffer.destroy();
+    // Render targets own their attached texture (WebGL) or alias it (WebGPU).
     this.state().filterRenderTarget.destroy();
-    this.state().filterTexture.destroy();
     this.state().pingPongRenderTarget.destroy();
-    this.state().pingPongTexture.destroy();
     this.state().rainCodropsShinePlaceholder?.destroy();
     this.state().rainCodropsShinePlaceholder = undefined;
     this.state().rainFxAuxPlaceholder?.destroy();
@@ -1901,7 +1901,8 @@ export class DrawcallPostChain {
           glsl: bigTriangleVert,
         },
         fragment: {
-          glsl: frag,
+          // Per-shape fill textures and every chain output use straight RGBA.
+          glsl: '#define FILTER_INPUT_STRAIGHT_ALPHA\n' + frag,
           postprocess: (fs) => diagnosticDerivativeUniformityHeader + fs,
         },
       });
@@ -2253,9 +2254,7 @@ export class DrawcallPostChain {
     if (this.state().filterWidth !== width || this.state().filterHeight !== height) {
       if (this.state().filterChainReady) {
         this.state().filterRenderTarget.destroy();
-        this.state().filterTexture.destroy();
         this.state().pingPongRenderTarget.destroy();
-        this.state().pingPongTexture.destroy();
 
         this.state().filterTexture = this.host.device.createTexture({
           format: Format.U8_RGBA_RT,
@@ -2302,7 +2301,7 @@ export class DrawcallPostChain {
     });
 
     for (const pass of this.state().postEffectPasses) {
-      setPostEffectUniformData(
+      pass.uniformData = setPostEffectUniformData(
         pass.effect,
         pass.uniformBuffer,
         width,
@@ -2406,6 +2405,39 @@ export class DrawcallPostChain {
         depthStencilAttachment: null,
         depthStencilResolveTo: null,
       });
+      // These programs are cached and may be shared by consecutive effects.
+      // WebGL1 uniforms must be set immediately before each draw, not up front.
+      const data = pass.uniformData!;
+      switch (pass.effect.type) {
+        case 'blur':
+          pass.program.setUniformsLegacy({
+            u_Kawase0: data.subarray(0, 4),
+            u_Kawase1: data.subarray(4, 8),
+          });
+          break;
+        case 'brightness':
+        case 'contrast':
+          pass.program.setUniformsLegacy({ u_BrightnessContrast: data });
+          break;
+        case 'hueSaturation':
+          pass.program.setUniformsLegacy({ u_HueSaturation: data });
+          break;
+        case 'noise':
+          pass.program.setUniformsLegacy({ u_Noise: data[0] });
+          break;
+        case 'dot':
+          pass.program.setUniformsLegacy({
+            u_Dot: data.subarray(0, 4),
+            u_InputSize: data.subarray(4, 8),
+          });
+          break;
+        case 'colorHalftone':
+          pass.program.setUniformsLegacy({
+            u_CH0: data.subarray(0, 4),
+            u_CH1: data.subarray(4, 8),
+          });
+          break;
+      }
       effectPass.setViewport(0, 0, width, height);
       effectPass.setPipeline(pass.pipeline);
       effectPass.setVertexInput(

@@ -428,6 +428,55 @@ Unfortunately we get the following error. The reason for this is that we have al
 
 So we can only use the regular `drawImage` method to draw the image into the `<canvas>`.
 
+#### ECS paint and rough geometry export {#ecs-export-paints}
+
+The ECS exporter reads the first enabled layer in `fills` and `strokes`. An
+`image` fill stretches to the shape bounds. A `pattern` layer instead embeds the
+decoded image at its natural dimensions and preserves `repeat`, `repeat-x`,
+`repeat-y` or `no-repeat`. Its SVG `<pattern>` uses local coordinates, with the
+node transform applied once to the enclosing group. Pattern definitions have
+separate IDs when nodes need different repetition extents.
+
+```ts
+const elements = await serializeNodesToSVGElements([
+    {
+        id: 'tile',
+        type: 'rect',
+        zIndex: 0,
+        x: 40,
+        y: 30,
+        width: 200,
+        height: 100,
+        fills: [
+            { type: 'pattern', value: imageDataURL, repetition: 'repeat-x' },
+        ],
+    },
+]);
+```
+
+Image decoding is asynchronous. Await `serializeNodesToSVGElements`, or
+`exportFillGradientOrPattern` / `exportStrokeGradientOrPattern` when using those
+lower-level helpers directly. A failed image decode rejects the export.
+Gradient, image and pattern fills on text keep their definitions alongside the
+`<text>` element so writing its content does not remove its paint resources.
+
+Rough shapes export local geometry as SVG paths. Their group opacity, fill-layer
+opacity and stroke-layer opacity remain separate, including zero opacity.
+Hachure strokes use `roughFillWeight` (half the outline width when omitted or
+`-1`). Ellipses derive their local center and radii from `width` and `height`.
+Reimporting these SVG paths preserves the rendered geometry, but does not restore
+editable rough parameters. Pattern import is not covered by this export support.
+
+For callers needing a Canvas2D result, `API.renderToCanvas(node, { width, height })`
+draws that node and its children into one canvas. It supports solid fills and
+strokes on rectangles, ellipses, paths, polylines and lines, plus image-filled
+rectangles. Each shape starts its own path; SVG path commands, including arcs,
+and the `evenodd` fill rule are converted for Canvas2D. Local positions,
+rounded corners and node/layer opacity are preserved. Child images finish
+decoding before the next sibling is drawn, so their order stays stable. The
+method rejects if an image cannot be decoded, leaving a supplied canvas ready
+for another draw.
+
 #### Grid in SVG {#export-grid}
 
 Finally, let's look at how to implement a grid using SVG. Referring to [How to draw grid using HTML5 and canvas or SVG], we use `<pattern>` tiling: for the straight grid, we use two sets of one and one set of two; for the dot grid, we place a circle in each of the four corners of the “tile”:
@@ -522,7 +571,7 @@ When exporting to SVG, if web fonts are used, we aim to inline them within the f
 
 ### Export GIF {#to-gif}
 
-In a later [Lesson 30 - Time-based animation], we cover effects driven by post-processing and a time uniform. To **export** that motion you need formats such as GIF or MOV; here we outline the former.
+In a later [Lesson 30 - Time-based animation], we cover effects driven by post-processing and a time uniform. To **export** that motion you need formats such as GIF or WebM; here we outline the former.
 
 1. The render path must accept the current **frame index** (or engine time) so each step shows the right moment of the effect.
 2. **Snapshot the canvas to a raster**, e.g. PNG — the previous section already covered that.
@@ -535,6 +584,7 @@ import { GIFEncoder, applyPalette, quantize } from 'gifenc';
 const gif = GIFEncoder();
 for (let i = 0; i < frameCount; i++) {
     renderFrame(i); // (1) drive time / frame
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
     const dataUrl = el.toDataURL('image/png', pngQuality); // (2) raster snapshot
     const imageData = await imageDataFromPngDataUrl(dataUrl, w, h, ctx!);
     const palette = quantize(imageData.data, 256); // (3) build palette
@@ -544,6 +594,19 @@ for (let i = 0; i < frameCount; i++) {
 gif.finish();
 return new Blob([new Uint8Array(gif.bytes())], { type: 'image/gif' });
 ```
+
+ECS waits for a browser frame callback after rendering each frame before reading
+its PNG snapshot, and requires a fixed canvas size throughout GIF and WebM exports.
+An empty canvas, size change, PNG decode error, or drawing exception rejects the
+export instead of returning an empty file or partial animation. Temporary canvases
+are released on success and failure. WebM also stops the recorder and every capture
+track, cancels pending frame callbacks, and detaches image handlers so a failed
+export can be retried. The caller's source canvas remains available.
+
+WebM timestamps still follow the real-time `MediaRecorder` capture clock. The chosen
+FPS advances effect time but does not guarantee an exact WebM frame rate or duration.
+GIF writes per-frame delays, stored in units of 10 milliseconds; browsers may also
+clamp short display durations.
 
 ### Export PDF {#to-pdf}
 
@@ -817,25 +880,44 @@ On the CPU we rasterize the image into a texture: compute the draw rectangle fro
 
 ### iOS Live Photo {#ios-live-photo}
 
-At the file level, an iOS Live Photo is usually a HEIC still image plus a companion MOV. Neither the browser's native `<img>` path nor `@loaders.gl/images` can decode HEIC directly.
+At the file level, an iOS Live Photo is usually a HEIC still image plus a companion MOV. Native HEIC support varies between browsers; the ECS image loader uses heic-to to provide a conversion path.
 
 We aim to treat it like a normal image: decode a single still frame into a bitmap, then upload it to a texture. Playing the Live Photo's embedded video in the canvas would be a follow-up, with a dedicated component (e.g. tap to play) built separately.
 
+`loadImageBitmapUniversal` accepts a URL, Blob or File. It recognizes HEIC/HEIF
+from MIME, file extension or the file signature, and loads heic-to only when
+needed, keeping module imports safe during SSR. It converts the first still frame
+to PNG, with one JPEG retry if conversion or bitmap decoding fails. Non-HEIC
+images continue through loaders.gl.
+
+HTTP errors are rejected before conversion. If an ordinary image fails to decode
+and the diagnostic HEIC probe also fails, the original error is preserved. Each
+call can retry independently; a returned bitmap belongs to the caller and should
+be closed after use. An input object URL also remains owned by its caller.
+
 ```ts
-import heic2any from 'heic2any';
+import { loadImageBitmapUniversal } from '@infinite-canvas-tutorial/ecs';
 
-async function decodeHeicBlob(blob: Blob): Promise<ImageBitmap> {
-    const run = (toType: 'image/png' | 'image/jpeg', quality?: number) =>
-        heic2any({
-            blob,
-            toType,
-            quality: toType === 'image/jpeg' ? quality ?? 0.92 : 1,
-        });
-
-    const converted = await run('image/png');
-    return createImageBitmap(converted);
+async function drawStill(
+    context: CanvasRenderingContext2D,
+    source: string | Blob,
+) {
+    const bitmap = await loadImageBitmapUniversal(source);
+    try {
+        context.drawImage(bitmap, 0, 0);
+    } finally {
+        bitmap.close?.();
+    }
 }
 ```
+
+The decoder uses heic-to 1.6.6 (libheif 1.23.6), correcting the previous decoder's
+color shift and lost transparency on the full-range SDR fixtures. Browser
+regressions compare against source colors and cover gray levels, PNG transparency,
+the first still in a multi-image container, concurrent decoding and recovery after
+corrupt input.
+JPEG fallback remains lossy and cannot preserve alpha. These checks do not cover
+arbitrary ICC profiles, wide-gamut color, HDR or Live Photo video playback.
 
 ## Enhanced SVG: Stroke alignment {#stroke-alignment}
 

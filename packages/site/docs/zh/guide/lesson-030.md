@@ -98,11 +98,33 @@ void main() {
 }
 ```
 
+### 多层填充与滤镜顺序 {#fill-filter-order}
+
+ECS 中 SDF 图形和 Path 的光栅滤镜在启用的 `fills` 按绘制顺序合成之后执行。层透明度和混合模式参与合成，滤镜链只处理一次合成结果，图形整体透明度在最终绘制时应用。若逐层复用同一条滤镜链，后一次初始化可能释放前一层仍需使用的纹理。
+
+例如，红色底层加上 `opacity: 0.5` 的蓝色顶层，在 `brightness(0) contrast(0)` 下仍应呈紫色。这两个滤镜采用 glfx 的调整量约定，零表示不调整。非零效果按 `filter` 字符串中的顺序执行，交换亮度和对比度可能得到不同结果。
+
+修改填充或几何会重建相应的光栅输入。移除光栅滤镜时会释放离屏滤镜链，包括恢复直接绘制纯色的情况。中间层纹理在合成后释放，附属渲染纹理由对应的 RenderTarget 负责释放。
+
+### 颜色滤镜中的 alpha {#filter-alpha}
+
+亮度、对比度、色相/饱和度、噪点、dot 和 color-halftone 在非预乘 RGB 上计算，调整强度不随填充 alpha 降低。图形填充纹理保存非预乘 RGBA；全画布滤镜接收预乘 RGBA，需要先转换再调整。RGB 在乘回 alpha 之前截断到可显示范围，alpha 保持不变，避免过亮的中间结果影响后续滤镜。
+
+例如，`rgba(64,128,192,0.5)` 经过 `brightness(0.2)` 后约为 `rgba(115,179,243,0.5)`，之后再应用图形整体透明度。降低填充 alpha 不应同时减弱亮度调整。这些颜色滤镜既更新 WebGL1 普通 uniform，也更新 WebGL2 uniform buffer；标量 std140 块保留 WebKit 要求的最小 16 字节对齐。
+
+### 超出原始图形的模糊 {#blur-bounds}
+
+对于 SDF 基础图形和普通 Path 填充，正值 `blur()` 会先把填充、轮廓及 SDF 纯色描边绘制到带透明留边的纹理中，最终绘制范围也覆盖这部分留边。因此模糊可以扩散到圆角之外，也可以进入 Path 的孔洞。只有渲染包围盒扩大，选择几何保持不变。例如 `filter: 'blur(6px, 3)'` 会柔化轮廓，而 `blur(0px)` 保持原样。
+
+采样先在预乘颜色空间插值，再转回非预乘 RGBA，避免透明黑色混入 RGB，让半透明蓝色边缘在放大后仍保持蓝色。留边累加每个 pass 及连续多个模糊的采样范围；WebGL1 在每个 pass 绘制前同步对应的核参数。
+
+这条捕获路径目前覆盖 SDF 填充/纯色描边，以及普通 Path/VectorNetwork 填充。文本、独立 Path 描边、手绘填充、线框/模板绘制及外部 `FillTexture` 仍沿用原来的滤镜路径，暂未扩展绘制几何；完整 WebGPU 渲染还需要单独验证。
+
 ### 亮度和对比度 {#brightness-contrast}
 
 我们可以使用 [CSS filter] 语法，例如 `filter: brightness(0.4);`
 
-在实现上用一个 Shader 就可以解决，参考 [brightnesscontrast.js]
+下面的 Shader 展示接收预乘 RGBA 的全画布路径，参考 [brightnesscontrast.js]。图形滤镜通过共用的 alpha 函数保持非预乘 RGBA。
 
 ```glsl
 uniform sampler2D u_Texture;
@@ -127,7 +149,9 @@ void main() {
     } else {
       color.rgb = (color.rgb - 0.5) * (1.0 + contrast) + 0.5;
     }
-    color.rgb *= color.a;
+    color.rgb = clamp(color.rgb, 0.0, 1.0) * color.a;
+  } else {
+    color = vec4(0.0);
   }
 
   outputColor = color;

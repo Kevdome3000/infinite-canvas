@@ -602,6 +602,11 @@ a committed edit, not a rendered frame.
 
 ## Framework starters
 
+With `renderer="webgpu"`, omitting `shaderCompilerPath` loads the matching
+compiler bundled with the device package on demand. See the [WebGPU compiler
+setup](/reference/create-app#shader-compiler) for Vite's dependency-prebundling
+configuration and custom URLs. WebGL and SSR do not load the compiler.
+
 Copy the [Vite or Next.js starter](https://github.com/xiaoiver/infinite-canvas-tutorial/tree/master/examples)
 for a minimal Provider, initial scene, reactive shape counter, and undo/redo
 toolbar. The Next.js example uses a Client Component editor within a Server
@@ -653,6 +658,34 @@ Each canvas owns its API and subscriptions. The App exits after its last canvas
 is removed. StrictMode's immediate setup/cleanup/setup shares pending startup.
 React children are mounted in the Web Component's light DOM and support its
 named slots.
+
+## ECS capacity
+
+For bounded scenes, pass `appOptions` to reduce the ECS allocation at startup:
+
+```tsx
+const runtime = createCanvasRuntime({
+    appOptions: {
+        maxEntities: 16_384,
+        maxLimboComponents: 32_768,
+    },
+});
+
+<InfiniteCanvas runtime={runtime} style={{ height: 400 }} />;
+```
+
+All canvases using this runtime share one capacity budget, including internal
+entities. `maxEntities` defaults to `4_194_304`; `maxLimboComponents` defaults to
+`maxEntities` and limits removed components awaiting reclamation. These are fixed
+limits, so leave headroom for scene growth and bulk deletion; `16_384` is an
+example, not a recommended limit for every application. See [ECS capacity](/reference/create-app#ecs-capacity)
+for ranges and sizing guidance.
+
+Options are copied when `createCanvasRuntime()` is called and reused on every App
+restart. To change them, unmount all canvases and create a new runtime. Creating
+the runtime remains safe during SSR: imports, allocation, and validation wait
+until acquisition. Invalid options reject `acquire().ready`; `<InfiniteCanvas>`
+reports that startup error through `onError` and `renderError`.
 
 ## Async preparation
 

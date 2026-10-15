@@ -24,7 +24,9 @@ import WebGPU from '../../components/WebGPU.vue'
 <ic-canvas renderer="webgpu"></ic-canvas>
 ```
 
-如果未设置 `shaderCompilerPath`，则使用默认的着色器编译器路径 `'https://unpkg.com/@antv/g-device-api@1.6.8/dist/pkg/glsl_wgsl_compiler_bg.wasm'`。
+如果未设置 `shaderCompilerPath`，则使用默认的着色器编译器路径 `'https://unpkg.com/@antv/g-device-api@1.6.13/dist/pkg/glsl_wgsl_compiler_bg.wasm'`。
+
+该 WASM 与此前使用的 `1.6.8` 文件逐字节相同，修改地址不会升级编译器。上游包的安全说明见[第一课](/zh/guide/lesson-001)。ECS 组件 `ic-spectrum-canvas` 已[默认使用内置编译器](/zh/reference/create-app#shader-compiler)，使用 Vite 开发时需按该文档配置。
 
 ```html
 <ic-canvas

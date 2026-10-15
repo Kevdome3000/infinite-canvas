@@ -35,11 +35,6 @@ export const ALLOWED_PASTE_MIME_TYPES = [
 ] as const;
 type AllowedPasteMimeTypes = (typeof ALLOWED_PASTE_MIME_TYPES)[number];
 
-const probablySupportsClipboardWriteText =
-  typeof navigator !== 'undefined' &&
-  'clipboard' in navigator &&
-  'writeText' in navigator.clipboard;
-
 // adapted from https://github.com/zenorocha/clipboard.js/blob/ce79f170aa655c408b6aab33c9472e8e4fa52e19/src/clipboard-action.js#L48
 const copyTextViaExecCommand = (text: string | null) => {
   // execCommand doesn't allow copying empty strings, so if we're
@@ -89,11 +84,12 @@ export async function copyTextToClipboard(
 ) {
   // @see https://github.com/excalidraw/excalidraw/blob/master/packages/excalidraw/clipboard.ts#L445
   // (1) first try using Async Clipboard API
-  if (probablySupportsClipboardWriteText) {
+  const clipboard = typeof navigator === 'undefined' ? undefined : navigator.clipboard;
+  if (clipboard?.writeText) {
     try {
       // NOTE: doesn't work on FF on non-HTTPS domains, or when document
       // not focused
-      await navigator.clipboard.writeText(text || '');
+      await clipboard.writeText(text || '');
       return;
     } catch (error: any) {
       console.error(error);
@@ -192,17 +188,17 @@ const parseClipboardEventTextData = async (
 const clipboardContainsElements = (
   contents: any,
 ): contents is SerializedNode[] => {
-  if (
-    // [
-    //   EXPORT_DATA_TYPES.excalidraw,
-    //   EXPORT_DATA_TYPES.excalidrawClipboard,
-    //   EXPORT_DATA_TYPES.excalidrawClipboardWithAPI,
-    // ].includes(contents?.type) &&
-    Array.isArray(contents)
-  ) {
-    return true;
-  }
-  return false;
+  return (
+    Array.isArray(contents) &&
+    contents.every(
+      (node) =>
+        node !== null &&
+        typeof node === 'object' &&
+        !Array.isArray(node) &&
+        typeof node.id === 'string' &&
+        typeof node.zIndex === 'number',
+    )
+  );
 };
 
 export const parseClipboard = async (
@@ -256,6 +252,8 @@ export const createPasteEvent = ({
     console.warn('createPasteEvent: no types or files provided');
   }
 
+  const pasteFiles = [...(files ?? [])];
+
   const event = new ClipboardEvent('paste', {
     clipboardData: new DataTransfer(),
   });
@@ -263,8 +261,7 @@ export const createPasteEvent = ({
   if (types) {
     for (const [type, value] of Object.entries(types)) {
       if (typeof value !== 'string') {
-        files = files || [];
-        files.push(value);
+        pasteFiles.push(value);
         continue;
       }
       try {
@@ -278,9 +275,9 @@ export const createPasteEvent = ({
     }
   }
 
-  if (files) {
+  if (pasteFiles.length) {
     let idx = -1;
-    for (const file of files) {
+    for (const file of pasteFiles) {
       idx++;
       try {
         event.clipboardData?.items.add(file);
@@ -329,40 +326,30 @@ export const isSupportedImageFileType = (type: string | null | undefined) => {
  */
 export const readSystemClipboard = async () => {
   const types: { [key in AllowedPasteMimeTypes]?: string | File } = {};
+  const clipboard = navigator.clipboard;
+  let clipboardItems: ClipboardItems = [];
 
-  let clipboardItems: ClipboardItems;
-
-  try {
-    clipboardItems = await navigator.clipboard?.read();
-  } catch (error: any) {
+  if (clipboard?.read) {
     try {
-      if (navigator.clipboard?.readText) {
-        console.warn(
-          `navigator.clipboard.readText() failed (${error.message}). Failling back to navigator.clipboard.read()`,
-        );
-        const readText = await navigator.clipboard?.readText();
-        if (readText) {
-          return { [MIME_TYPES.text]: readText };
-        }
+      clipboardItems = await clipboard.read();
+    } catch (readError: any) {
+      if (!clipboard.readText) {
+        if (readError.name === 'DataError') return types;
+        throw readError;
       }
-    } catch (error: any) {
-      // @ts-ignore
-      if (navigator.clipboard?.read) {
-        console.warn(
-          `navigator.clipboard.readText() failed (${error.message}). Failling back to navigator.clipboard.read()`,
-        );
-      } else {
-        if (error.name === 'DataError') {
-          console.warn(
-            `navigator.clipboard.read() error, clipboard is probably empty: ${error.message}`,
-          );
-          return types;
-        }
-
-        throw error;
+      try {
+        const text = await clipboard.readText();
+        return text ? { [MIME_TYPES.text]: text } : types;
+      } catch (textError: any) {
+        if (textError.name === 'DataError') return types;
+        throw textError;
       }
     }
-    throw error;
+  } else if (clipboard?.readText) {
+    const text = await clipboard.readText();
+    return text ? { [MIME_TYPES.text]: text } : types;
+  } else {
+    return types;
   }
 
   for (const item of clipboardItems) {

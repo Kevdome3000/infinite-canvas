@@ -1,6 +1,7 @@
 ---
 outline: deep
 ---
+
 First, create a global App with the default plugin set. For more details, see: [Lesson 18 - Refactor with ECS]
 
 ```ts
@@ -14,6 +15,36 @@ app.run();
 Then you can create one or more canvases. Here we use UI components implemented based on WebComponents.
 
 React projects can use the [React bindings](/reference/react) to manage the runtime, canvas lifecycle, and events.
+
+## ECS capacity {#ecs-capacity}
+
+An App's ECS World reserves storage based on its entity capacity during startup.
+For bounded scenes, set a smaller budget before starting the App:
+
+```ts
+const app = new App({
+    maxEntities: 16_384,
+    maxLimboComponents: 16_384,
+}).addPlugins(...DefaultPlugins, UIPlugin);
+await app.run();
+```
+
+| Option               | Default                  | Meaning                                                                               |
+| -------------------- | ------------------------ | ------------------------------------------------------------------------------------- |
+| `maxEntities`        | `4_194_304`              | Maximum ECS entities across all canvases in this App; an integer from 1 to 4,194,304. |
+| `maxLimboComponents` | The chosen `maxEntities` | Capacity for removed components awaiting ECS reclamation; a positive safe integer.    |
+
+These are fixed capacity limits, not initial sizes that grow automatically. Entity
+counts include internal canvases, cameras, transformer handles, paint layers and
+plugin entities, so leave headroom beyond the number of document shapes. Bulk
+removal may require a larger `maxLimboComponents` budget because an entity can
+have multiple components. Invalid values throw a `RangeError` at construction;
+exceeding a configured capacity later produces a Becsy capacity error.
+
+Options are copied at construction. To change them, exit the App and create a new
+one. Calling `new App()` preserves the existing defaults. Smaller budgets reduce
+ECS allocation; they do not change GPU texture or geometry memory, or allow
+concurrent Apps sharing component types in the same JavaScript environment.
 
 ## Using WebComponents {#use-webcomponents}
 
@@ -37,10 +68,38 @@ Declare the component in HTML:
 The following parameters can be passed via HTML attributes:
 
 -   `renderer` Renderer. Options are `'webgl' | 'webgpu'`, default is `'webgl'`
--   `shader-compiler-path` Used to transpile GLSL to WGSL. For more details, see [Lesson 1 - Hardware abstraction layers]. Default value is `'https://unpkg.com/@antv/g-device-api@1.6.8/dist/pkg/glsl_wgsl_compiler_bg.wasm'`
+-   `shader-compiler-path` Overrides the GLSL-to-WGSL compiler URL. The default empty value loads the matching WASM bundled with `@infinite-canvas-tutorial/device-api`. For more details, see [Lesson 1 - Hardware abstraction layers].
 -   `theme` Theme. Options are `'dark' | 'light'`, default is `'light'`
 -   `app-state` Application state in JSON string format, which can control initialization parameters such as camera
 -   `nodes` List of shapes in JSON string format
+
+### Bundling the WebGPU shader compiler {#shader-compiler}
+
+`ic-spectrum-canvas` and the React bindings load the matching compiler bundled with `@infinite-canvas-tutorial/device-api` when WebGPU initializes. WebGL and SSR imports do not fetch or initialize it. Vite and webpack production builds emit the WASM as an application asset, so the default no longer depends on UNPKG.
+
+For Vite development, exclude the device package from dependency prebundling so the compiler URL stays relative to its module. The React Vite starter already includes this configuration:
+
+```ts
+import { defineConfig } from 'vite';
+
+export default defineConfig({
+    optimizeDeps: { exclude: ['@infinite-canvas-tutorial/device-api'] },
+});
+```
+
+You can still override the compiler URL, including an explicit `?url` import. Set the attribute before connecting the canvas:
+
+```ts
+import compilerUrl from '@infinite-canvas-tutorial/device-api/shader-compiler.wasm?url';
+
+const canvas = document.createElement('ic-spectrum-canvas');
+canvas.style.height = '400px';
+canvas.setAttribute('renderer', 'webgpu');
+canvas.setAttribute('shader-compiler-path', compilerUrl);
+document.body.append(canvas);
+```
+
+The older lesson components and `ic-canvas` still use the upstream CDN URL pinned to `1.6.13`. Its WASM is byte-for-byte identical to the bundled file checked on October 13, 2026; switching to the bundled asset does not upgrade the compiler. See the [security note in Lesson 1](/guide/lesson-001) before installing the upstream npm package.
 
 ## Getting the API {#use-api}
 

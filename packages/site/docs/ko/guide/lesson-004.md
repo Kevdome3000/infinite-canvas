@@ -455,6 +455,8 @@ function moveCamera(e: MouseEvent) {
 
 페이지 상단의 예제에서 캔버스를 드래그해 보세요.
 
+ECS 캔버스는 마우스 휠과 두 손가락 터치로도 이동할 수 있습니다. 이 이동량은 뷰포트 픽셀 단위이므로 카메라 위치를 변경하기 전에 현재 회전 각도에 따라 월드 공간으로 변환하고 줌 값으로 나눠야 합니다. 두 손가락 이동에는 반대 방향의 카메라 이동량을 적용해야 캔버스가 손가락을 따라갑니다. 같은 프레임에 핀치 줌도 발생하면 갱신된 카메라 변환에 이동량을 적용합니다.
+
 ### 회전 (Rotation) {#rotation}
 
 회전은 캔버스의 필수 기능은 아니지만, FigJam 사용자가 포럼에서 지원 여부를 문의한 적이 있습니다([Rotate canvas]). 캔버스를 약간 회전하는 것이 일반적인 사용 습관에 더 부합하기 때문입니다.
@@ -476,6 +478,8 @@ function handleMouseMove(e: MouseEvent) {
 ```
 
 카메라 회전 모드에서는 마우스 이동 거리를 회전 각도로 사용합니다. 다음으로 월드 좌표계에서 지정된 지점을 중심으로 회전하는 변환 행렬을 구성합니다. 이는 [transform-origin]을 참고하세요. 그런 다음 이 변환을 카메라 행렬에 적용하고, 마지막으로 행렬에서 각 파라미터를 추출합니다.
+
+포인터를 누른 순간의 좌표는 독립적인 값으로 저장해야 합니다. ECS 입력 벡터의 실시간 참조를 프레임 사이에 유지하면 회전 동작이 무효화될 수 있습니다.
 
 ```ts
 function rotateCamera(e: MouseEvent) {
@@ -657,6 +661,8 @@ if (duration === 0) {
 this.cancelLandmarkAnimation();
 
 let timeStart: number | undefined;
+const startPosition: vec2 = [this.#x, this.#y];
+const startZoomRotation: vec2 = [this.zoom, this.#rotation];
 const destPosition: vec2 = [x, y];
 const destZoomRotation: vec2 = [zoom, rotation];
 const animate = (timestamp: number) => {
@@ -690,8 +696,8 @@ const t = EASING_FUNCTION[easing](elapsed / duration);
 const interPosition = vec2.create();
 const interZoomRotation = vec2.fromValues(1, 0);
 
-vec2.lerp(interPosition, [this.#x, this.#y], destPosition, t);
-vec2.lerp(interZoomRotation, [this.zoom, this.#rotation], destZoomRotation, t);
+vec2.lerp(interPosition, startPosition, destPosition, t);
+vec2.lerp(interZoomRotation, startZoomRotation, destZoomRotation, t);
 
 this.#x = interPosition[0];
 this.#y = interPosition[1];
@@ -700,11 +706,13 @@ this.#rotation = interZoomRotation[1];
 this.updateMatrix();
 ```
 
-여기서 작은 최적화를 할 수 있습니다. 카메라 위치의 변위를 계산하여, 거리가 특정 임계값보다 작으면 후속 애니메이션을 수행하지 않고 바로 종료합니다.
+애니메이션이 시작될 때 시작 상태를 한 번만 저장합니다. 매 프레임 갱신된 카메라 상태에서 다시 보간하면 이징 곡선이 바뀌고 결과가 프레임 속도에 따라 달라집니다. 위치와 줌/회전이 모두 목표에 도달했을 때만 일찍 종료해야 합니다. 위치만 확인하면 줌만 변경하는 애니메이션이 건너뛰어집니다.
 
 ```ts
-const dist = vec2.dist(interPosition, destPosition);
-if (dist <= EPSILON) {
+if (
+  vec2.dist(interPosition, destPosition) <= EPSILON &&
+  vec2.dist(interZoomRotation, destZoomRotation) <= EPSILON
+) {
     endAnimation();
     return;
 }

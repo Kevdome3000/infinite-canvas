@@ -424,6 +424,47 @@ async function imageBitmapToURL(bmp: ImageBitmap) {
 
 因此我们只能使用常规的 `drawImage` 方式将图片绘制到 `<canvas>` 中。
 
+#### ECS 填充与手绘图形导出 {#ecs-export-paints}
+
+ECS 导出器读取 `fills` 和 `strokes` 中第一个启用的图层。`image` 填充会拉伸到
+图形边界；`pattern` 图层则嵌入解码后的图片，使用图片原始尺寸，并保留 `repeat`、
+`repeat-x`、`repeat-y` 或 `no-repeat`。SVG `<pattern>` 使用局部坐标，节点变换
+只应用在外层分组上。不同节点需要不同的重复范围时，会使用独立的图案定义 ID。
+
+```ts
+const elements = await serializeNodesToSVGElements([
+    {
+        id: 'tile',
+        type: 'rect',
+        zIndex: 0,
+        x: 40,
+        y: 30,
+        width: 200,
+        height: 100,
+        fills: [
+            { type: 'pattern', value: imageDataURL, repetition: 'repeat-x' },
+        ],
+    },
+]);
+```
+
+图片解码是异步的。调用 `serializeNodesToSVGElements`，或直接使用底层
+`exportFillGradientOrPattern` / `exportStrokeGradientOrPattern` 时，需要
+`await`；图片解码失败会使导出 Promise 拒绝。文本使用渐变、图片或图案填充时，
+定义与 `<text>` 元素分别保留，写入文字内容不会删除填充资源。
+
+手绘图形将局部几何导出为 SVG 路径，分别保留分组、填充图层和描边图层的透明度，
+包括零透明度。排线填充使用 `roughFillWeight`，缺省或为 `-1` 时取轮廓线宽的一半。
+椭圆根据 `width`、`height` 推导局部圆心和半径。重新导入这些 SVG 路径能保留
+渲染几何，但不会恢复可编辑的手绘参数。图案导入不属于这次导出支持的范围。
+
+需要 Canvas2D 结果时，可以调用 `API.renderToCanvas(node, { width, height })`，
+把节点及其子节点绘制到同一张画布。它支持矩形、椭圆、路径、折线和线段的纯色
+填充与描边，以及矩形的图片填充。每个图形独立建立路径；SVG 路径命令（包括弧线）
+和 `evenodd` 填充规则会转换为 Canvas2D 绘制。局部位置、圆角以及节点/图层
+透明度都会保留。子节点图片解码完成后才绘制下一个同级节点，从而保持图层顺序。
+图片解码失败时方法会拒绝，传入的画布仍可用于下一次绘制。
+
 #### 绘制网格 {#export-grid}
 
 最后来看如何使用 SVG 实现网格。参考 [How to draw grid using HTML5 and canvas or SVG]，我们使用 `<pattern>` 平铺实现：对于直线网格使用一大一小两组；对于圆点网格分别在“砖块”的四个角上各放置一个圆形：
@@ -518,7 +559,7 @@ Object.entries(rest).forEach(([key, value]) => {
 
 ### 导出 GIF {#to-gif}
 
-在后续的 [课程 30 - 时间动画] 中，我们会介绍基于后处理和时间变量实现的动画效果。如果想导出动画，就需要 GIF 或者 MOV 等格式了，我们先来看前者如何实现。
+在后续的 [课程 30 - 时间动画] 中，我们会介绍基于后处理和时间变量实现的动画效果。如果想导出动画，就需要 GIF 或者 WebM 等格式了，我们先来看前者如何实现。
 
 1. 在渲染管线中要支持传入当前的帧序号
 2. 导出画布内容成 PNG，上一小节已经介绍过
@@ -531,6 +572,7 @@ import { GIFEncoder, applyPalette, quantize } from 'gifenc';
 const gif = GIFEncoder();
 for (let i = 0; i < frameCount; i++) {
     renderFrame(i); // 1.
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
     const dataUrl = el.toDataURL('image/png', pngQuality); // 2.
     const imageData = await imageDataFromPngDataUrl(dataUrl, w, h, ctx!);
     const palette = quantize(imageData.data, 256); // 3.
@@ -540,6 +582,16 @@ for (let i = 0; i < frameCount; i++) {
 gif.finish();
 return new Blob([new Uint8Array(gif.bytes())], { type: 'image/gif' });
 ```
+
+ECS 的 GIF 与 WebM 导出会在每帧渲染后等待浏览器帧回调，再读取 PNG 快照，
+并要求所有帧尺寸一致。空画布、尺寸改变、PNG 解码或绘制失败会使导出失败，
+不会返回空文件或部分动画。临时画布在成功和失败时都会释放；WebM 还会停止
+录制器及所有捕获轨道，取消待执行的帧回调并移除图片事件处理器，因此失败后
+可以重新发起导出。调用方的源画布不受影响。
+
+WebM 的时间戳仍由 `MediaRecorder` 的实时捕获时钟决定；设置的 FPS 用于推进
+效果时间，不能保证 WebM 成品的精确帧率或时长。GIF 则写入逐帧延迟，文件格式
+以 10 毫秒为单位存储时间，浏览器还可能限制最短显示时长。
 
 ### 导出 PDF {#to-pdf}
 
@@ -813,25 +865,39 @@ fills: [
 
 ### iOS Live Photo {#ios-live-photo}
 
-iOS Live Photo 在文件层面通常是 HEIC 静态图 + 配套 MOV。浏览器里的 `<img>` 或者 `@loaders.gl/images` 都不能直接解码 HEIC。
+iOS Live Photo 在文件层面通常是 HEIC 静态图 + 配套 MOV。各浏览器对 HEIC 的原生支持不同，ECS 图片加载器通过 heic-to 提供转换路径。
 
 我们想将尽量与普通图片一样处理，先解出一帧静态位图再写入纹理。至于在画布里播 Live Photo 视频，需要后续再单独实现组件，提供点按播放等功能。
 
+`loadImageBitmapUniversal` 接受 URL、Blob 或 File，通过 MIME、文件扩展名或
+文件签名识别 HEIC/HEIF。heic-to 只在需要时加载，模块导入不会在 SSR 时访问
+浏览器对象。转换只取第一帧静态图，先尝试 PNG；转换或位图解码失败后再尝试一次
+JPEG。其他图片格式继续交给 loaders.gl。
+
+HTTP 错误会在转换前被拒绝。普通图片解码失败后，如果 HEIC 探测也失败，会保留
+最初的错误。后续调用可以独立重试；返回位图由调用方持有，用完后关闭。输入的
+object URL 也由调用方负责释放。
+
 ```ts
-import heic2any from 'heic2any';
+import { loadImageBitmapUniversal } from '@infinite-canvas-tutorial/ecs';
 
-async function decodeHeicBlob(blob: Blob): Promise<ImageBitmap> {
-    const run = (toType: 'image/png' | 'image/jpeg', quality?: number) =>
-        heic2any({
-            blob,
-            toType,
-            quality: toType === 'image/jpeg' ? quality ?? 0.92 : 1,
-        });
-
-    const converted = await run('image/png');
-    return createImageBitmap(converted);
+async function drawStill(
+    context: CanvasRenderingContext2D,
+    source: string | Blob,
+) {
+    const bitmap = await loadImageBitmapUniversal(source);
+    try {
+        context.drawImage(bitmap, 0, 0);
+    } finally {
+        bitmap.close?.();
+    }
 }
 ```
+
+解码器使用 heic-to 1.6.6（libheif 1.23.6），修复旧解码器对完整范围 SDR 样本
+的偏色和透明度丢失。浏览器回归直接对照源颜色，并验证灰阶、PNG 透明度、多图容器
+第一帧、并发解码和损坏文件后的恢复。JPEG 回退仍有损且不保留透明度；任意 ICC 配置、
+广色域、HDR 和 Live Photo 视频播放不在这些回归的验证范围内。
 
 ## 增强 SVG: Stroke alignment {#stroke-alignment}
 

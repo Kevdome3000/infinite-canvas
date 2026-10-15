@@ -122,12 +122,38 @@ try {
   const composer = new compiler.WGSLComposer();
   composer.free();
   assert.equal(typeof compiler.glsl_compile, 'function');
+  // A fresh process exercises the default lazy ESM asset resolver from the
+  // CommonJS package, rather than reusing the initSync instance above.
+  const defaultCompiler = `
+const assert = require('node:assert/strict');
+const { readFileSync } = require('node:fs');
+let requests = 0;
+globalThis.fetch = async url => {
+  assert(url instanceof URL);
+  assert(url.pathname.endsWith('/lib/vendor/glsl_wgsl_compiler_bg.wasm'));
+  requests++;
+  return new Response(readFileSync(url), { headers: { 'Content-Type': 'application/wasm' } });
+};
+const compiler = require('./node_modules/@infinite-canvas-tutorial/device-api/lib/vendor/glsl_wgsl_compiler.js');
+assert.equal(requests, 0);
+(async () => {
+  await compiler.default();
+  await compiler.default();
+  assert.equal(requests, 1);
+  const wgsl = compiler.glsl_compile('#version 440\\nvoid main() { gl_Position = vec4(0.0, 0.0, 0.0, 1.0); }', 'vertex', true);
+  assert(wgsl.includes('@vertex') && wgsl.includes('@builtin(position)'));
+})().catch(error => { console.error(error); process.exitCode = 1; });
+`;
+  writeFileSync(join(consumer, 'default-compiler.cjs'), defaultCompiler);
+  execFileSync(process.execPath, [join(consumer, 'default-compiler.cjs')], {
+    stdio: 'inherit',
+  });
   const ssr = `
 const assert = require('node:assert/strict');
 const React = require('react');
 const { renderToString } = require('react-dom/server');
 for (const entry of ['@infinite-canvas-tutorial/react', '@infinite-canvas-tutorial/react/spectrum']) {
-  const { CanvasProvider, InfiniteCanvas, useCanvasAPI, useCanvasActions, useCanvasSelector, useCanvasNode, useCanvasSelection, useCanvasHistory, useCanvasStatus, useCanvasCamera, useCanvasCoordinates, useCanvasEvent, useCanvasShortcuts } = require(entry);
+  const { createCanvasRuntime, CanvasProvider, InfiniteCanvas, useCanvasAPI, useCanvasActions, useCanvasSelector, useCanvasNode, useCanvasSelection, useCanvasHistory, useCanvasStatus, useCanvasCamera, useCanvasCoordinates, useCanvasEvent, useCanvasShortcuts } = require(entry);
   function Toolbar() {
     const api = useCanvasAPI();
     const actions = useCanvasActions();
@@ -151,11 +177,17 @@ for (const entry of ['@infinite-canvas-tutorial/react', '@infinite-canvas-tutori
     const zoom = useCanvasSelector(state => state.appState?.cameraZoom ?? 1);
     return React.createElement('output', shortcuts, String(api === null) + ':' + zoom);
   }
+  const runtime = createCanvasRuntime({
+    appOptions: { maxEntities: 16384, maxLimboComponents: 32768 },
+    plugins: [() => { throw new Error('SSR plugin ran'); }],
+    loadUI: () => { throw new Error('SSR UI loader ran'); },
+  });
   const html = renderToString(React.createElement(CanvasProvider, null,
-    React.createElement(InfiniteCanvas, { fallback: 'Loading' }), React.createElement(Toolbar)));
+    React.createElement(InfiniteCanvas, { runtime, fallback: 'Loading' }), React.createElement(Toolbar)));
   assert(html.includes('Loading') && html.includes('true:1'));
 }
 assert.equal(typeof window, 'undefined');
+assert(!Object.keys(require.cache).some(path => path.includes('/@infinite-canvas-tutorial/ecs/')), 'SSR loaded the ECS runtime');
 `;
   writeFileSync(join(consumer, 'ssr.cjs'), ssr);
   execFileSync(process.execPath, [join(consumer, 'ssr.cjs')], {
@@ -163,9 +195,17 @@ assert.equal(typeof window, 'undefined');
   });
 
   const types = `
-import { CanvasProvider, InfiniteCanvas, useCanvasAPI, useCanvasActions, useCanvasSelector, useCanvasNode, useCanvasSelection, useCanvasHistory, useCanvasStatus, useCanvasCamera, useCanvasCoordinates, useCanvasEvent, useCanvasShortcuts, type CanvasCoordinates, type CanvasPoint, type CanvasShortcutOptions, type CanvasShortcutProps, type CanvasCameraState, type CanvasCameraAnimationOptions, type CanvasEventOptions, type CanvasHistoryState, type CanvasStatus, type CanvasState, type CanvasActions, type CanvasEditOptions } from '@infinite-canvas-tutorial/react';
+import { createCanvasRuntime, type CanvasRuntimeOptions, CanvasProvider, InfiniteCanvas, useCanvasAPI, useCanvasActions, useCanvasSelector, useCanvasNode, useCanvasSelection, useCanvasHistory, useCanvasStatus, useCanvasCamera, useCanvasCoordinates, useCanvasEvent, useCanvasShortcuts, type CanvasCoordinates, type CanvasPoint, type CanvasShortcutOptions, type CanvasShortcutProps, type CanvasCameraState, type CanvasCameraAnimationOptions, type CanvasEventOptions, type CanvasHistoryState, type CanvasStatus, type CanvasState, type CanvasActions, type CanvasEditOptions } from '@infinite-canvas-tutorial/react';
 import type { SerializedNode } from '@infinite-canvas-tutorial/ecs';
 import { InfiniteCanvas as SpectrumCanvas, useCanvasEvent as useSpectrumCanvasEvent, useCanvasCoordinates as useSpectrumCoordinates, type CanvasPoint as SpectrumPoint } from '@infinite-canvas-tutorial/react/spectrum';
+const runtimeOptions: CanvasRuntimeOptions = {
+  appOptions: { maxEntities: 16384, maxLimboComponents: 32768 },
+};
+const runtime = createCanvasRuntime(runtimeOptions);
+// @ts-expect-error capacities must be numeric
+createCanvasRuntime({ appOptions: { maxEntities: '16384' } });
+// @ts-expect-error limbo capacity must be numeric
+createCanvasRuntime({ appOptions: { maxLimboComponents: '32768' } });
 function Toolbar() {
   const shortcutOptions: CanvasShortcutOptions = { enabled: true, onError: (error: Error) => {} };
   const shortcuts: CanvasShortcutProps = useCanvasShortcuts(shortcutOptions);
@@ -218,7 +258,7 @@ function Toolbar() {
   const canUndo: boolean = useCanvasSelector((state: CanvasState) => state.canUndo);
   return <section {...shortcuts}><button disabled={!canUndo} onClick={() => api?.undo()}>Undo</button></section>;
 }
-export const editor = <><CanvasProvider><InfiniteCanvas style={{ height: 400 }} /><Toolbar /></CanvasProvider><SpectrumCanvas /></>;
+export const editor = <><CanvasProvider><InfiniteCanvas runtime={runtime} style={{ height: 400 }} /><Toolbar /></CanvasProvider><SpectrumCanvas runtime={runtime} /></>;
 `;
   writeFileSync(join(consumer, 'consumer.tsx'), types);
   for (const [module, moduleResolution] of [
@@ -321,6 +361,16 @@ export const editor = <><CanvasProvider><InfiniteCanvas style={{ height: 400 }} 
     },
   );
   assert(existsSync(join(viteExample, 'dist/index.html')));
+  const includesCompiler = (directory) =>
+    readdirSync(directory).some(
+      (name) =>
+        name.endsWith('.wasm') &&
+        readFileSync(join(directory, name)).equals(wasm),
+    );
+  assert(
+    includesCompiler(join(viteExample, 'dist/assets')),
+    'Vite did not emit the matching bundled shader compiler',
+  );
 
   // Next.js 16 requires React 19. React 18 still exercises the standalone Vite
   // consumer, package exports, SSR rendering, and types above.
@@ -358,6 +408,10 @@ export const editor = <><CanvasProvider><InfiniteCanvas style={{ height: 400 }} 
     assert(
       html.includes('React canvas with Next.js') &&
         html.includes('Loading canvas'),
+    );
+    assert(
+      includesCompiler(join(nextExample, '.next/static/media')),
+      'Next.js did not emit the matching bundled shader compiler',
     );
   }
   console.log(

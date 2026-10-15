@@ -3,8 +3,7 @@ import { hitTestTextPath } from './utils/glyph/measure-text-path';
 import { IPointData } from '@pixi/math';
 import { mat3, vec2 } from 'gl-matrix';
 import { isEntityAlive, updateGlobalTransform } from './systems/Transform';
-import { updateComputedPoints } from './systems/ComputePoints';
-import { isNil, path2Absolute } from '@antv/util';
+import { isNil, path2Curve } from '@antv/util';
 import {
   CaptureUpdateAction,
   CaptureUpdateActionType,
@@ -79,7 +78,8 @@ import {
   firstEnabledStrokePresentation,
   migrateLegacyStrokeWireInPlace,
 } from './utils/normalize-stroke-wire';
-import { getEnabledFillLayers } from './utils/fillLayers';
+import { fillLayerOpacity, getEnabledFillLayers } from './utils/fillLayers';
+import { resolveExtrude3DDepth } from './utils/extrude3d';
 import { set3DMeshGizmoSelectedForCanvas } from './utils/pick3d-bridge';
 import { v4 as uuidv4 } from 'uuid';
 import {
@@ -107,6 +107,7 @@ import {
   Locked,
   Mat3,
   Mesh3DNode,
+  Extrude3D,
   OBB,
   Parent,
   Path,
@@ -658,7 +659,7 @@ export class API {
 
     this.#mesh3DLayers = nextLayers;
     this.#mesh3DLayerEntities = new Map(
-      layers.map((layer) => [layer.id, layer.entity]),
+      layers.map((layer) => [layer.id, layer.entity.hold()]),
     );
 
     const validIds = new Set(nextLayers.map((layer) => layer.id));
@@ -686,7 +687,7 @@ export class API {
 
   getMesh3DLayerIdByEntity(entity: Entity) {
     for (const [id, layerEntity] of this.#mesh3DLayerEntities.entries()) {
-      if (layerEntity === entity) {
+      if (isEntityAlive(layerEntity) && layerEntity.isSame(entity)) {
         return id;
       }
     }
@@ -707,7 +708,7 @@ export class API {
   clearSelectedMesh3DLayers() {
     this.#selectedMesh3DLayerIds.forEach((id) => {
       const entity = this.#mesh3DLayerEntities.get(id);
-      if (entity?.has(Selected3D)) {
+      if (isEntityAlive(entity) && entity.has(Selected3D)) {
         entity.remove(Selected3D);
       }
     });
@@ -740,11 +741,23 @@ export class API {
       ...prevAppState,
       layersSelected: prevAppState.layersSelected.filter((id) => {
         const node = this.getNodeById(id);
-        return node?.type !== 'mesh3d';
+        return (
+          node?.type !== 'mesh3d' &&
+          !(
+            (node?.type === 'rect' || node?.type === 'path') &&
+            resolveExtrude3DDepth(node.extrude3d) !== undefined
+          )
+        );
       }),
       layersHighlighted: prevAppState.layersHighlighted.filter((id) => {
         const node = this.getNodeById(id);
-        return node?.type !== 'mesh3d';
+        return (
+          node?.type !== 'mesh3d' &&
+          !(
+            (node?.type === 'rect' || node?.type === 'path') &&
+            resolveExtrude3DDepth(node.extrude3d) !== undefined
+          )
+        );
       }),
     });
   }
@@ -752,7 +765,7 @@ export class API {
   selectMesh3DLayer(id: string) {
     const entity = this.#mesh3DLayerEntities.get(id);
     const layer = this.#mesh3DLayers.find((item) => item.id === id);
-    if (!entity || !layer) {
+    if (!isEntityAlive(entity) || !layer) {
       return false;
     }
 
@@ -762,8 +775,8 @@ export class API {
     this.#selectedMesh3DLayerIds.forEach((selectedId) => {
       const selectedEntity = this.#mesh3DLayerEntities.get(selectedId);
       if (
-        selectedEntity &&
-        selectedEntity !== entity &&
+        isEntityAlive(selectedEntity) &&
+        !selectedEntity.isSame(entity) &&
         selectedEntity.has(Selected3D)
       ) {
         selectedEntity.remove(Selected3D);
@@ -839,8 +852,9 @@ export class API {
   }
 
   getNodeByEntity(entity: Entity) {
+    if (!entity) return undefined;
     for (const [id, entityCommands] of this.#idEntityMap.entries()) {
-      if (entityCommands.id() === entity) {
+      if (entityCommands.id().isSame(entity)) {
         return this.getNodeById(id);
       }
     }
@@ -1390,8 +1404,6 @@ export class API {
       viewportX = 0,
       viewportY = 0,
     } = this.createLandmark(landmark);
-    const useFixedViewport = viewportX || viewportY;
-
     const endAnimation = () => {
       this.applyLandmark({ x, y, zoom, rotation, viewportX, viewportY });
       if (onfinish) {
@@ -1407,6 +1419,12 @@ export class API {
     }
 
     let timeStart: number | undefined;
+    const startingLandmark = this.#camera.read(ComputedCamera);
+    const startPosition: vec2 = [startingLandmark.x, startingLandmark.y];
+    const startZoomRotation: vec2 = [
+      startingLandmark.zoom,
+      startingLandmark.rotation,
+    ];
     const destPosition: vec2 = [x, y]; // in world space
     const destZoomRotation: vec2 = [zoom, rotation];
     const EPSILON = 0.0001;
@@ -1423,16 +1441,14 @@ export class API {
         return;
       }
 
-      const { x, y, zoom, rotation } = this.#camera.read(ComputedCamera);
-
       // use the same ease function in animation system
       const t = EASING_FUNCTION[easing](elapsed / duration);
 
       const interPosition = vec2.create();
       const interZoomRotation = vec2.fromValues(1, 0);
 
-      vec2.lerp(interPosition, [x, y], destPosition, t);
-      vec2.lerp(interZoomRotation, [zoom, rotation], destZoomRotation, t);
+      vec2.lerp(interPosition, startPosition, destPosition, t);
+      vec2.lerp(interZoomRotation, startZoomRotation, destZoomRotation, t);
 
       this.applyLandmark({
         x: interPosition[0],
@@ -1444,9 +1460,8 @@ export class API {
       });
 
       if (
-        useFixedViewport
-          ? vec2.dist(interZoomRotation, destZoomRotation) <= EPSILON
-          : vec2.dist(interPosition, destPosition) <= EPSILON
+        vec2.dist(interPosition, destPosition) <= EPSILON &&
+        vec2.dist(interZoomRotation, destZoomRotation) <= EPSILON
       ) {
         endAnimation();
         return;
@@ -1666,7 +1681,12 @@ export class API {
   /** Remove a keyframe (by index) of a node's animation. Keeps ≥1 keyframe. */
   removeNodeAnimationKeyframe(id: SerializedNode['id'], index: number) {
     const current = this.getNodeAnimation(id);
-    if (!current || current.keyframes.length <= 1) {
+    if (
+      !current ||
+      current.keyframes.length <= 1 ||
+      index < 0 ||
+      index >= current.keyframes.length
+    ) {
       return;
     }
     const keyframes = current.keyframes.filter((_, i) => i !== index);
@@ -1859,16 +1879,18 @@ export class API {
   /**
    * Select nodes.
    */
-  /** Remove {@link Selected3D} from a declarative mesh3d companion mesh (deferred: runs in {@link Deleter}). */
+  /** Remove {@link Selected3D} from a declarative 3D companion mesh (deferred: runs in {@link Deleter}). */
   #deselectMesh3DCompanion(source: Entity): void {
     this.runAtNextTick(() => this.#deselectMesh3DCompanionDeferred(source));
   }
 
+  #getDeclarative3DCompanion(source: Entity): Entity | undefined {
+    if (source.has(Mesh3DNode)) return source.read(Mesh3DNode).meshEntity;
+    if (source.has(Extrude3D)) return source.read(Extrude3D).meshEntity;
+  }
+
   #deselectMesh3DCompanionDeferred(source: Entity): void {
-    if (!source.has(Mesh3DNode)) {
-      return;
-    }
-    const mesh = source.read(Mesh3DNode).meshEntity;
+    const mesh = this.#getDeclarative3DCompanion(source);
     if (!mesh || !isEntityAlive(mesh) || !mesh.has(Selected3D)) {
       return;
     }
@@ -1885,10 +1907,13 @@ export class API {
   }
 
   #selectMesh3DCompanionDeferred(source: Entity, attempt = 0): void {
-    if (!source.has(Mesh3DNode) || !source.has(Selected)) {
+    if (
+      (!source.has(Mesh3DNode) && !source.has(Extrude3D)) ||
+      !source.has(Selected)
+    ) {
       return;
     }
-    const mesh = source.read(Mesh3DNode).meshEntity;
+    const mesh = this.#getDeclarative3DCompanion(source);
     if (!mesh || !isEntityAlive(mesh)) {
       if (attempt < 120) {
         this.runAtNextTick(() =>
@@ -1915,10 +1940,7 @@ export class API {
   #syncMesh3DGizmoBridge(): void {
     const has3DSelection = this.getAppState().layersSelected.some((id) => {
       const entity = this.#idEntityMap.get(id)?.id();
-      if (!entity?.has(Mesh3DNode)) {
-        return false;
-      }
-      const mesh = entity.read(Mesh3DNode).meshEntity;
+      const mesh = entity && this.#getDeclarative3DCompanion(entity);
       return !!(mesh && isEntityAlive(mesh) && mesh.has(Selected3D));
     });
     set3DMeshGizmoSelectedForCanvas(this.#canvas, has3DSelection);
@@ -1973,7 +1995,7 @@ export class API {
       if (entity && !entity.has(Selected)) {
         entity.add(Selected, { camera: this.#camera });
       }
-      // Deferred in Deleter; #selectMesh3DCompanionDeferred no-ops for non-mesh3d nodes.
+      // Deferred in Deleter; no-ops for nodes without a 3D companion.
       if (entity) {
         this.#selectMesh3DCompanion(entity);
       }
@@ -2709,93 +2731,10 @@ export class API {
     return bounds;
   }
 
-  /**
-   * 将选中的多个节点在**世界空间**中按各节点 {@link ComputedBounds.geometryWorldBounds} 的并集对齐
-   *（与变换器多选选区同语义）。跳过 {@link SerializedNode.locked|locked} 的节点；至少两个未锁定。
-   */
-  alignSelectedNodes(alignment: NodeAlignment, nodeIds?: string[]) {
-    const ids = nodeIds ?? this.getAppState().layersSelected;
-    if (ids.length < 2) {
-      return;
-    }
-    const nodes = ids
-      .map((id) => this.getNodeById(id))
-      .filter((n): n is SerializedNode => !!n && n.locked !== true);
-    if (nodes.length < 2) {
-      return;
-    }
-    const union = this.getGeometryBounds(nodes);
-    if (
-      !Number.isFinite(union.minX) ||
-      !Number.isFinite(union.maxX) ||
-      !Number.isFinite(union.minY) ||
-      !Number.isFinite(union.maxY) ||
-      union.minX > union.maxX ||
-      union.minY > union.maxY
-    ) {
-      return;
-    }
-
-    for (const node of nodes) {
-      const entity = this.getEntity(node);
-      if (!entity?.has(ComputedBounds)) {
-        continue;
-      }
-      const g = entity.read(ComputedBounds).geometryWorldBounds;
-      if (
-        !Number.isFinite(g.minX) ||
-        !Number.isFinite(g.maxX) ||
-        !Number.isFinite(g.minY) ||
-        !Number.isFinite(g.maxY) ||
-        g.minX > g.maxX ||
-        g.minY > g.maxY
-      ) {
-        continue;
-      }
-      let dx = 0;
-      let dy = 0;
-      if (alignment === 'left') {
-        dx = union.minX - g.minX;
-      } else if (alignment === 'right') {
-        dx = union.maxX - g.maxX;
-      } else if (alignment === 'top') {
-        dy = union.minY - g.minY;
-      } else if (alignment === 'bottom') {
-        dy = union.maxY - g.maxY;
-      } else if (alignment === 'centerH') {
-        const gc = (g.minX + g.maxX) * 0.5;
-        const uc = (union.minX + union.maxX) * 0.5;
-        dx = uc - gc;
-      } else {
-        const gc = (g.minY + g.maxY) * 0.5;
-        const uc = (union.minY + union.maxY) * 0.5;
-        dy = uc - gc;
-      }
-      this.#applyNodeWorldDelta(node, dx, dy);
-    }
-
-    this.record();
-  }
-
-  /**
-   * 将多个选中节点在**世界空间**中沿水平或竖直方向做**等间距**分布：固定整体首尾（沿该轴的 min/max
-   * 几何包络），在相邻两物体之间使用相同间隔；基于 {@link ComputedBounds.geometryWorldBounds} 与
-   * {@link alignSelectedNodes} 相同的 OBB 更新。跳过 `locked` 的节点，至少两个未锁。
-   */
-  distributeSelectedNodesSpacing(
-    axis: DistributeSpacingAxis,
-    nodeIds?: string[],
-  ) {
-    const ids = nodeIds ?? this.getAppState().layersSelected;
-    if (ids.length < 2) {
-      return;
-    }
-    const nodes = ids
-      .map((id) => this.getNodeById(id))
-      .filter((n): n is SerializedNode => !!n && n.locked !== true);
-    if (nodes.length < 2) {
-      return;
-    }
+  /** Resolve a stable, top-level selection before any layout mutations. */
+  #getSelectionLayoutEntries(nodeIds?: string[]) {
+    const scene = new Map(this.getNodes().map((node) => [node.id, node]));
+    const ids = new Set(nodeIds ?? this.getAppState().layersSelected);
     const entries: {
       node: SerializedNode;
       minX: number;
@@ -2805,22 +2744,19 @@ export class API {
       w: number;
       h: number;
     }[] = [];
-    for (const node of nodes) {
+    for (const id of ids) {
+      const node = scene.get(id);
+      if (!node || node.isDeleted || node.locked) continue;
       const entity = this.getEntity(node);
-      if (!entity?.has(ComputedBounds)) {
-        continue;
-      }
+      if (!entity?.has(ComputedBounds)) continue;
       const g = entity.read(ComputedBounds).geometryWorldBounds;
       if (
-        !Number.isFinite(g.minX) ||
-        !Number.isFinite(g.maxX) ||
-        !Number.isFinite(g.minY) ||
-        !Number.isFinite(g.maxY) ||
+        ![g.minX, g.minY, g.maxX, g.maxY].every(Number.isFinite) ||
         g.minX > g.maxX ||
-        g.minY > g.maxY
-      ) {
+        g.minY > g.maxY ||
+        !mat3.invert(mat3.create(), this.getParentTransform(entity))
+      )
         continue;
-      }
       entries.push({
         node,
         minX: g.minX,
@@ -2831,109 +2767,96 @@ export class API {
         h: g.maxY - g.minY,
       });
     }
-    if (entries.length < 2) {
-      return;
-    }
-    if (axis === 'horizontal') {
-      entries.sort((a, b) => a.minX - b.minX);
-    } else {
-      entries.sort((a, b) => a.minY - b.minY);
-    }
-    const n = entries.length;
-    if (axis === 'horizontal') {
-      const sumW = entries.reduce((s, e) => s + e.w, 0);
-      const span = entries[n - 1]!.maxX - entries[0]!.minX;
-      const gGap = (span - sumW) / (n - 1);
-      if (!Number.isFinite(gGap)) {
-        return;
+    const movable = new Set(entries.map(({ node }) => node.id));
+    return entries.filter(({ node }) => {
+      const seen = new Set([node.id]);
+      let parentId = node.parentId;
+      while (parentId) {
+        if (seen.has(parentId) || movable.has(parentId)) return false;
+        seen.add(parentId);
+        parentId = scene.get(parentId)?.parentId;
       }
-      const targetMinX: number[] = new Array(n);
-      targetMinX[0] = entries[0]!.minX;
-      for (let i = 1; i < n; i++) {
-        targetMinX[i] = targetMinX[i - 1]! + entries[i - 1]!.w + gGap;
-      }
-      for (let i = 0; i < n; i++) {
+      return true;
+    });
+  }
+
+  /** Align top-level unlocked nodes by their world geometry. Returns whether any moved. */
+  alignSelectedNodes(alignment: NodeAlignment, nodeIds?: string[]) {
+    const entries = this.#getSelectionLayoutEntries(nodeIds);
+    if (entries.length < 2) return false;
+    const union = new AABB();
+    entries.forEach((g) => union.addFrame(g.minX, g.minY, g.maxX, g.maxY));
+    let changed = false;
+    for (const g of entries) {
+      let dx = 0;
+      let dy = 0;
+      if (alignment === 'left') dx = union.minX - g.minX;
+      else if (alignment === 'right') dx = union.maxX - g.maxX;
+      else if (alignment === 'top') dy = union.minY - g.minY;
+      else if (alignment === 'bottom') dy = union.maxY - g.maxY;
+      else if (alignment === 'centerH')
+        dx = (union.minX + union.maxX - g.minX - g.maxX) / 2;
+      else dy = (union.minY + union.maxY - g.minY - g.maxY) / 2;
+      changed = this.#applyNodeWorldDelta(g.node, dx, dy) || changed;
+    }
+    if (changed) this.record();
+    return changed;
+  }
+
+  /** Distribute equal gaps in world geometry, retaining the selection's outer bounds. */
+  distributeSelectedNodesSpacing(
+    axis: DistributeSpacingAxis,
+    nodeIds?: string[],
+  ) {
+    const entries = this.#getSelectionLayoutEntries(nodeIds);
+    if (entries.length < 2) return false;
+    const horizontal = axis === 'horizontal';
+    const min = horizontal ? 'minX' : 'minY';
+    const max = horizontal ? 'maxX' : 'maxY';
+    const size = horizontal ? 'w' : 'h';
+    entries.sort((a, b) => a[min] - b[min]);
+    const end = Math.max(...entries.map((e) => e[max]));
+    const span = end - entries[0][min];
+    const gap =
+      (span - entries.reduce((sum, e) => sum + e[size], 0)) /
+      (entries.length - 1);
+    if (!Number.isFinite(gap)) return false;
+    let target = entries[0][min];
+    let changed = false;
+    for (const entry of entries) {
+      const delta = target - entry[min];
+      changed =
         this.#applyNodeWorldDelta(
-          entries[i]!.node,
-          targetMinX[i]! - entries[i]!.minX,
-          0,
-        );
-      }
-    } else {
-      const sumH = entries.reduce((s, e) => s + e.h, 0);
-      const span = entries[n - 1]!.maxY - entries[0]!.minY;
-      const gGap = (span - sumH) / (n - 1);
-      if (!Number.isFinite(gGap)) {
-        return;
-      }
-      const targetMinY: number[] = new Array(n);
-      targetMinY[0] = entries[0]!.minY;
-      for (let i = 1; i < n; i++) {
-        targetMinY[i] = targetMinY[i - 1]! + entries[i - 1]!.h + gGap;
-      }
-      for (let i = 0; i < n; i++) {
-        this.#applyNodeWorldDelta(
-          entries[i]!.node,
-          0,
-          targetMinY[i]! - entries[i]!.minY,
-        );
-      }
+          entry.node,
+          horizontal ? delta : 0,
+          horizontal ? 0 : delta,
+        ) || changed;
+      target += entry[size] + gap;
     }
-    this.record();
+    if (changed) this.record();
+    return changed;
   }
 
   #applyNodeWorldDelta(node: SerializedNode, dx: number, dy: number) {
-    if (Math.abs(dx) < 1e-9 && Math.abs(dy) < 1e-9) {
-      return;
-    }
+    if (
+      !Number.isFinite(dx) ||
+      !Number.isFinite(dy) ||
+      (Math.abs(dx) < 1e-9 && Math.abs(dy) < 1e-9)
+    )
+      return false;
     const entity = this.getEntity(node);
-    if (!entity) {
-      return;
-    }
-    const epsilon = 0.01;
-    const oldNode = { ...node, ...this.getAbsoluteTransformAndSize(node) };
-    const oldAttrs = {
-      x: oldNode.x ?? 0,
-      y: oldNode.y ?? 0,
-      width: oldNode.width ?? 0,
-      height: oldNode.height ?? 0,
-      rotation: oldNode.rotation ?? 0,
-      scaleX: oldNode.scaleX ?? 1,
-      scaleY: oldNode.scaleY ?? 1,
-    };
-    const wSign = oldAttrs.width;
-    const hSign = oldAttrs.height;
-    const delta = mat3.create();
-    mat3.fromTranslation(delta, [dx, dy]);
-    const parentTransform = this.getParentTransform(entity);
-    const localTransform = this.getTransform(oldNode);
-    const newLocalTransform = mat3.create();
-    mat3.multiply(newLocalTransform, parentTransform, localTransform);
-    mat3.multiply(newLocalTransform, delta, newLocalTransform);
-    mat3.multiply(
-      newLocalTransform,
-      mat3.invert(mat3.create(), parentTransform),
-      newLocalTransform,
-    );
-    const { rotation, translation, scale } = decompose(newLocalTransform);
-    const obb = {
-      x: translation[0],
-      y: translation[1],
-      width: Math.max(Math.abs((oldNode.width ?? 0) * scale[0]), epsilon),
-      height: Math.max(Math.abs((oldNode.height ?? 0) * scale[1]), epsilon),
-      rotation,
-      scaleX: oldAttrs.scaleX * (Math.sign(wSign) || 1),
-      scaleY: oldAttrs.scaleY * (Math.sign(hSign) || 1),
-    };
-    if (entity.hasSomeOf(Polyline, Path, Line)) {
-      const signW = Math.sign(wSign) || 1;
-      const signH = Math.sign(hSign) || 1;
-      obb.scaleX = Math.sign(oldAttrs.scaleX || 1) * signW;
-      obb.scaleY = Math.sign(oldAttrs.scaleY || 1) * signH;
-    }
-    this.updateNodeOBB(node, obb, node.lockAspectRatio, undefined, oldNode);
+    if (!entity) return false;
+    const inverse = mat3.invert(mat3.create(), this.getParentTransform(entity));
+    if (!inverse) return false;
+    // A world translation is a vector, so the inverse parent's translation
+    // must not contribute. Preserve every geometry/scale/rotation field.
+    const { translation } = entity.read(Transform);
+    this.updateNode(node, {
+      x: translation.x + inverse[0] * dx + inverse[3] * dy,
+      y: translation.y + inverse[1] * dx + inverse[4] * dy,
+    });
     updateGlobalTransform(entity);
-    updateComputedPoints(entity);
+    return true;
   }
 
   deleteNodesById(ids: SerializedNode['id'][], updateAppState = true) {
@@ -3440,174 +3363,169 @@ export class API {
       height?: number;
     } = {},
   ): Promise<HTMLCanvasElement> {
-    let {
-      canvas,
-      width = node.width ?? 0,
-      height = node.height ?? 0,
-    } = options;
-    if (!canvas) {
-      canvas = DOMAdapter.get().createCanvas(
-        width,
-        height,
-      ) as HTMLCanvasElement;
-    }
-
+    const canvas =
+      options.canvas ??
+      (DOMAdapter.get().createCanvas(
+        options.width ?? node.width ?? 0,
+        options.height ?? node.height ?? 0,
+      ) as HTMLCanvasElement);
     const ctx = canvas.getContext('2d')!;
     migrateLegacyFillWireInPlace(node as unknown as Record<string, unknown>);
     migrateLegacyStrokeWireInPlace(node as unknown as Record<string, unknown>);
-    const pres = firstEnabledFillPresentation((node as FillAttributes).fills);
-    const fillFromFills = pres?.fill ?? '';
-    const fillOpacity = (() => {
-      const o = pres?.fillOpacity ?? 1;
-      if (typeof o === 'number' && Number.isFinite(o)) {
-        return Math.max(0, Math.min(1, o));
-      }
-      const n = parseFloat(String(o));
-      return Number.isFinite(n) ? Math.max(0, Math.min(1, n)) : 1;
-    })();
-    const spres = firstEnabledStrokePresentation(
+    const fillPresentation = firstEnabledFillPresentation(
+      (node as FillAttributes).fills,
+    );
+    const strokePresentation = firstEnabledStrokePresentation(
       (node as StrokeAttributes).strokes,
     );
-    const strokeFromStrokes = spres?.stroke ?? '';
-    const strokeOpacity = (() => {
-      const o = spres?.strokeOpacity ?? 1;
-      if (typeof o === 'number' && Number.isFinite(o)) {
-        return Math.max(0, Math.min(1, o));
-      }
-      const n = parseFloat(String(o));
-      return Number.isFinite(n) ? Math.max(0, Math.min(1, n)) : 1;
-    })();
-    const opacity = (node as { opacity?: number }).opacity ?? 1;
+    const fill = fillPresentation?.fill ?? '';
+    const stroke = strokePresentation?.stroke ?? '';
+    const {
+      strokeWidth = 1,
+      strokeLinecap = 'butt',
+      strokeLinejoin = 'miter',
+    } = node as StrokeAttributes;
+    const hasFill = !!fill && fill !== 'none';
+    const hasStroke =
+      !!stroke &&
+      stroke !== 'none' &&
+      Number.isFinite(strokeWidth) &&
+      strokeWidth > 0;
 
-    if (node.type === 'rect' || node.type === 'rough-rect') {
-      const {
-        x,
-        y,
-        width,
-        height,
-        strokeWidth,
-        strokeLinecap,
-        strokeLinejoin,
-      } = node;
-      const fill = fillFromFills;
-      ctx.save();
-      if (isDataUrl(fill) || isUrl(fill)) {
-        ctx.globalAlpha = opacity * fillOpacity;
-        const image = (await DOMAdapter.get().createImage(fill)) as ImageBitmap;
-        ctx.drawImage(image, x ?? 0, y ?? 0, width ?? 0, height ?? 0);
-      } else {
-        ctx.globalAlpha = opacity * fillOpacity;
+    ctx.save();
+    try {
+      ctx.translate(node.x ?? 0, node.y ?? 0);
+      const nodeAlpha =
+        ctx.globalAlpha * fillLayerOpacity((node as FillAttributes).opacity);
+      ctx.globalAlpha = nodeAlpha;
+      const fillShape = (fillRule: CanvasFillRule = 'nonzero') => {
+        if (!hasFill) return;
+        ctx.globalAlpha =
+          nodeAlpha *
+          fillLayerOpacity(fillPresentation?.fillOpacity as number | string);
         ctx.fillStyle = fill;
-        ctx.fillRect(x ?? 0, y ?? 0, width ?? 0, height ?? 0);
-      }
-      ctx.globalAlpha = opacity * strokeOpacity;
-      ctx.strokeStyle = strokeFromStrokes;
-      ctx.lineWidth = strokeWidth;
-      ctx.lineCap = strokeLinecap;
-      ctx.lineJoin = strokeLinejoin;
-      ctx.stroke();
-      ctx.restore();
-    } else if (node.type === 'ellipse' || node.type === 'rough-ellipse') {
-      const {
-        x,
-        y,
-        width,
-        height,
-        strokeWidth,
-        strokeLinecap,
-        strokeLinejoin,
-      } = node;
-      const fill = fillFromFills;
-      ctx.save();
-      ctx.globalAlpha = opacity * fillOpacity;
-      ctx.fillStyle = fill;
-      ctx.ellipse(
-        (x ?? 0) + (width ?? 0) / 2,
-        (y ?? 0) + (height ?? 0) / 2,
-        (width ?? 0) / 2,
-        (height ?? 0) / 2,
-        0,
-        0,
-        2 * Math.PI,
-      );
-      ctx.fill();
-      ctx.globalAlpha = opacity * strokeOpacity;
-      ctx.strokeStyle = strokeFromStrokes;
-      ctx.lineWidth = strokeWidth;
-      ctx.lineCap = strokeLinecap;
-      ctx.lineJoin = strokeLinejoin;
-      ctx.stroke();
-      ctx.restore();
-    } else if (node.type === 'path' || node.type === 'rough-path') {
-      const { d, strokeWidth } = node;
-      const fill = fillFromFills;
-      ctx.save();
-      ctx.globalAlpha = opacity * fillOpacity;
-      ctx.fillStyle = fill;
-      ctx.beginPath();
-      path2Absolute(d).forEach(([command, ...data]) => {
-        if (command === 'M') {
-          ctx.moveTo(data[0], data[1]);
-        } else if (command === 'L') {
-          ctx.lineTo(data[0], data[1]);
-        } else if (command === 'C') {
-          ctx.bezierCurveTo(
-            data[0],
-            data[1],
-            data[2],
-            data[3],
-            data[4],
-            data[5],
+        ctx.fill(fillRule);
+      };
+      const strokeShape = () => {
+        if (!hasStroke) return;
+        ctx.globalAlpha =
+          nodeAlpha *
+          fillLayerOpacity(
+            strokePresentation?.strokeOpacity as number | string,
           );
-        }
-      });
-      ctx.closePath();
-      ctx.fill();
-      ctx.globalAlpha = opacity * strokeOpacity;
-      ctx.strokeStyle = strokeFromStrokes;
-      ctx.lineWidth = strokeWidth;
-      ctx.stroke();
-      ctx.restore();
-    } else if (node.type === 'polyline' || node.type === 'rough-polyline') {
-      const { points, strokeWidth, strokeLinecap, strokeLinejoin, x, y } = node;
-      ctx.save();
-      ctx.globalAlpha = opacity * strokeOpacity;
-      ctx.strokeStyle = strokeFromStrokes;
-      deserializePoints(points).forEach((point, index) => {
-        if (index === 0) {
-          ctx.moveTo(point[0] + (x ?? 0), point[1] + (y ?? 0));
+        ctx.strokeStyle = stroke;
+        ctx.lineWidth = strokeWidth;
+        ctx.lineCap = strokeLinecap;
+        ctx.lineJoin = strokeLinejoin;
+        ctx.stroke();
+      };
+
+      if (node.type === 'rect' || node.type === 'rough-rect') {
+        ctx.beginPath();
+        const width = node.width ?? 0;
+        const height = node.height ?? 0;
+        const requestedRadius = (node as { cornerRadius?: number })
+          .cornerRadius;
+        const radius =
+          width > 0 && height > 0 && Number.isFinite(requestedRadius)
+            ? Math.max(0, Math.min(requestedRadius!, width / 2, height / 2))
+            : 0;
+        if (radius > 0) {
+          ctx.moveTo(radius, 0);
+          ctx.lineTo(width - radius, 0);
+          ctx.arcTo(width, 0, width, radius, radius);
+          ctx.lineTo(width, height - radius);
+          ctx.arcTo(width, height, width - radius, height, radius);
+          ctx.lineTo(radius, height);
+          ctx.arcTo(0, height, 0, height - radius, radius);
+          ctx.lineTo(0, radius);
+          ctx.arcTo(0, 0, radius, 0, radius);
+          ctx.closePath();
         } else {
-          ctx.lineTo(point[0] + (x ?? 0), point[1] + (y ?? 0));
+          ctx.rect(0, 0, width, height);
         }
-      });
-      ctx.lineWidth = strokeWidth;
-      ctx.lineCap = strokeLinecap;
-      ctx.lineJoin = strokeLinejoin;
-      ctx.stroke();
-      ctx.restore();
-    } else if (node.type === 'line' || node.type === 'rough-line') {
-      const { x1, y1, x2, y2, strokeWidth, strokeLinecap, strokeLinejoin } =
-        node;
-      ctx.save();
-      ctx.globalAlpha = opacity * strokeOpacity;
-      ctx.strokeStyle = strokeFromStrokes;
-      ctx.moveTo(x1 ?? 0, y1 ?? 0);
-      ctx.lineTo(x2 ?? 0, y2 ?? 0);
-      ctx.lineWidth = strokeWidth;
-      ctx.lineCap = strokeLinecap;
-      ctx.lineJoin = strokeLinejoin;
-      ctx.stroke();
+        if (hasFill && (isDataUrl(fill) || isUrl(fill))) {
+          ctx.globalAlpha =
+            nodeAlpha *
+            fillLayerOpacity(fillPresentation?.fillOpacity as number | string);
+          const image = (await DOMAdapter.get().createImage(
+            fill,
+          )) as ImageBitmap;
+          try {
+            if (radius > 0) {
+              ctx.save();
+              ctx.clip();
+            }
+            try {
+              ctx.drawImage(image, 0, 0, width, height);
+            } finally {
+              if (radius > 0) ctx.restore();
+            }
+          } finally {
+            image.close?.();
+          }
+        } else {
+          fillShape();
+        }
+        strokeShape();
+      } else if (node.type === 'ellipse' || node.type === 'rough-ellipse') {
+        ctx.beginPath();
+        ctx.ellipse(
+          (node.width ?? 0) / 2,
+          (node.height ?? 0) / 2,
+          (node.width ?? 0) / 2,
+          (node.height ?? 0) / 2,
+          0,
+          0,
+          2 * Math.PI,
+        );
+        fillShape();
+        strokeShape();
+      } else if (node.type === 'path' || node.type === 'rough-path') {
+        ctx.beginPath();
+        const [commands, closed] = path2Curve(node.d, true) as [
+          Array<[string, ...number[]]>,
+          number[],
+        ];
+        commands.forEach(([command, ...data], index) => {
+          if (command === 'M') ctx.moveTo(data[0], data[1]);
+          else if (command === 'C')
+            ctx.bezierCurveTo(
+              data[0],
+              data[1],
+              data[2],
+              data[3],
+              data[4],
+              data[5],
+            );
+          if (closed.includes(index)) ctx.closePath();
+        });
+        fillShape(node.fillRule ?? 'nonzero');
+        strokeShape();
+      } else if (node.type === 'polyline' || node.type === 'rough-polyline') {
+        ctx.beginPath();
+        deserializePoints(node.points).forEach(([x, y], index) => {
+          if (index === 0) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+        });
+        strokeShape();
+      } else if (node.type === 'line' || node.type === 'rough-line') {
+        ctx.beginPath();
+        ctx.moveTo(node.x1 ?? 0, node.y1 ?? 0);
+        ctx.lineTo(node.x2 ?? 0, node.y2 ?? 0);
+        strokeShape();
+      }
+
+      // Children share this canvas. Await each image decode before drawing the
+      // next sibling, preserving scene order and inherited transforms/opacity.
+      ctx.globalAlpha = nodeAlpha;
+      for (const child of this.getChildren(node)) {
+        const childNode = this.getNodeByEntity(child);
+        if (childNode) await this.renderToCanvas(childNode, { canvas });
+      }
+    } finally {
       ctx.restore();
     }
-
-    await Promise.all(
-      this.getChildren(node)
-        .map((child) =>
-          this.renderToCanvas(this.getNodeByEntity(child), { canvas }),
-        )
-        .filter(Boolean),
-    );
-
     return canvas;
   }
 

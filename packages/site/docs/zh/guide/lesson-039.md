@@ -8,6 +8,7 @@ import Cube from '../../components/Cube.vue'
 import CubePerspective from '../../components/CubePerspective.vue'
 import Lighting from '../../components/Lighting.vue'
 import GltfDuck from '../../components/GltfDuck.vue'
+import SvgExtrusion from '../../components/SvgExtrusion.vue'
 </script>
 
 # 课程 39 - 3D Mesh 渲染
@@ -174,12 +175,49 @@ const hit = rayMeshIntersection(ray, positions, indices, modelMatrix);
 
 ### 拖拽约束
 
-gizmo 命中后，**`Pick3D.handleDrag`** 每帧重新求射线，并与 **约束平面** 求交（`intersectRayWithPlane`）：
+按下 gizmo 后会创建 `GizmoSession`，保存初始姿态和固定的投影。普通相机通过射线与
+约束平面求交；linked 相机反解实际显示的把手投影，包括 Z 轴的屏幕偏移。平移沿
+选中的轴或平面，旋转沿局部圆环轴；退化或无法求解的采样不会改动预览。
 
--   **平移**（箭头 / 平面）：平面法线随当前轴或平面 widget。
--   **旋转**（圆环）：平面法线为环轴；角度增量由 `angleOnRotationPlane` 计算。
+拖动只更新运行时组件，松手时声明式源节点才提交一次文档改动和撤销记录。
+Escape、指针取消或离开画布会恢复起始姿态，不产生文档改动。
 
-相对初始命中点（`dragHitStart`）的增量写回 **`Transform3D`**。
+拖动期间切换相机、改变相机投影/视图或画布尺寸，会取消当前手势。通过 API 或撤销
+修改源节点的姿态、几何配置或祖先节点的变换，也会取消手势，并从**当前文档**恢复
+运行时预览，避免旧的松手事件覆盖新状态。名称、颜色等无关编辑可与继续进行的拖动
+合并；其他画布的修改不会中断当前手势。再次按下锚点即可在新视图中开始拖动。
+
+计算布局也属于手势上下文。Yoga 可能只更新 ECS 中的位置或尺寸，而保留文档中的
+同名字段；这类变化以及祖先变换变化也会取消预览。取消时保留新的布局结果，只撤销
+仍由预览持有的坐标；布局未变时按 Escape，会回到拖动前的计算位置，即使它与文档
+坐标不同。手势自身产生的预览写入不会触发取消。
+
+`GizmoSourceFrame` 保存源节点和祖先的局部几何快照，避免世界矩阵延迟更新导致
+误判。指针会话拥有源节点预览期间，伴生同步不再重复回写源节点；直接操作伴生网格
+的集成仍保留原有的反向同步。
+
+无变化帧不再重复写入伴生网格的变换和材质。位姿或材质变化复用参数化网格的 CPU
+顶点数据，只有几何配置变化才使对应缓存失效。
+
+`MeshPipeline3D` 在位姿和材质编辑时也会复用 GPU 顶点、法线、UV、索引和逐网格
+uniform 缓冲。只有 `Mesh3D` 写入会使几何缓存失效；直接修改数组前，需要通过
+`entity.write(Mesh3D)` 取得组件。缓存检查在伴生同步之后执行，未绘制帧会保留
+更新标记，下一次绘制只上传一次新几何。每个画布独立拥有缓存和场景 uniform。
+删除网格或跨画布移动会释放旧缓冲；画布销毁时，先释放这些资源再销毁设备。
+分配失败会回收本次已分配的缓冲，保留旧的完整缓存项，允许下一次绘制重试。
+
+模型和法线矩阵只在位姿变化时重新计算。无变化帧或仅相机变化时跳过模型 uniform
+上传；材质编辑和纹理加载完成会更新 uniform，无需重算这两个矩阵。直接修改
+变换或颜色数组时，缓存按数值比较，能够识别原地修改。
+
+场景 uniform 按画布缓存。相机与联动二维视图变化时更新场景矩阵；灯光变化只
+重新打包灯光数据，无需重算矩阵。无变化绘制复用场景数据和各网格的 draw binding。
+纹理就绪或替换、几何重建及 GPU 资源更换会使相应绑定失效；释放时先销毁绑定，
+再销毁其引用的缓冲和纹理。场景上传或绑定分配失败后，下一次绘制可以重试。
+
+3D 图层列表根据 ECS 中几何、名称、归属和成员的变化更新，无变化帧不再扫描
+全部网格。选中成员单独跟踪，悬停 gizmo 把手不会重建图层列表。图层保留稳定的
+实体引用，后续从面板选择对象以及撤销重做仍可使用。
 
 完整指针流程与把手含义见 [3D 变换 Gizmo](#gizmo)。
 
@@ -191,16 +229,18 @@ gizmo 命中后，**`Pick3D.handleDrag`** 每帧重新求射线，并与 **约�
 
 ```plaintext
 pointer down（Select 工具）
-  └─ Pick3D.handlePointerDown
-       ├─ probePick3DAtViewport：先测 gizmo，再测 Mesh3D
-       ├─ 命中 gizmo → 记录 activeAxis、dragHitStart，dragging = true
-       └─ 命中 mesh → add Selected3D；未命中 → 移除已有 Selected3D
+  └─ Pick3D：先测 gizmo，再测 Mesh3D
+       ├─ 命中 gizmo → 保存姿态/投影，创建 GizmoSession
+       └─ 命中 mesh → 选中；未命中 → 清空选择
 
 pointer move（按住）
-  └─ Pick3D.handleDrag：射线与约束平面求交，delta = 当前交点 − dragHitStart
+  └─ GizmoSession.update → 受约束的运行时预览
 
 pointer up
-  └─ 结束拖拽，清空 activeAxis / dragHitStart
+  └─ finish(true) → 提交一次源节点姿态，记录历史
+
+Escape / pointer cancel / leave
+  └─ finish(false) → 恢复姿态，清空手势状态
 ```
 
 ### 坐标与把手含义 {#gizmo-axes}
@@ -220,6 +260,81 @@ pointer up
 -   拖 **箭头 / 平面** → 改 `Transform3D.translation`；拖 **圆环** → 改 `Transform3D.rotation`（局部欧拉角，与 mesh 一致）。
 -   圆环随物体当前朝向绘制；箭头仍保持画布世界轴向（X 右、Y 下、Z 深度）。
 -   拾取按屏幕空间 **最近** 命中；重叠时箭头在上层，优先拖到平移。`scale` 仍预留。
+
+### 编辑挤出矩形 {#extrude-editing}
+
+设置了 `extrude3d` 的 `rect` 使用与声明式网格相同的 gizmo。序列化选项支持高度偏移和局部三维旋转：
+
+```ts
+const node: RectSerializedNode = {
+    id: 'extruded-card',
+    type: 'rect',
+    zIndex: 0,
+    x: 100,
+    y: 80,
+    width: 160,
+    height: 100,
+    extrude3d: { depth: 80, z: 20, rotation: [0.2, 0.3, 0] },
+    fills: [{ type: 'solid', value: '#3377dd' }],
+};
+```
+
+-   XY 平移写回源矩形在父坐标系中的 `x`/`y`，支持父级旋转、缩放和翻转。父变换不可逆时拒绝预览。
+-   Z 平移改变 `extrude3d.z`，保留厚度 `depth`。未施加三维旋转时，`z` 表示前表面的高度偏移；伴生网格中心位于 `z - depth / 2`。
+-   圆环旋转写入 `extrude3d.rotation`，使用弧度制 XYZ 欧拉角，相对于源图形已有的世界空间二维旋转。源图形的二维 `rotation` 保持不变，网格使用 `Rz(sourceAngle) × Rx(x) × Ry(y) × Rz(z)` 组合姿态。
+
+松手提交一次，取消恢复预览；撤销、重做和重新载入文档会恢复相同姿态。拖动中关闭
+挤出或替换伴生网格会中断手势，并从当前文档恢复，不会重建过期的网格。
+
+`extrude3d: true` 仍表示厚度 100，数值仍表示指定厚度。对象写法默认厚度 100、
+高度偏移 0、旋转 `[0, 0, 0]`。更新采用整个选项值替换，省略的字段恢复上述默认值。
+目前没有缩放把手，可通过矩形尺寸和 `depth` 改变大小。挤出底面仍沿用世界 AABB
+尺寸，本次未实现旋转或剪切矩形底面的精确挤出几何。
+
+### 挤出闭合 Path {#extrude-path}
+
+只有一层纯色填充的闭合 Path 也可以设置 `extrude3d`。前后封盖遵循实际填充轮廓，
+包括孔洞；修改 `d` 或 `fillRule` 会重建网格，平移或旋转则复用现有网格。
+
+```ts
+const vector: PathSerializedNode = {
+    id: 'extruded-vector',
+    type: 'path',
+    zIndex: 0,
+    x: 100,
+    y: 80,
+    d: 'M100 80 L200 80 L200 180 L100 180 Z M125 105 L125 155 L175 155 L175 105 Z',
+    fillRule: 'evenodd',
+    fills: [{ type: 'solid', value: '#3377dd' }],
+    extrude3d: { depth: 40, z: 0 },
+};
+```
+
+每条子路径都必须闭合。开放路径、含描边图层、多层或非纯色填充、非流形轮廓及
+剪切变换会继续以 2D 显示。原 Path 文档节点保持可编辑，也支持 gizmo、撤销和
+重新载入。
+
+对于 SVG 的 `<path>` 与 `<polygon>`，可以通过 `svgElementsToExtrudedNodes` 导入为
+可编辑的挤出图形；其他元素继续保持 2D。该函数要求厚度为有限正数。
+
+```ts
+import { svgElementsToExtrudedNodes } from '@infinite-canvas-tutorial/ecs';
+
+const svg = new DOMParser().parseFromString(source, 'image/svg+xml');
+const nodes = svgElementsToExtrudedNodes(
+    Array.from(svg.documentElement.children) as SVGElement[],
+    40,
+);
+api.updateNodes(nodes);
+```
+
+只有单层纯色填充、没有可见描边的闭合轮廓会挤出；SVG 的 `stroke="none"` 占位层
+会被忽略。导入会保留 `fill-rule`，包括 `evenodd` 孔洞。开放路径、实际描边、渐变、
+不支持的 SVG 元素继续以 2D 显示。在画布中对 Path 施加剪切变换时也会保持 2D。
+SVG 自带的 transform 和 viewBox 缩放仍沿用原有导入行为；原导入器无法准确保留剪切，
+目前应避免导入带剪切变换的 SVG。
+
+<SvgExtrusion />
 
 ## 光照 {#lighting}
 

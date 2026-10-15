@@ -5,16 +5,29 @@ import {
   Extrude3D,
   Extrude3DTarget,
   FillLayers,
+  GlobalTransform,
   Material3D,
+  Mesh3D,
+  Path,
+  StrokeLayers,
   ToBeDeleted,
   Transform3D,
-  canvasWorldToWorld3D,
+  Canvas,
+  Canvas3DScope,
+  Children,
+  Selected,
+  Selected3D,
 } from '../components';
 import { extrudeMaterialBaseColorFromEntity } from '../utils/extrude3d';
+import { resolveExtrudeCompanionTransform } from '../utils/extrude3d-transform';
+import { resolveCanvasFromSceneGraph } from '../utils/canvas3d-scope';
+import { ensureCompanionGizmoWhenSourceSelected } from '../utils/mesh3d-node';
 import { isEntityAlive } from './Transform';
+import { syncMaterial3D, syncTransform3D } from '../utils/sync3d';
+import { pathExtrusionGeometry } from '../utils/path-extrusion-source';
 
 /**
- * Keeps Extrude3D mesh companions aligned to their rect's canvas-space bounds.
+ * Keeps Extrude3D mesh companions aligned to their 2D sources.
  * Mesh entities are created by {@link EnsureExtrudeMeshes}.
  */
 export class SyncExtrude3D extends System {
@@ -31,8 +44,28 @@ export class SyncExtrude3D extends System {
     this.query(
       (q) =>
         q
-          .using(Extrude3D, Extrude3DTarget, ComputedBounds, FillLayers, Camera)
-          .read.and.using(Material3D, Transform3D, ToBeDeleted).write,
+          .using(
+            Extrude3D,
+            Extrude3DTarget,
+            ComputedBounds,
+            FillLayers,
+            GlobalTransform,
+            Path,
+            StrokeLayers,
+            Camera,
+            Canvas,
+            Canvas3DScope,
+            Children,
+            Selected,
+          )
+          .read.and.using(
+            Material3D,
+            Mesh3D,
+            Transform3D,
+            ToBeDeleted,
+            Selected3D,
+            Extrude3D,
+          ).write,
     );
   }
 
@@ -46,28 +79,43 @@ export class SyncExtrude3D extends System {
         continue;
       }
 
-      const bounds = entity.read(ComputedBounds).geometryWorldBounds;
-      const width = bounds.maxX - bounds.minX;
-      const height = bounds.maxY - bounds.minY;
-      if (width <= 0 || height <= 0) {
-        continue;
+      if (entity.has(Path)) {
+        const pathMesh = pathExtrusionGeometry(entity);
+        if (!pathMesh) {
+          meshEntity.add(ToBeDeleted);
+          entity.write(Extrude3D).meshEntity = undefined;
+          continue;
+        }
+        const { geometry } = pathMesh;
+        if (
+          meshEntity.read(Mesh3D).positions !== geometry.positions ||
+          meshEntity.read(Mesh3D).indices !== geometry.indices
+        ) {
+          Object.assign(meshEntity.write(Mesh3D), {
+            positions: geometry.positions,
+            normals: geometry.normals,
+            uvs: geometry.uvs ?? null,
+            indices: geometry.indices,
+          });
+        }
       }
 
-      const centerX = (bounds.minX + bounds.maxX) / 2;
-      const centerY = (bounds.minY + bounds.maxY) / 2;
-      const depth = extrude.depth;
-      const rotation = entity.read(ComputedBounds).transformOBB.rotation;
-      const unifiedSpace = meshEntity.read(Extrude3DTarget).unifiedSpace;
+      const dragging =
+        meshEntity.has(Selected3D) && meshEntity.read(Selected3D).dragging;
+      if (!dragging) {
+        const pose = resolveExtrudeCompanionTransform(
+          entity,
+          meshEntity.read(Extrude3DTarget).unifiedSpace,
+        );
+        if (pose) syncTransform3D(meshEntity, pose);
+      }
+      const canvas = resolveCanvasFromSceneGraph(entity);
+      if (canvas)
+        ensureCompanionGizmoWhenSourceSelected(entity, meshEntity, canvas);
 
-      const transform = meshEntity.write(Transform3D);
-      transform.translation = unifiedSpace
-        ? [centerX, centerY, -depth / 2]
-        : canvasWorldToWorld3D(centerX, centerY, -depth / 2);
-      transform.rotation = [0, 0, rotation];
-      transform.scale = [width, height, depth];
-
-      meshEntity.write(Material3D).baseColor =
-        extrudeMaterialBaseColorFromEntity(entity);
+      syncMaterial3D(meshEntity, {
+        baseColor: extrudeMaterialBaseColorFromEntity(entity),
+      });
     }
   }
 

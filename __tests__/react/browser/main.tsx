@@ -108,6 +108,7 @@ class InitialFrameRender extends System {
     }
   }
 }
+const query = new URLSearchParams(location.search);
 const runtime = createCanvasRuntime({
   onAppReady(app, { signal }) {
     window.runtimeEvents.push('setup');
@@ -125,6 +126,16 @@ const runtime = createCanvasRuntime({
       app.world.execute = execute;
       window.runtimeEvents.push('dispose');
     };
+  },
+  appOptions: {
+    // Small regression scenes share this budget across both canvases, including
+    // internal entities. Query overrides also exercise App validation/defaults.
+    maxEntities: query.has('maxEntities')
+      ? Number(query.get('maxEntities'))
+      : 16_384,
+    maxLimboComponents: query.has('maxLimboComponents')
+      ? Number(query.get('maxLimboComponents'))
+      : undefined,
   },
   plugins: new URLSearchParams(location.search).has('initialFrame')
     ? [
@@ -341,7 +352,6 @@ function NodeProperty({ id }: { id: string }) {
 }
 
 const host = document.getElementById('root')!;
-const query = new URLSearchParams(location.search);
 const playgroundLocale = query.get('playground');
 const starter = query.get('starter');
 if (playgroundLocale) {

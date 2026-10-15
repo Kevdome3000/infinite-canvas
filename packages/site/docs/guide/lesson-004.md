@@ -455,6 +455,8 @@ function moveCamera(e: MouseEvent) {
 
 You can try to drag canvas in the example at the top of this page.
 
+The ECS canvas also pans with the mouse wheel or a two-finger touch gesture. These deltas are measured in viewport pixels: rotate them into world space and divide by the current zoom before changing the camera position. Touch movement uses the opposite camera delta so the canvas follows the fingers. If a pinch changes zoom in the same frame, apply the pan to the updated camera transform.
+
 ### Rotation
 
 Rotation is not an essential feature for the canvas, but a FigJam user once inquired in the forums about its support: [Rotate canvas], as a slight rotation of the canvas aligns more with their usual usage habits.
@@ -476,6 +478,8 @@ function handleMouseMove(e: MouseEvent) {
 ```
 
 In the camera rotation mode, the distance moved by the mouse will be taken as the angle of rotation. Next, we construct a transformation matrix for rotation around a specified point in the world coordinate system; this can be referenced from [transform-origin]. Then, this transformation is applied to the camera matrix, and finally, various parameters are extracted from the matrix:
+
+Save the pointer-down coordinates as an independent value; retaining a live ECS input vector across frames can invalidate the rotation gesture.
 
 ```ts
 function rotateCamera(e: MouseEvent) {
@@ -657,6 +661,8 @@ Any ongoing animations should be stopped before starting a new one (if applicabl
 this.cancelLandmarkAnimation();
 
 let timeStart: number | undefined;
+const startPosition: vec2 = [this.#x, this.#y];
+const startZoomRotation: vec2 = [this.zoom, this.#rotation];
 const destPosition: vec2 = [x, y];
 const destZoomRotation: vec2 = [zoom, rotation];
 const animate = (timestamp: number) => {
@@ -690,8 +696,8 @@ const t = EASING_FUNCTION[easing](elapsed / duration);
 const interPosition = vec2.create();
 const interZoomRotation = vec2.fromValues(1, 0);
 
-vec2.lerp(interPosition, [this.#x, this.#y], destPosition, t);
-vec2.lerp(interZoomRotation, [this.zoom, this.#rotation], destZoomRotation, t);
+vec2.lerp(interPosition, startPosition, destPosition, t);
+vec2.lerp(interZoomRotation, startZoomRotation, destZoomRotation, t);
 
 this.#x = interPosition[0];
 this.#y = interPosition[1];
@@ -700,11 +706,13 @@ this.#rotation = interZoomRotation[1];
 this.updateMatrix();
 ```
 
-There's a small optimization that can be made here: during the process, you can calculate the displacement of the camera position. If the distance is smaller than a certain threshold, there's no need to carry out the subsequent animation, and you can end it directly:
+Capture the starting state once when the animation begins. Interpolating from the updated camera state on every frame changes the easing curve and makes the result depend on frame rate. An animation can end early only when both position and zoom/rotation have reached their destinations; checking position alone would skip a zoom-only animation:
 
 ```ts
-const dist = vec2.dist(interPosition, destPosition);
-if (dist <= EPSILON) {
+if (
+  vec2.dist(interPosition, destPosition) <= EPSILON &&
+  vec2.dist(interZoomRotation, destZoomRotation) <= EPSILON
+) {
     endAnimation();
     return;
 }

@@ -20,7 +20,7 @@ import {
 import { Entity } from '@lastolivegames/becsy';
 import { mat3 } from 'gl-matrix';
 import earcut from 'earcut';
-import { hasSelfTouchingContour } from '../utils/path-rendering';
+import { buildPathFillMesh } from '../utils/path-fill-mesh';
 import { ZINDEX_FACTOR, STENCIL_CLIP_REF } from './Drawcall';
 import { PathDrawcall } from './PathDrawcall';
 import { vert, frag, Location } from '../shaders/mesh';
@@ -31,7 +31,6 @@ import {
   parseColor,
   parseGradient,
   isMeshGradientGradient,
-  triangulate,
 } from '../utils';
 import {
   fillLayerOpacity,
@@ -48,10 +47,14 @@ import {
   strokePaintAlphaMultipliers,
 } from '../utils/strokeLayers';
 import { composeFillLayerTexturesOnGpu } from '../utils/fillLayerComposeGpu';
+import { createComposedFillTexture } from '../utils/composed-fill-texture';
+import { createRasterFilterInput } from '../utils/raster-filter-input';
 import {
   getRasterFilterValueForShape,
+  hasRasterPostEffects,
   parseEffect,
   filterRasterPostEffects,
+  getRasterFilterPadding,
 } from '../utils/filter';
 import { getRainFxAnimationExportContext } from '../utils/rain-fx/rain-fx-export-context';
 import { scheduleFillImageSvgRerasterIfNeeded } from '../utils/fillImageSvgReraster';
@@ -98,6 +101,10 @@ export class Mesh extends PathDrawcall {
   #rawFillImageTexture: Texture | null = null;
   /** True when {@link #texture} is the post-process chain output (do not `destroy` in Mesh.destroy). */
   #fillTextureFromPostChain = false;
+  #borrowedFillTexture = false;
+  #blurRaster: ReturnType<typeof createRasterFilterInput> | null = null;
+  #blurVertices: Buffer | null = null;
+  #blurIndices: Buffer | null = null;
 
   #fillLayerTextures: Texture[] = [];
   #fillLayerBindings: Bindings[] = [];
@@ -110,6 +117,30 @@ export class Mesh extends PathDrawcall {
   points: number[] = [];
 
   instanced = false;
+
+  private get blurPadding(): number {
+    const shape = this.shapes[0];
+    // Keep stencil and wireframe geometry intact. External textures do not yet
+    // expose the raster dimensions required by the capture path.
+    if (
+      !shape ||
+      this.instanced ||
+      this.useStencil ||
+      this.useWireframe ||
+      shape.has(FillTexture) ||
+      shape.has(Rough) ||
+      !super.useFillImage
+    )
+      return 0;
+    return getRasterFilterPadding(getRasterFilterValueForShape(shape));
+  }
+
+  protected override get extraShaderDefines(): string {
+    if (this.blurPadding > 0) {
+      return `${super.extraShaderDefines}#define USE_BLUR_FILTER_OUTPUT\n`;
+    }
+    return super.extraShaderDefines;
+  }
 
   static useDash(shape: Entity) {
     const { dasharray = [] } = shape.has(Stroke)
@@ -135,6 +166,52 @@ export class Mesh extends PathDrawcall {
     const effects = filterRasterPostEffects(parseEffect(filterValue));
     if (effects.length === 0) {
       return raw;
+    }
+    const padding = this.blurPadding;
+    if (padding > 0) {
+      const geometry = getSdfGeometryBoundsForFilter(instance);
+      const [, uniforms] = this.generateBuffer(instance);
+      const bounds = {
+        minX: geometry.minX - padding,
+        minY: geometry.minY - padding,
+        maxX: geometry.maxX + padding,
+        maxY: geometry.maxY + padding,
+      };
+      this.#blurRaster = createRasterFilterInput({
+        device: this.device,
+        renderCache: this.renderCache,
+        vertex: '#define USE_FILLIMAGE\n' + vert,
+        fragment: '#define USE_FILLIMAGE\n' + frag,
+        points: this.vertexBufferDatas[0],
+        indices: this.indexBufferData,
+        uniforms,
+        texture: raw,
+        sampler: this.createSampler(),
+        bounds,
+      });
+      this.#blurVertices = this.device.createBuffer({
+        viewOrSize: new Float32Array([
+          bounds.minX,
+          bounds.minY,
+          bounds.maxX,
+          bounds.minY,
+          bounds.maxX,
+          bounds.maxY,
+          bounds.minX,
+          bounds.maxY,
+        ]),
+        usage: BufferUsage.VERTEX,
+        hint: BufferFrequencyHint.STATIC,
+      });
+      this.#blurIndices = this.device.createBuffer({
+        viewOrSize: new Uint32Array([0, 1, 2, 0, 2, 3]),
+        usage: BufferUsage.INDEX,
+        hint: BufferFrequencyHint.STATIC,
+      });
+      raw.destroy();
+      raw = this.#blurRaster.texture;
+      tw = this.#blurRaster.width;
+      th = this.#blurRaster.height;
     }
     this.#rawFillImageTexture = raw;
     const anim = getRainFxAnimationExportContext();
@@ -173,10 +250,28 @@ export class Mesh extends PathDrawcall {
       t.destroy?.();
     }
     this.#fillLayerTextures = [];
-    if (clearsMainTexture) {
+    if (clearsMainTexture || precomposedTexture) {
       this.#texture = null;
     }
     precomposedTexture?.destroy?.();
+  }
+
+  private disposeFillImageResources(): void {
+    this.disposeMeshFillLayerResources();
+    if (!this.#fillTextureFromPostChain && !this.#borrowedFillTexture) {
+      this.#texture?.destroy();
+    }
+    if (this.#blurRaster) this.#blurRaster.destroy();
+    else this.#rawFillImageTexture?.destroy();
+    this.#blurRaster = null;
+    this.#blurVertices?.destroy();
+    this.#blurIndices?.destroy();
+    this.#blurVertices = null;
+    this.#blurIndices = null;
+    this.#rawFillImageTexture = null;
+    this.#texture = null;
+    this.#fillTextureFromPostChain = false;
+    this.#borrowedFillTexture = false;
   }
 
   /** Rasterize one {@link FillLayers} entry for mesh fill sampling. */
@@ -227,7 +322,7 @@ export class Mesh extends PathDrawcall {
         sourceH: sh,
         rasterOptions: rasterOpts,
       });
-      return this.applyRasterFilterChainIfNeeded(instance, raw, tw, th);
+      return raw;
     }
     if (layer.type === 'pattern') {
       const pw = Math.max(1, Math.ceil(width));
@@ -248,7 +343,7 @@ export class Mesh extends PathDrawcall {
         usage: TextureUsage.SAMPLED,
       });
       texture.setImageData([canvas]);
-      return this.applyRasterFilterChainIfNeeded(instance, texture, pw, ph);
+      return texture;
     }
     if (layer.type === 'solid') {
       const tw = Math.max(1, Math.ceil(width));
@@ -268,7 +363,7 @@ export class Mesh extends PathDrawcall {
         usage: TextureUsage.SAMPLED,
       });
       upload2DRasterCanvasToTexture(raw, canvas);
-      return this.applyRasterFilterChainIfNeeded(instance, raw, tw, th);
+      return raw;
     }
     const tw = Math.max(1, Math.ceil(width));
     const th = Math.max(1, Math.ceil(height));
@@ -279,7 +374,7 @@ export class Mesh extends PathDrawcall {
         : undefined;
     if (meshFill && isMeshGradientGradient(meshFill)) {
       const raw = this.renderMeshGradientTexture(meshFill, tw, th);
-      return this.applyRasterFilterChainIfNeeded(instance, raw, tw, th);
+      return raw;
     }
     const canvas = this.texturePool.getOrCreateGradient({
       gradients: fillGradients ?? [],
@@ -294,7 +389,7 @@ export class Mesh extends PathDrawcall {
       usage: TextureUsage.SAMPLED,
     });
     texture.setImageData([canvas]);
-    return this.applyRasterFilterChainIfNeeded(instance, texture, tw, th);
+    return texture;
   }
 
   validate(shape: Entity) {
@@ -319,7 +414,10 @@ export class Mesh extends PathDrawcall {
     if (
       this.shapes[0].has(Path) &&
       shape.has(Path) &&
-      this.shapes[0].read(Path).d !== shape.read(Path).d
+      (this.shapes[0].read(Path).d !== shape.read(Path).d ||
+        this.shapes[0].read(Path).fillRule !== shape.read(Path).fillRule ||
+        this.shapes[0].read(Path).tessellationMethod !==
+          shape.read(Path).tessellationMethod)
     ) {
       return false;
     }
@@ -392,7 +490,7 @@ export class Mesh extends PathDrawcall {
 
     let rawPoints: [number, number][][] | undefined;
     let tessellationMethod: TesselationMethod | undefined;
-    let vnFillMesh: { points: number[]; indices: number[] } | undefined;
+    let fillMesh: { points: number[]; indices: number[] } | undefined;
 
     if (
       instance.has(Rough) &&
@@ -402,22 +500,20 @@ export class Mesh extends PathDrawcall {
       rawPoints = instance.read(ComputedRough).fillPathPoints;
       tessellationMethod = TesselationMethod.EARCUT;
     } else if (instance.has(Path)) {
-      rawPoints = this.pathPoints.get(instance) ?? instance.read(ComputedPoints).points;
-      tessellationMethod = instance.read(Path).tessellationMethod;
-      if (
-        tessellationMethod === TesselationMethod.EARCUT &&
-        hasSelfTouchingContour(rawPoints)
-      ) {
-        tessellationMethod = TesselationMethod.LIBTESS;
-      }
+      const { fillRule, tessellationMethod } = instance.read(Path);
+      fillMesh = buildPathFillMesh(
+        this.pathPoints.get(instance) ?? instance.read(ComputedPoints).points,
+        fillRule,
+        tessellationMethod,
+      );
     } else if (instance.has(VectorNetwork)) {
       const { vertices, segments, regions } = instance.read(VectorNetwork);
-      vnFillMesh = buildVectorNetworkFillMesh(vertices, segments, regions);
+      fillMesh = buildVectorNetworkFillMesh(vertices, segments, regions);
     }
 
-    if (vnFillMesh !== undefined) {
-      this.points = vnFillMesh.points;
-      this.indexBufferData = new Uint32Array(vnFillMesh.indices);
+    if (fillMesh !== undefined) {
+      this.points = fillMesh.points;
+      this.indexBufferData = new Uint32Array(fillMesh.indices);
     } else if (rawPoints !== undefined && tessellationMethod !== undefined) {
       const points = rawPoints.flat(2);
 
@@ -457,12 +553,6 @@ export class Mesh extends PathDrawcall {
 
           this.indexBufferData = new Uint32Array(indices);
           this.points = points;
-        } else if (tessellationMethod === TesselationMethod.LIBTESS) {
-          const newPoints = triangulate(rawPoints, instance.read(Path).fillRule);
-          this.indexBufferData = new Uint32Array(
-            new Array(newPoints.length / 2).fill(undefined).map((_, i) => i),
-          );
-          this.points = newPoints;
         }
       } else {
         this.points = [];
@@ -509,7 +599,10 @@ export class Mesh extends PathDrawcall {
 
   createMaterial(defines: string, uniformBuffer: Buffer): void {
     this.createProgram(vert, frag, defines);
-    this.disposeMeshFillLayerResources();
+    this.disposeFillImageResources();
+    if (!hasRasterPostEffects(getRasterFilterValueForShape(this.shapes[0]))) {
+      this.destroyFullPostProcessingChain();
+    }
     if (!this.#uniformBuffer) {
       this.#uniformBuffer = this.device.createBuffer({
         viewOrSize:
@@ -613,63 +706,57 @@ export class Mesh extends PathDrawcall {
       const instance = this.shapes[0];
 
       this.#fillTextureFromPostChain = false;
-      if (!getRasterFilterValueForShape(instance)) {
-        this.destroyFullPostProcessingChain();
-      }
       if (this.#rawFillImageTexture) {
         this.#rawFillImageTexture.destroy();
         this.#rawFillImageTexture = null;
       }
 
       const multiForTex = getMultiFillLayers(instance);
+      const hasRasterFilter =
+        !this.instanced &&
+        hasRasterPostEffects(getRasterFilterValueForShape(instance));
       const needsFillLayerRaster =
         multiForTex &&
         (fillLayersNeedFillImage(multiForTex) ||
-          fillLayersShouldPrecompose(multiForTex));
+          fillLayersShouldPrecompose(multiForTex) ||
+          hasRasterFilter);
       if (needsFillLayerRaster && multiForTex) {
         const { minX, minY, maxX, maxY } =
           getSdfGeometryBoundsForFilter(instance);
-        const width = maxX - minX;
-        const height = maxY - minY;
-        this.#fillLayerTextures = multiForTex.map((layer) =>
+        const rasterize = (layer: FillLayerItem) =>
           this.createMeshFillLayerTexture(
             instance,
             layer,
             minX,
             minY,
-            width,
-            height,
-          ),
-        );
-        if (fillLayersShouldPrecompose(multiForTex)) {
-          const w = Math.max(
-            1,
-            ...this.#fillLayerTextures.map(
-              (t) => (t as unknown as { width: number }).width,
-            ),
+            maxX - minX,
+            maxY - minY,
           );
-          const h = Math.max(
-            1,
-            ...this.#fillLayerTextures.map(
-              (t) => (t as unknown as { height: number }).height,
-            ),
-          );
-          const composed = composeFillLayerTexturesOnGpu(
-            this.device,
-            this.renderCache,
+        if (fillLayersShouldPrecompose(multiForTex) || hasRasterFilter) {
+          const composed = createComposedFillTexture(
             multiForTex,
-            this.#fillLayerTextures,
-            w,
-            h,
-            () => this.createSampler(),
+            rasterize,
+            (textures, width, height) =>
+              composeFillLayerTexturesOnGpu(
+                this.device,
+                this.renderCache,
+                multiForTex,
+                textures,
+                width,
+                height,
+                () => this.createSampler(),
+              ),
           );
-          for (const t of this.#fillLayerTextures) {
-            t.destroy?.();
-          }
-          this.#fillLayerTextures = [];
-          this.#texture = composed;
+          this.#texture = composed.texture;
           this.#usePrecomposedMultiFill = true;
+          this.#texture = this.applyRasterFilterChainIfNeeded(
+            instance,
+            composed.texture,
+            composed.width,
+            composed.height,
+          );
         } else {
+          this.#fillLayerTextures = multiForTex.map(rasterize);
           this.#texture = this.#fillLayerTextures[0]!;
           this.#usePrecomposedMultiFill = false;
         }
@@ -680,7 +767,7 @@ export class Mesh extends PathDrawcall {
             getSdfGeometryBoundsForFilter(instance);
           const width = maxX - minX;
           const height = maxY - minY;
-          this.#texture = this.createMeshFillLayerTexture(
+          const raw = this.createMeshFillLayerTexture(
             instance,
             one,
             minX,
@@ -688,9 +775,17 @@ export class Mesh extends PathDrawcall {
             width,
             height,
           );
+          const size = raw as Texture & { width: number; height: number };
+          this.#texture = this.applyRasterFilterChainIfNeeded(
+            instance,
+            raw,
+            size.width,
+            size.height,
+          );
         }
       } else if (instance.has(FillTexture)) {
         this.#texture = instance.read(FillTexture).value;
+        this.#borrowedFillTexture = true;
       }
 
       bindings.samplerBindings = [
@@ -891,30 +986,28 @@ export class Mesh extends PathDrawcall {
 
     this.program.setUniformsLegacy(sceneUniformLegacyObject);
     renderPass.setPipeline(this.pipeline);
-    const vertexBuffers = this.vertexBuffers.map((buffer) => ({ buffer }));
+    const vertexBuffers = this.#blurVertices
+      ? [{ buffer: this.#blurVertices }]
+      : this.vertexBuffers.map((buffer) => ({ buffer }));
     if (this.useWireframe) {
       vertexBuffers.push({ buffer: this.barycentricBuffer });
     }
     renderPass.setVertexInput(this.inputLayout, vertexBuffers, {
-      buffer: this.indexBuffer,
+      buffer: this.#blurIndices ?? this.indexBuffer,
     });
     renderPass.setBindings(this.bindings);
     if (this.useStencil || this.parentClipMode) {
       renderPass.setStencilReference(STENCIL_CLIP_REF);
     }
-    renderPass.drawIndexed(this.indexBufferData.length, this.shapes.length);
+    renderPass.drawIndexed(
+      this.#blurRaster ? 6 : this.indexBufferData.length,
+      this.shapes.length,
+    );
   }
 
   destroy(): void {
-    this.disposeMeshFillLayerResources();
+    this.disposeFillImageResources();
     this.destroyFullPostProcessingChain();
-    this.#rawFillImageTexture?.destroy();
-    this.#rawFillImageTexture = null;
-    if (!this.#fillTextureFromPostChain) {
-      this.#texture?.destroy?.();
-    }
-    this.#texture = null;
-    this.#fillTextureFromPostChain = false;
     super.destroy();
     if (this.program) {
       this.#uniformBuffer?.destroy();
@@ -1033,7 +1126,7 @@ export class Mesh extends PathDrawcall {
       fbN = 1;
       fa = 1;
     }
-    const u_FillColor = [frN, fgN, fbN, fa];
+    const u_FillColor = this.#blurRaster ? [1, 1, 1, 1] : [frN, fgN, fbN, fa];
     const u_StrokeColor = [
       sr / 255,
       sg / 255,
@@ -1052,7 +1145,11 @@ export class Mesh extends PathDrawcall {
       strokeUniformOpacityMul,
       sizeAttenuation ? 1 : 0,
     ];
-    const u_FillUVRect = [minX, minY, invWidth, invHeight];
+    const bounds = this.#blurRaster?.bounds;
+    const u_FillUVRect = bounds
+      ? [bounds.minX, bounds.minY,
+        1 / (bounds.maxX - bounds.minX), 1 / (bounds.maxY - bounds.minY)]
+      : [minX, minY, invWidth, invHeight];
 
     if (this.isWatercolorRoughMesh()) {
       u_Opacity[1] *= 0.05;

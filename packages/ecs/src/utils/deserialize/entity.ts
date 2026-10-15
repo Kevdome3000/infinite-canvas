@@ -1,5 +1,5 @@
 import { assertSupportedLayoutNodes } from '../../document';
-import { isNil, path2Absolute } from '@antv/util';
+import { isNil } from '@antv/util';
 import toposort from 'toposort';
 import { Entity } from '@lastolivegames/becsy';
 import { mat3, vec2 } from 'gl-matrix';
@@ -85,7 +85,7 @@ import type {
   WireframeAttributes,
   FlexboxLayoutAttributes,
 } from '../../types/serialized-node';
-import { resolveExtrude3DDepth } from '../extrude3d';
+import { extrude3DFromWire } from '../extrude3d';
 import { mesh3DNodeFromWire, light3DFromWire } from '../mesh3d-wire';
 import {
   serializePoints,
@@ -156,7 +156,7 @@ export function inferXYWidthHeight(node: SerializedNode) {
   ) {
     const { type } = node;
     let bounds: AABB;
-    if (type === 'rect' || type === 'html' || type === 'embed' || type === 'iconfont') {
+    if (type === 'rect' || type === 'rough-rect' || type === 'html' || type === 'embed' || type === 'iconfont') {
       bounds = Rect.getGeometryBounds(node as Partial<Rect>);
     } else if (type === 'ellipse' || type === 'rough-ellipse') {
       bounds = Ellipse.getGeometryBounds(node);
@@ -391,7 +391,7 @@ export function polylineVertexApproxFromPathD(d: string | undefined): [number, n
   if (!d) {
     return null;
   }
-  const cmds = path2Absolute(d) as [string, ...number[]][];
+  const cmds = normalizePathCommands(d);
   const pts: [number, number][] = [];
   for (const row of cmds) {
     const [command, ...data] = row;
@@ -401,6 +401,8 @@ export function polylineVertexApproxFromPathD(d: string | undefined): [number, n
       pts.push([data[2], data[3]]);
     } else if (command === 'C') {
       pts.push([data[4], data[5]]);
+    } else if (command === 'A') {
+      pts.push([data[5], data[6]]);
     }
   }
   return pts.length >= 2 ? pts : null;
@@ -671,7 +673,7 @@ function applyEndpointDeltasToPathCommands(
     if (s[0] === 'C') {
       (s[1] as number) += dSx;
       (s[2] as number) += dSy;
-    } else if (s[0] === 'Q') {
+    } else if (s[0] === 'Q' && out.length > 2) {
       (s[1] as number) += dSx;
       (s[2] as number) += dSy;
     }
@@ -683,8 +685,10 @@ function applyEndpointDeltasToPathCommands(
     (last[5] as number) += dEx;
     (last[6] as number) += dEy;
   } else if (last[0] === 'Q') {
-    (last[1] as number) += dEx;
-    (last[2] as number) += dEy;
+    // A single quadratic shares one control between both ends. Average their
+    // deltas so translating both terminals translates the curve exactly once.
+    (last[1] as number) += (dSx + dEx) / 2;
+    (last[2] as number) += (dSy + dEy) / 2;
     (last[3] as number) += dEx;
     (last[4] as number) += dEy;
   } else if (last[0] === 'L') {
@@ -857,21 +861,7 @@ function layoutSerializedEdgeLabelChildren(
     return;
   }
 
-  let points: [number, number][] | null = null;
-  if (edge.type === 'polyline' || edge.type === 'rough-polyline') {
-    points = deserializePoints((edge as PolylineSerializedNode).points) as [
-      number,
-      number,
-    ][];
-  } else if (edge.type === 'line' || edge.type === 'rough-line') {
-    const l = edge as LineSerializedNode;
-    points = [
-      [l.x1, l.y1],
-      [l.x2, l.y2],
-    ];
-  } else if (edge.type === 'path' || edge.type === 'rough-path') {
-    points = polylineVertexApproxFromPathD((edge as PathSerializedNode).d);
-  }
+  const points = getEdgeLabelPoints(edge);
   if (!points || points.length < 2) {
     return;
   }
@@ -902,6 +892,28 @@ function layoutSerializedEdgeLabelChildren(
     });
   }
 }
+
+/** Parent-local command endpoints used by edge labels at import and edit time. */
+export function getEdgeLabelPoints(
+  edge: SerializedNode,
+): [number, number][] | null {
+  if (edge.type === 'polyline' || edge.type === 'rough-polyline') {
+    return deserializePoints((edge as PolylineSerializedNode).points) as [
+      number,
+      number,
+    ][];
+  } else if (edge.type === 'line' || edge.type === 'rough-line') {
+    const l = edge as LineSerializedNode;
+    return [
+      [l.x1, l.y1],
+      [l.x2, l.y2],
+    ];
+  } else if (edge.type === 'path' || edge.type === 'rough-path') {
+    return polylineVertexApproxFromPathD((edge as PathSerializedNode).d);
+  }
+  return null;
+}
+
 
 export async function loadImage(url: string, entity: Entity) {
   const image = (await DOMAdapter.get().createImage(url)) as ImageBitmap;
@@ -1097,11 +1109,38 @@ export function serializedNodesToEntities(
       const toNode = toId ? graph.find((n) => n.id === toId) : undefined;
 
       if (edgeEndsResolvable(edgeAttrs, fromNode, toNode)) {
-        inferEdgePoints(
-          fromNode ?? null,
-          toNode ?? null,
-          attributes as EdgeState,
-        );
+        let preserved = false;
+        if (
+          (type === 'path' || type === 'rough-path') &&
+          pathHasPreservableSingleBezierSegment(
+            (attributes as PathSerializedNode).d,
+          )
+        ) {
+          // Saved editable curves have their own geometry; route only the
+          // terminal deltas instead of replacing their control points.
+          inferXYWidthHeight(attributes);
+          const path = attributes as PathSerializedNode;
+          preserved = inferEdgePointsPreservingBezierHandles(
+            fromNode ?? null,
+            toNode ?? null,
+            attributes as EdgeState,
+            {
+              d: path.d,
+              x: path.x,
+              y: path.y,
+              rotation: path.rotation,
+              scaleX: path.scaleX,
+              scaleY: path.scaleY,
+            },
+          );
+        }
+        if (!preserved) {
+          inferEdgePoints(
+            fromNode ?? null,
+            toNode ?? null,
+            attributes as EdgeState,
+          );
+        }
 
         if (fromId && toId && fromNode && toNode) {
           const fromEntityCommands = idEntityMap.get(fromId);
@@ -1264,11 +1303,11 @@ export function serializedNodesToEntities(
         serializeRough(attributes as RoughAttributes, entityCommands);
       }
       if (type === 'rect') {
-        const depth = resolveExtrude3DDepth(
+        const extrude = extrude3DFromWire(
           (attributes as Extrude3DAttributes).extrude3d,
         );
-        if (depth !== undefined) {
-          entityCommands.insert(new Extrude3D({ depth }));
+        if (extrude) {
+          entityCommands.insert(new Extrude3D(extrude));
         }
       }
     } else if (type === 'polyline' || type === 'rough-polyline') {
@@ -1340,6 +1379,11 @@ export function serializedNodesToEntities(
       );
       if (type === 'rough-path') {
         serializeRough(attributes as RoughAttributes, entityCommands);
+      } else {
+        const extrude = extrude3DFromWire(
+          (attributes as PathSerializedNode).extrude3d,
+        );
+        if (extrude) entityCommands.insert(new Extrude3D(extrude));
       }
     } else if (type === 'text') {
       const {
