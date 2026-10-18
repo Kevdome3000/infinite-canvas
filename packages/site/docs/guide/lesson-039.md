@@ -61,15 +61,15 @@ app.run();
 
 ## Core components {#components}
 
-| Component         | Role                                                                                                             |
-| ----------------- | ---------------------------------------------------------------------------------------------------------------- |
-| **`Camera3D`**    | `projection: 'perspective' \| 'orthographic'`; when `linked`, `CameraSync` follows 2D pan/zoom                   |
-| **`Mesh3D`**      | `positions`, `normals`, optional `indices` (triangle mesh)                                                       |
-| **`Material3D`**  | Blinn-Phong: `baseColor`, `ambient`, `diffuse`, `specular`, `shininess`                                          |
-| **`Light3D`**     | `ambient` / `directional` / `point` / `spot`; see [Scene lighting example](/example/lighting)                    |
-| **`Transform3D`** | translation, Euler rotation, scale                                                                               |
-| **`Selected3D`**  | 3D selection state: gizmo mode, active axis/plane, drag reference point, etc. (see [3D transform Gizmo](#gizmo)) |
-| **`Mat4`**        | 4×4 matrix helpers (`perspective` / `ortho` / `lookAt`)                                                          |
+| Component         | Role                                                                                                                       |
+| ----------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| **`Camera3D`**    | `projection: 'perspective' \| 'orthographic'`; when `linked`, `CameraSync` follows 2D pan/zoom                             |
+| **`Mesh3D`**      | `positions`, `normals`, optional `indices` (triangle mesh)                                                                 |
+| **`Material3D`**  | Metallic-roughness PBR: `baseColor`, `metallic`, `roughness`, and ambient strength; legacy fields remain for compatibility |
+| **`Light3D`**     | `ambient` / `directional` / `point` / `spot`; see [Scene lighting example](/example/lighting)                              |
+| **`Transform3D`** | translation, Euler rotation, scale                                                                                         |
+| **`Selected3D`**  | 3D selection state: gizmo mode, active axis/plane, drag reference point, etc. (see [3D transform Gizmo](#gizmo))           |
+| **`Mat4`**        | 4×4 matrix helpers (`perspective` / `ortho` / `lookAt`)                                                                    |
 
 Spawn entities via ECS `commands.spawn`, for example:
 
@@ -93,7 +93,7 @@ commands.spawn(
     new Mesh3D({ positions, normals, indices }),
     new Material3D({
         baseColor: [0.25, 0.55, 0.95, 1],
-        ambient: 0.15,
+        ambient: 0.45,
         diffuse: 0.75,
         specular: 0.4,
         shininess: 48,
@@ -303,7 +303,8 @@ const node: RectSerializedNode = {
     `z` is the front plane's elevation; the companion center is at `z - depth / 2`.
 -   Ring rotation writes `extrude3d.rotation`: XYZ Euler angles in radians, relative
     to the source's existing world-space 2D rotation. It leaves the source's 2D
-    `rotation` intact. The companion composes `Rz(sourceAngle) × Rx(x) × Ry(y) × Rz(z)`.
+    `rotation` intact. For an ordinary rotated shape, the companion composes
+    `Rz(sourceAngle) × Rx(x) × Ry(y) × Rz(z)`.
 
 Release commits once; cancellation restores the preview. Undo/redo and document
 reload restore the same pose. Disabling extrusion or replacing its companion
@@ -314,14 +315,17 @@ an obsolete companion.
 Object values default to depth 100, elevation 0 and rotation `[0, 0, 0]`. An update
 replaces the whole option value: omitted fields return to those defaults. There
 are no scale handles yet; use rectangle dimensions and `depth` to change size.
-The existing world-AABB-based extrusion footprint is unchanged, so this does not
-add exact extrusion geometry for sheared or rotated rectangular footprints.
+Rect extrusion follows its local corners through rotation and scale. Rounded
+corners, reflections and shear from transformed parents are baked into the mesh,
+so their footprint remains aligned with the editable 2D source. A singular
+parent transform cannot produce a new mesh.
 
 ### Extruding a closed Path {#extrude-path}
 
 A closed Path with one solid fill can use the same `extrude3d` option. Its front
 and back faces follow the filled contours, including holes; editing `d` or
-`fillRule` rebuilds the mesh while moving or rotating the source reuses it.
+`fillRule` rebuilds the mesh. Translation reuses it. Shear from transformed
+parents is baked into the mesh, so changes to that linear transform rebuild it.
 
 ```ts
 const vector: PathSerializedNode = {
@@ -333,14 +337,21 @@ const vector: PathSerializedNode = {
     d: 'M100 80 L200 80 L200 180 L100 180 Z M125 105 L125 155 L175 155 L175 105 Z',
     fillRule: 'evenodd',
     fills: [{ type: 'solid', value: '#3377dd' }],
-    extrude3d: { depth: 40, z: 0 },
+    extrude3d: { depth: 40, z: 0, sideColor: '#facc15' },
 };
 ```
 
 All subpaths must be closed. Open paths, stroke layers, multiple or non-solid
-fills, non-manifold contours and sheared transforms remain visible in 2D. The
+fills, non-manifold contours and singular transforms remain visible in 2D. The
 Path keeps its original document node and supports gizmo edits, undo and reload.
-SVG `<path>` and `<polygon>` elements can be imported as extrusion sources with
+
+`sideColor` is an optional CSS color for the walls; the front and back keep the
+source fill. Omitting it makes all faces use the source fill color. The side
+color is a paint change, so editing it reuses the existing mesh geometry.
+
+SVG `<path>`, `<polygon>`, `<rect>`, `<circle>` and `<ellipse>` elements, plus
+`<polyline>` elements whose first and last points coincide, can be
+imported as extrusion sources with
 `svgElementsToExtrudedNodes`. The helper preserves other imported shapes in 2D;
 invalid depth is rejected instead of silently changing it to a default.
 
@@ -349,24 +360,144 @@ import { svgElementsToExtrudedNodes } from '@infinite-canvas-tutorial/ecs';
 
 const svg = new DOMParser().parseFromString(source, 'image/svg+xml');
 const nodes = svgElementsToExtrudedNodes(
-    Array.from(svg.documentElement.children) as SVGElement[],
+    svg.documentElement as unknown as SVGSVGElement,
     40,
 );
 api.updateNodes(nodes);
 ```
 
+In the online App, select a rectangle or Path to open the **3D** control in the
+top toolbar. Enable extrusion, then edit its depth and bevel. The project menu
+also offers **Import SVG as 3D**, which centers the visible artwork on the
+canvas, even when it occupies only part of the SVG viewport, and retains
+unsupported layers in 2D. Use **Export as → GLB (3D)** to
+download all ready extruded meshes in the project. The App also lets you set a
+bevel profile (1–8 segments) and an optional hex side color; leave the
+side color blank to use the shape's fill.
+For a Path that cannot produce a mesh, the App disables the extrusion action
+and shows the closed outline, fill and stroke requirements.
+
 The converter accepts closed contours with one solid fill and no visible stroke;
 SVG's `stroke="none"` placeholder is ignored. It preserves `fill-rule`, including
-`evenodd` holes. Open contours, stroked shapes, gradients and unsupported SVG
-shapes remain in 2D. Shearing a Path on the canvas also keeps it in 2D. SVG
-transforms and viewBox scaling follow the existing importer, which does not
-faithfully preserve shear; avoid sheared SVG input until that importer supports it.
+`evenodd` holes, and inherits fill colors from SVG groups. Plain rectangles stay
+editable Rect nodes; rounded rectangles, ellipses and closed polylines become
+editable Paths. Open polylines keep their 2D form.
+Inline `style` declarations for fill, stroke, opacity, fill rule and stroke
+geometry override presentation attributes. `fill="currentColor"` and
+`stroke="currentColor"` resolve against the nearest `color` on the shape, group,
+`<use>` instance or SVG root; absent color defaults to black. A stroke supplied
+through `style` keeps that shape in 2D. External CSS stylesheets are not parsed.
+For extrusion, rounded rectangles preserve independent SVG `rx` and `ry` values
+as elliptical corner arcs. A missing radius defaults to the other, and each
+radius is clamped to half of its corresponding dimension. The ordinary 2D Rect
+importer still stores a single corner radius.
+Open contours, stroked shapes, gradients, paint servers and unsupported SVG
+shapes remain in 2D.
+Local `<use href="#id">` and legacy `xlink:href` references to supported shapes or
+groups create independent instances, including forward and repeated references.
+Instance pixel offsets, transform and inherited fill are applied before extrusion;
+each instance receives its own editable ID. Circular and unresolved references
+are skipped. `<use>` can also reference a `<symbol>` with a `viewBox` when the
+instance or symbol provides positive pixel `width` and `height`. Instance
+dimensions override the symbol's dimensions. The symbol's
+`preserveAspectRatio` supports `meet` alignments, `none`, and `slice` clipping
+of extruded outlines. Missing or invalid effective dimensions skip that symbol
+instance. External references are not imported yet.
+Nested `<svg>` elements with explicit positive pixel dimensions and a `viewBox`
+also create editable viewport groups. Their `x`/`y`, transform and
+`preserveAspectRatio` affect extruded children. A local `<use>` may reference
+one of these SVG elements and override its viewport dimensions independently.
+Nested SVG viewports clip generated extrusion outlines by default, including
+with `slice`; set `overflow="visible"` to retain overhanging geometry.
+Fully contained shapes keep their group relationship, so moving the viewport
+group also moves their 3D meshes. Shapes crossing an edge become clipped Paths.
+Local `clip-path="url(#id)"` and inline CSS `clip-path` now clip eligible 3D
+outlines too. A `<clipPath>` can contain Paths, polygons, polylines, rectangles,
+circles, ellipses, nested groups and local `<use>` references to those shapes.
+Its shapes form a union; `clip-rule="evenodd"`
+can cut holes. Clips on groups and repeated `<use>` instances follow their
+transforms, and multiple ancestor clips intersect with each other and with SVG
+viewports. `clipPathUnits="objectBoundingBox"` uses the bounds of a single shape
+or a group's supported child shapes, including their transforms. A clipped outline becomes an editable Path; an outline wholly
+inside its clip keeps its original node and group relationship. Unresolved or
+unsupported clip definitions stay in 2D. Masks, filters, text inside clip paths
+and external clip references are not converted to 3D.
+Elements with `display="none"` or inherited `visibility="hidden"` do not produce
+3D meshes; a descendant can explicitly set `visibility="visible"`.
+Pass the root `<svg>` to apply an explicit pixel `width`/`height` and `viewBox`,
+including `preserveAspectRatio`. Filled extrusions also preserve SVG `skewX`,
+`skewY`, and sheared `matrix(...)` transforms from nested groups. These outlines
+become editable Paths with sampled line segments when the combined transform
+contains shear. Plain viewBox scaling keeps rectangles and curved Paths editable
+in their original form. SVGs without explicit pixel viewport dimensions keep
+their viewBox coordinates. Unsupported 2D shapes still use the ordinary SVG
+importer, which does not preserve source shear.
+
+With `preserveAspectRatio="slice"`, filled extrusion outlines are clipped to
+the viewport, including holes and shapes split into separate islands. Shapes
+fully inside the viewport keep their Rect or curved Path form. Unsupported 2D
+shapes still follow the ordinary importer and are not clipped by this helper.
+
+Choose **Repeated use sample** below to inspect two instances of the same
+definition with different fills, alongside an ordinary rectangle.
+Choose **Symbol viewport sample** to compare two viewport instances of one
+holed symbol. The first uses the symbol's dimensions; the second sets its own.
+Choose **Nested SVG viewport sample** to compare an inline SVG viewport and a
+second instance referenced with `<use>`; their extruded outlines are clipped
+to each viewport.
+Choose **Paint style + currentColor sample** to compare inherited and
+instance-specific colors, an inline fill override and a styled stroke that
+stays in 2D.
+Choose **Clip paths + repeated use sample** to inspect two independently
+clipped instances with holes and a shape clipped by an object-bounds union.
+Choose **Group bounds + clip use sample** to inspect an object-bounds clip on a
+transformed group whose two windows reuse one local definition.
+
+Set `extrude3d.bevelSize` (in canvas units) for a bevel on both ends of
+Path and Rect extrusions. The demo exposes this as **Bevel**. Holes, multiple
+islands and concave corners are supported when the inward offset preserves the
+filled topology. If contours collide or a narrow region collapses, the shape
+retains its sharp edges. Changing depth or size rebuilds the companion mesh
+while keeping the source editable.
+Shapes with more than 4096 vertices across their resolved fill boundaries also
+stay sharp to bound mesh work.
+
+Set `extrude3d.bevelSegments` to `1` for a straight bevel (the default), or
+`2`–`8` for a rounded quarter-circle profile. More segments make the silhouette
+smoother and add mesh triangles. The demo's **Bevel profile** control lets you
+compare straight and rounded profiles on imported SVG shapes.
+
+The example's **Download GLB** button exports the generated 3D meshes as a
+self-contained glTF binary file. Use `api.export` to download all ready extruded
+shapes, or pass nodes to export only a selection (including children of selected
+groups):
+
+```ts
+import { ExportFormat } from '@infinite-canvas-tutorial/ecs';
+
+api.export({ format: ExportFormat.GLB });
+const glb = api.export({
+    format: ExportFormat.GLB,
+    nodes: [api.getNodeById('extruded-vector')!],
+    download: false,
+}); // Uint8Array
+```
+
+Export converts canvas Y-down coordinates to glTF Y-up coordinates and keeps
+the current 3D pose, solid fill and optional side color. It exports only ready
+mesh companions; unsupported 2D SVG shapes and textures are not included.
+For lower-level mesh exports, use `exportMeshesToGlb` directly.
+
+Use **ViewBox + shear sample** to inspect the transformed outline and its
+evenodd hole, then turn extrusion off to compare the 2D footprint.
+Use **Slice clipping sample** to see a hole, two separated pieces and a curved
+edge cut by the SVG viewport.
 
 <SvgExtrusion />
 
 ## Lighting {#lighting}
 
-Demonstrates `Light3D` with Blinn-Phong materials: ambient fill, a cool directional light, a warm spotlight orbiting the scene center, and three meshes (cube, sphere, cylinder) with different specular settings to compare highlights and shading.
+Demonstrates `Light3D` with metallic-roughness materials: ambient fill, two directional lights, a warm spotlight orbiting the scene center, and three meshes (cube, sphere, cylinder) with different metallic and roughness settings. Mesh colors are converted from sRGB to linear space for lighting and back to sRGB for display.
 
 <Lighting />
 

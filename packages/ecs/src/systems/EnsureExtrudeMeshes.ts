@@ -14,20 +14,19 @@ import {
   Material3D,
   Mesh3D,
   Path,
+  Rect,
   StrokeLayers,
   ToBeDeleted,
   Transform3D,
 } from '../components';
-import { createUnitCubeGeometry } from '../utils/extrude3d-geometry';
 import { pathExtrusionGeometry } from '../utils/path-extrusion-source';
+import { rectExtrusionGeometry } from '../utils/rect-extrusion-source';
 import type { Mesh3DGeometryData } from '../utils/geometry3d/types';
 import {
   findCamera3DForCanvas,
   resolveCanvasFromSceneGraph,
 } from '../utils/canvas3d-scope';
 import { isEntityAlive } from './Transform';
-
-const unitCube = createUnitCubeGeometry();
 
 /**
  * Creates companion meshes when Extrude3D is added or changed.
@@ -59,6 +58,7 @@ export class EnsureExtrudeMeshes extends System {
             Camera,
             Children,
             Path,
+            Rect,
             FillLayers,
             StrokeLayers,
             GlobalTransform,
@@ -93,7 +93,7 @@ export class EnsureExtrudeMeshes extends System {
       }
       const geometry = entity.has(Path)
         ? pathExtrusionGeometry(entity)?.geometry
-        : unitCube;
+        : rectExtrusionGeometry(entity);
       if (!geometry) return;
       queuedSources.add(entity);
       pending.push({
@@ -164,7 +164,7 @@ export class EnsureExtrudeMeshes extends System {
       }),
       new Material3D({
         baseColor: [0.25, 0.55, 0.95, 1],
-        ambient: 0.15,
+        ambient: 0.45,
         diffuse: 0.75,
         specular: 0.4,
         shininess: 48,

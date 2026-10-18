@@ -65,7 +65,7 @@ app.run();
 | ----------------- | ------------------------------------------------------------------------------------------- |
 | **`Camera3D`**    | `projection: 'perspective' \| 'orthographic'`；`linked` 时由 `CameraSync` 跟随 2D 平移/缩放 |
 | **`Mesh3D`**      | `positions`、`normals`、可选 `indices`（三角网格）                                          |
-| **`Material3D`**  | Blinn-Phong：`baseColor`、`ambient`、`diffuse`、`specular`、`shininess`                     |
+| **`Material3D`**  | 金属度与粗糙度 PBR：`baseColor`、`metallic`、`roughness` 和环境光系数；旧字段保留兼容性     |
 | **`Light3D`**     | `ambient` / `directional` / `point` / `spot`；见 [场景光照示例](/zh/example/lighting)       |
 | **`Transform3D`** | 平移、欧拉角旋转、缩放                                                                      |
 | **`Selected3D`**  | 3D 选中态：当前 gizmo 模式、激活轴/平面、拖拽参考点等（见 [3D 变换 Gizmo](#gizmo)）         |
@@ -93,7 +93,7 @@ commands.spawn(
     new Mesh3D({ positions, normals, indices }),
     new Material3D({
         baseColor: [0.25, 0.55, 0.95, 1],
-        ambient: 0.15,
+        ambient: 0.45,
         diffuse: 0.75,
         specular: 0.4,
         shininess: 48,
@@ -281,20 +281,22 @@ const node: RectSerializedNode = {
 
 -   XY 平移写回源矩形在父坐标系中的 `x`/`y`，支持父级旋转、缩放和翻转。父变换不可逆时拒绝预览。
 -   Z 平移改变 `extrude3d.z`，保留厚度 `depth`。未施加三维旋转时，`z` 表示前表面的高度偏移；伴生网格中心位于 `z - depth / 2`。
--   圆环旋转写入 `extrude3d.rotation`，使用弧度制 XYZ 欧拉角，相对于源图形已有的世界空间二维旋转。源图形的二维 `rotation` 保持不变，网格使用 `Rz(sourceAngle) × Rx(x) × Ry(y) × Rz(z)` 组合姿态。
+-   圆环旋转写入 `extrude3d.rotation`，使用弧度制 XYZ 欧拉角，相对于源图形已有的世界空间二维旋转。源图形的二维 `rotation` 保持不变。普通旋转图形的网格使用 `Rz(sourceAngle) × Rx(x) × Ry(y) × Rz(z)` 组合姿态。
 
 松手提交一次，取消恢复预览；撤销、重做和重新载入文档会恢复相同姿态。拖动中关闭
 挤出或替换伴生网格会中断手势，并从当前文档恢复，不会重建过期的网格。
 
 `extrude3d: true` 仍表示厚度 100，数值仍表示指定厚度。对象写法默认厚度 100、
 高度偏移 0、旋转 `[0, 0, 0]`。更新采用整个选项值替换，省略的字段恢复上述默认值。
-目前没有缩放把手，可通过矩形尺寸和 `depth` 改变大小。挤出底面仍沿用世界 AABB
-尺寸，本次未实现旋转或剪切矩形底面的精确挤出几何。
+目前没有缩放把手，可通过矩形尺寸和 `depth` 改变大小。Rect 挤出会沿着局部
+顶点应用旋转和缩放；圆角、翻转及父级变换形成的剪切会烘入网格，底面与可编辑的
+二维源图形对齐。不可逆的父级变换不会生成新的三维网格。
 
 ### 挤出闭合 Path {#extrude-path}
 
 只有一层纯色填充的闭合 Path 也可以设置 `extrude3d`。前后封盖遵循实际填充轮廓，
-包括孔洞；修改 `d` 或 `fillRule` 会重建网格，平移或旋转则复用现有网格。
+包括孔洞；修改 `d` 或 `fillRule` 会重建网格，平移会复用。父级变换产生的剪切会
+烘入网格，线性变换改变时会重建网格。
 
 ```ts
 const vector: PathSerializedNode = {
@@ -306,39 +308,139 @@ const vector: PathSerializedNode = {
     d: 'M100 80 L200 80 L200 180 L100 180 Z M125 105 L125 155 L175 155 L175 105 Z',
     fillRule: 'evenodd',
     fills: [{ type: 'solid', value: '#3377dd' }],
-    extrude3d: { depth: 40, z: 0 },
+    extrude3d: { depth: 40, z: 0, sideColor: '#facc15' },
 };
 ```
 
-每条子路径都必须闭合。开放路径、含描边图层、多层或非纯色填充、非流形轮廓及
-剪切变换会继续以 2D 显示。原 Path 文档节点保持可编辑，也支持 gizmo、撤销和
+每条子路径都必须闭合。开放路径、含描边图层、多层或非纯色填充、非流形轮廓
+以及不可逆的退化变换会继续以 2D 显示。原 Path 文档节点保持可编辑，也支持 gizmo、撤销和
 重新载入。
 
-对于 SVG 的 `<path>` 与 `<polygon>`，可以通过 `svgElementsToExtrudedNodes` 导入为
-可编辑的挤出图形；其他元素继续保持 2D。该函数要求厚度为有限正数。
+`sideColor` 可选，用 CSS 颜色设置侧壁；前后封盖仍使用原图形的填充色。
+省略时所有表面都使用原填充色。修改侧壁颜色只更新材质，不重建网格。
+
+对于 SVG 的 `<path>`、`<polygon>`、`<rect>`、`<circle>`、`<ellipse>`，以及首尾点重合的
+`<polyline>`，可以通过
+`svgElementsToExtrudedNodes` 导入为可编辑的挤出图形；其他元素继续保持 2D。
+该函数要求厚度为有限正数。
 
 ```ts
 import { svgElementsToExtrudedNodes } from '@infinite-canvas-tutorial/ecs';
 
 const svg = new DOMParser().parseFromString(source, 'image/svg+xml');
 const nodes = svgElementsToExtrudedNodes(
-    Array.from(svg.documentElement.children) as SVGElement[],
+    svg.documentElement as unknown as SVGSVGElement,
     40,
 );
 api.updateNodes(nodes);
 ```
 
+在在线 App 中，选中矩形或 Path 后可从顶部工具栏打开 **3D** 控件，开启挤出并
+调整厚度与倒角。项目菜单中的 **导入 SVG 为 3D** 会按可见图形的实际范围居中，
+即使图形只占 SVG 画布的一小部分也能落在视口中央；不支持挤出的图层仍保持 2D。
+通过 **导出为 → GLB（三维）** 可下载
+项目中已就绪的所有挤出网格。App 还可设置倒角轮廓的段数（1–8）和可选的十六进制
+侧面颜色；侧面颜色留空时沿用图形的填充色。
+如果 Path 无法生成网格，App 会禁用挤出操作，并提示闭合轮廓、填充和描边的要求。
+
 只有单层纯色填充、没有可见描边的闭合轮廓会挤出；SVG 的 `stroke="none"` 占位层
-会被忽略。导入会保留 `fill-rule`，包括 `evenodd` 孔洞。开放路径、实际描边、渐变、
-不支持的 SVG 元素继续以 2D 显示。在画布中对 Path 施加剪切变换时也会保持 2D。
-SVG 自带的 transform 和 viewBox 缩放仍沿用原有导入行为；原导入器无法准确保留剪切，
-目前应避免导入带剪切变换的 SVG。
+会被忽略。导入会保留 `fill-rule`（包括 `evenodd` 孔洞），并继承 SVG 分组的填充色。
+普通矩形保持可编辑的 Rect；圆角矩形、椭圆和闭合折线转换为可编辑的 Path。
+内联 `style` 中的填充、描边、不透明度、填充规则及描边几何属性优先于同名 SVG 属性。
+`fill="currentColor"` 和 `stroke="currentColor"` 会查找图形、分组、`<use>` 实例或
+SVG 根节点上最近的 `color`；没有指定时使用黑色。通过 `style` 指定描边的图形仍保持
+2D。目前不会解析外部 CSS 样式表。
+未闭合的折线仍保持 2D。挤出导入时，
+圆角矩形会保留 SVG 中不同的 `rx` 与 `ry`，生成椭圆圆角；只指定其中一个时，
+另一个使用相同的值，两个半径分别限制在对应尺寸的一半以内。普通 2D Rect
+导入器仍只存储一个圆角半径。开放路径、实际描边、渐变及
+不支持的 SVG 元素继续以 2D 显示。
+本地 `<use href="#id">` 和旧式 `xlink:href` 可引用上述图形或分组，并生成独立实例，
+包括前向引用和重复引用。实例的像素位移、变换及继承填充会在挤出前生效，
+且各自拥有可编辑的 ID。
+循环引用和无法解析的引用会被跳过。`<use>` 也可以引用带 `viewBox` 的 `<symbol>`，
+实例或符号本身需要指定正数像素 `width` 和 `height`；实例尺寸优先。
+`preserveAspectRatio` 支持
+`meet` 的各项对齐方式、`none`，以及挤出轮廓的 `slice` 裁切；
+最终尺寸缺失或无效时会跳过该实例；暂不导入外部引用。
+带显式正数像素宽高和 `viewBox` 的内嵌 `<svg>` 也会生成可编辑的视口分组。
+其 `x`/`y`、变换和 `preserveAspectRatio` 会作用于挤出后的子图形。
+本地 `<use>` 可以引用这样的 `<svg>`，并独立覆盖视口尺寸。内嵌 SVG 视口默认会裁切
+挤出轮廓（包括 `slice`）；设置 `overflow="visible"` 可保留超出视口的几何。
+完整位于视口内的图形保持分组关系，移动视口分组时其 3D 网格会一同移动；
+跨过边缘的图形则转换为裁切后的 Path。
+本地 `clip-path="url(#id)"` 和内联 CSS `clip-path` 也会裁切可挤出的轮廓。
+`<clipPath>` 可以包含 Path、多边形、折线、矩形、圆形、椭圆、嵌套分组，
+也可以通过本地 `<use>` 复用这些图形。
+多个裁剪图形取并集，`clip-rule="evenodd"` 可以生成孔洞；分组和重复 `<use>`
+实例上的裁剪会跟随各自的变换。多级裁剪彼此相交，也会与 SVG 视口裁切相交。
+`clipPathUnits="objectBoundingBox"` 支持单个图形以及分组裁剪，分组的包围盒
+会计入所支持子图形的变换。
+被裁切的轮廓仍是可编辑的 Path；完整落在裁剪区域内的图形保持原节点及分组关系。
+无法解析或尚未支持的裁剪定义保持 2D。遮罩、滤镜、裁剪路径中的文本及外部裁剪引用
+暂不转换为 3D。
+`display="none"` 或继承 `visibility="hidden"` 的元素不会生成 3D 网格；
+子元素可以显式设置 `visibility="visible"`。
+传入完整的 `<svg>` 根节点后，若有以像素指定的 `width`/`height` 和 `viewBox`，
+导入会应用视口缩放及 `preserveAspectRatio`。可挤出的填充图形也会保留嵌套分组中的
+`skewX`、`skewY` 和 `matrix(...)` 剪切变换；变换后的轮廓会采样为仍可编辑的折线路径。
+只有合成变换包含剪切时才会采样；普通 viewBox 缩放仍保留矩形和曲线路径的原有形式。
+没有显式像素视口尺寸时，继续使用 viewBox 的原坐标。未挤出的 2D 图形仍使用原导入器，
+其源 SVG 剪切变换尚不能准确保留。
+设置 `preserveAspectRatio="slice"` 后，可挤出的填充轮廓会按视口裁切，
+包括孔洞及被裁成多个独立区域的图形。完整位于视口内的矩形或曲线路径仍保持原有形式。
+不支持挤出的 2D 图形仍沿用普通导入器，此辅助函数不会裁切它们。
+
+点击下方的 **Repeated use sample** 可以查看同一定义以不同填充色重复实例化，
+以及中间的普通矩形。
+点击 **Symbol viewport sample** 可以比较同一个带孔洞的符号在两个视口中的效果：
+第一个使用符号自身的尺寸，第二个指定实例尺寸。
+点击 **Nested SVG viewport sample** 可以比较直接绘制的内嵌 SVG 视口与
+通过 `<use>` 引用的第二个实例；两者的挤出轮廓都会按各自视口裁切。
+点击 **Group bounds + clip use sample** 可以查看变换分组上的包围盒裁剪，
+以及通过本地 `<use>` 复用的两个裁剪窗口。
+点击 **Paint style + currentColor sample** 可以比较继承颜色、实例独立颜色、
+内联填充覆盖，以及因内联描边而保持 2D 的图形。
+点击 **Clip paths + repeated use sample** 可以查看两个分别裁剪、带孔洞的实例，
+以及通过对象包围盒中的多个图形共同裁剪出的形状。
+
+设置 `extrude3d.bevelSize`（单位为画布单位）可为 Path 和 Rect 挤出的前后两端
+添加倒角，示例中可用 **Bevel** 滑块调整。内缩后拓扑保持稳定时，也支持孔洞、
+多个独立轮廓和凹角。若轮廓相交或狭窄区域塌陷，则保留直边。改变深度或尺寸会
+重新生成伴生网格，原图形仍可编辑。
+为限制网格生成开销，填充边界求解后总计超过 4096 个顶点时也会保留直边。
+
+设置 `extrude3d.bevelSegments` 为 `1`（默认）可使用直线倒角；设置为 `2`–`8`
+可生成圆弧倒角。段数越多，轮廓越平滑，但网格三角形也越多。示例中的 **Bevel profile**
+控件可用于比较两种效果。
+
+示例中的 **Download GLB** 按钮会将已生成的三维网格导出为独立的 glTF 二进制文件。
+使用 `api.export` 可下载画布中所有已就绪的挤出图形；指定 `nodes` 可只导出选区，
+包括选中分组的子图形：
+
+```ts
+import { ExportFormat } from '@infinite-canvas-tutorial/ecs';
+
+api.export({ format: ExportFormat.GLB });
+const glb = api.export({
+    format: ExportFormat.GLB,
+    nodes: [api.getNodeById('extruded-vector')!],
+    download: false,
+}); // Uint8Array
+```
+
+导出会把画布向下的 Y 轴转换为 glTF 向上的 Y 轴，并保留当前三维姿态、纯色填充及
+可选的侧壁颜色。只有已就绪的伴生网格会写入文件；不支持的二维 SVG 元素和纹理不会导出。
+如需直接导出网格组件，可以使用底层的 `exportMeshesToGlb`。
+
+点击 **ViewBox + shear sample** 可以查看变换后的轮廓与偶奇填充孔洞，再关闭挤出对比 2D 轮廓。
+点击 **Slice clipping sample** 可以查看视口对孔洞、分离区域和曲线边缘的裁切。
 
 <SvgExtrusion />
 
 ## 光照 {#lighting}
 
-演示 Light3D 组件与 Blinn-Phong 材质配合：环境光打底、冷色平行光作填充，暖色聚光灯绕场景中心轨道运动，立方体 / 球体 / 圆柱三种几何体便于对比 specular 与明暗变化。
+演示 Light3D 组件与金属度、粗糙度材质配合：环境光打底、两盏平行光补光，暖色聚光灯绕场景中心运动，立方体 / 球体 / 圆柱便于对比材质与明暗变化。Mesh 颜色先从 sRGB 转为线性空间参与光照，再转回 sRGB 显示。
 
 <Lighting />
 

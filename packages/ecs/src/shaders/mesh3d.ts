@@ -40,6 +40,7 @@ layout(std140) uniform ModelUniforms3D {
   vec4 u_MaterialFlags;
   // x: metallic, y: roughness (PBR metallic-roughness workflow)
   vec4 u_PbrParams;
+  vec4 u_SideColor;
 };
 
 layout(location = 0) in vec3 a_Position3D;
@@ -49,12 +50,14 @@ layout(location = 2) in vec2 a_Uv3D;
 out vec3 v_Normal;
 out vec3 v_FragPos;
 out vec2 v_Uv;
+out float v_LocalNormalZ;
 
 void main() {
   vec4 worldPos = u_ModelMatrix3D * vec4(a_Position3D, 1.0);
   v_FragPos = worldPos.xyz;
   v_Normal = (u_NormalMatrix3D * vec4(a_Normal3D, 0.0)).xyz;
   v_Uv = a_Uv3D;
+  v_LocalNormalZ = a_Normal3D.z;
 
   if (u_SceneParams.z > 0.5) {
     // 2D VP: pan / zoom / Y-flip; perspective scales offsets from placement anchor.
@@ -113,6 +116,7 @@ layout(std140) uniform ModelUniforms3D {
   vec4 u_MaterialFlags;
   // x: metallic, y: roughness (PBR metallic-roughness workflow)
   vec4 u_PbrParams;
+  vec4 u_SideColor;
 };
 
 uniform sampler2D u_Map;
@@ -122,10 +126,24 @@ uniform sampler2D u_BumpMap;
 in vec3 v_Normal;
 in vec3 v_FragPos;
 in vec2 v_Uv;
+in float v_LocalNormalZ;
 
 out vec4 outputColor;
 
 #define PI 3.141592653589793
+
+// CSS colors and image pixels are sRGB, while the lighting calculation is
+// linear. The shared 2D/3D render target is RGBA8 UNORM, so it does not perform
+// the final sRGB encoding for us.
+vec3 srgbToLinear(vec3 color) {
+  return mix(color / 12.92, pow((color + 0.055) / 1.055, vec3(2.4)),
+    step(vec3(0.04045), color));
+}
+
+vec3 linearToSrgb(vec3 color) {
+  return mix(color * 12.92, 1.055 * pow(max(color, vec3(0.0)), vec3(1.0 / 2.4)) - 0.055,
+    step(vec3(0.0031308), color));
+}
 
 float distanceAttenuation(float distanceToLight, float range) {
   if (range <= 0.0) {
@@ -262,10 +280,13 @@ void main() {
   }
 
   vec4 baseColor = u_BaseColor;
+  if (u_PbrParams.z > 0.5 && abs(v_LocalNormalZ) < 1.0) {
+    baseColor = u_SideColor;
+  }
   if (u_MaterialFlags.x > 0.5) {
     baseColor *= texture(SAMPLER_2D(u_Map), v_Uv);
   }
-  vec3 albedo = baseColor.rgb;
+  vec3 albedo = srgbToLinear(baseColor.rgb);
 
   float metallic = clamp(u_PbrParams.x, 0.0, 1.0);
   // Clamp roughness to a small minimum (0.04): at roughness 0 the GGX lobe
@@ -307,6 +328,6 @@ void main() {
   vec3 ambient = u_AmbientLight.rgb * u_LightParams.x * albedo;
 
   vec3 result = ambient + Lo;
-  outputColor = vec4(result, baseColor.a);
+  outputColor = vec4(linearToSrgb(result), baseColor.a);
 }
 `;

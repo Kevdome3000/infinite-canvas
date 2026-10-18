@@ -17,6 +17,11 @@ import { migrateLegacyStrokeWireInPlace } from '../normalize-stroke-wire';
 import { deserializePoints } from './points';
 import { buildPathExtrusionMesh } from '../path-extrusion-mesh';
 import { pathExtrusionPaintSupported } from '../path-extrusion-paint';
+import { getComputedInheritGroupWireMap } from '../inherit-group-wire';
+import { extrudeSvgPrimitive } from './svg-extrusion-primitive';
+import { reprojectSvgExtrusion } from './svg-extrusion-affine';
+import { expandSvgUses } from './svg-use';
+import { parseSvgClipPath } from './svg-clip';
 
 const DOMINANT_BASELINE_MAP: Record<string, string> = {
   auto: 'alphabetic',
@@ -26,6 +31,79 @@ const DOMINANT_BASELINE_MAP: Record<string, string> = {
   ideographic: 'ideographic',
   hanging: 'hanging',
 };
+
+const SVG_PAINT_STYLE_PROPERTIES = [
+  'fill', 'fill-opacity', 'fill-rule', 'stroke', 'stroke-opacity',
+  'stroke-width', 'stroke-linecap', 'stroke-linejoin', 'stroke-miterlimit',
+  'stroke-dasharray', 'stroke-dashoffset', 'opacity', 'visibility',
+  'vector-effect',
+] as const;
+const SVG_PAINT_PROPERTIES = new Set<string>(SVG_PAINT_STYLE_PROPERTIES);
+
+function svgColor(element: Element | null, fallback = '#000000'): string {
+  for (let current = element; current; current = current.parentElement) {
+    const color = (current as SVGElement).style?.getPropertyValue('color') ||
+      current.getAttribute('color');
+    if (color && !['inherit', 'currentcolor'].includes(color.trim().toLowerCase()))
+      return color.trim();
+  }
+  return fallback;
+}
+
+function svgPresentationAttributes(
+  element: SVGElement,
+): { name: string; value: string; owner: SVGElement }[] {
+  const attributes = Array.from(element.attributes).map(({ name, value }) => ({
+    name, value, owner: element,
+  }));
+  // CSS declarations have priority over SVG presentation attributes.
+  for (const name of SVG_PAINT_STYLE_PROPERTIES) {
+    const value = element.style?.getPropertyValue(name);
+    if (value) attributes.push({ name, value: value.trim(), owner: element });
+  }
+  return attributes;
+}
+
+function svgHidden(element: SVGElement, fallback: Element | null): boolean {
+  let visibility: string | undefined;
+  for (let current: Element | null = element; current; current = current.parentElement) {
+    const svg = current as SVGElement;
+    if (svg.style?.display === 'none' || current.getAttribute('display') === 'none')
+      return true;
+    const ownVisibility = svg.style?.getPropertyValue('visibility') ||
+      current.getAttribute('visibility');
+    if (ownVisibility && ownVisibility !== 'inherit' && ownVisibility !== 'unset')
+      visibility ??= ownVisibility;
+  }
+  for (let current = fallback; current; current = current.parentElement) {
+    const svg = current as SVGElement;
+    if (svg.style?.display === 'none' || current.getAttribute('display') === 'none')
+      return true;
+    const ownVisibility = svg.style?.getPropertyValue('visibility') ||
+      current.getAttribute('visibility');
+    if (ownVisibility && ownVisibility !== 'inherit' && ownVisibility !== 'unset')
+      visibility ??= ownVisibility;
+  }
+  return visibility === 'hidden' || visibility === 'collapse';
+}
+
+function hasUnsupportedSvgEffects(element: SVGElement, fallback: Element | null): boolean {
+  for (let current: Element | null = element; current; current = current.parentElement) {
+    const svg = current as SVGElement;
+    for (const name of ['mask', 'filter']) {
+      const value = svg.style?.getPropertyValue(name) || current.getAttribute(name);
+      if (value && value.trim() !== 'none') return true;
+    }
+  }
+  for (let current = fallback; current; current = current.parentElement) {
+    const svg = current as SVGElement;
+    for (const name of ['mask', 'filter']) {
+      const value = svg.style?.getPropertyValue(name) || current.getAttribute(name);
+      if (value && value.trim() !== 'none') return true;
+    }
+  }
+  return false;
+}
 
 export function svgSvgElementToComputedCamera(element: SVGSVGElement) {
   const { viewBox, width, height } = element;
@@ -64,26 +142,46 @@ export function svgElementsToSerializedNodes(
   zIndex = 0,
   overrideAttributes?: NamedNodeMap,
 ): SerializedNode[] {
+  const expanded = expandSvgUses(elements, defsChildren);
+  const fallbackColor = svgColor(elements[0]?.parentElement);
+  return deserializeSvgElements(
+    expanded.children,
+    defsChildren,
+    parentId,
+    zIndex,
+    overrideAttributes,
+    { fill: false, stroke: false },
+    undefined,
+    undefined,
+    fallbackColor,
+  );
+}
+
+function deserializeSvgElements(
+  elements: SVGElement[],
+  defsChildren: SVGElement[],
+  parentId: string | undefined,
+  zIndex: number,
+  overrideAttributes: NamedNodeMap | undefined,
+  paintFromGroups: { fill: boolean; stroke: boolean },
+  rectRadii?: Map<string, { rx: number; ry: number }>,
+  nodeElements?: Map<string, SVGElement>,
+  fallbackColor = '#000000',
+): SerializedNode[] {
   const nodes: SerializedNode[] = [];
 
   for (const element of elements) {
     let type = element.tagName.toLowerCase();
+    let elementOverrideAttributes = overrideAttributes;
 
     let id = element.id || uuidv4();
 
     if (type === 'svg') {
       type = 'g';
     } else if (type === 'defs') {
-      defsChildren.push(...(Array.from(element.childNodes) as SVGElement[]));
+      defsChildren.push(...(Array.from(element.children) as SVGElement[]));
       continue;
     } else if (type === 'use') {
-      const href = element.getAttribute('xlink:href');
-      if (href) {
-        const def = defsChildren.find((d) => d.id === href.replace('#', ''));
-        if (def) {
-          return svgElementsToSerializedNodes([def], defsChildren, parentId);
-        }
-      }
       continue;
     } else if (type === 'tspan') {
       continue;
@@ -91,7 +189,11 @@ export function svgElementsToSerializedNodes(
 
     // <g> maybe a single element, so we need to infer it, e.g. a rect with children
     let inferedSingleElement = false;
-    if (type === 'g') {
+    if (
+      type === 'g' &&
+      !element.hasAttribute('data-svg-use-instance') &&
+      !element.querySelector('[data-svg-use-instance]')
+    ) {
       // <g><defs></defs></g> e.g. a <polyline> with an arrow
       if (
         Array.from(element.children).filter((child) => child.tagName !== 'defs')
@@ -99,18 +201,34 @@ export function svgElementsToSerializedNodes(
       ) {
         inferedSingleElement = true;
         id = undefined;
-        overrideAttributes = element.attributes;
+        elementOverrideAttributes = element.attributes;
       }
     }
 
     if (!inferedSingleElement) {
       const attributes = [
-        ...Array.from(element.attributes),
-        ...Array.from(overrideAttributes || []),
+        ...svgPresentationAttributes(element),
+        ...(elementOverrideAttributes?.length
+          ? svgPresentationAttributes(
+              elementOverrideAttributes[0].ownerElement as SVGElement,
+            )
+          : []),
       ].reduce((prev, attr) => {
+        if (attr.name === 'data-svg-use-instance' ||
+          attr.name === 'data-svg-viewport' ||
+          attr.name === 'data-svg-viewport-transform' ||
+          attr.name === 'style' || attr.name === 'color') return prev;
         let attributeName = kebabToCamelCase(attr.name);
+        // A collapsed single-child group only supplies paint that the child
+        // has not specified itself.
+        if (attr.owner !== element && SVG_PAINT_PROPERTIES.has(attr.name) &&
+            attributeName in prev) return prev;
 
         let value: string | number = attr.value;
+        if ((attributeName === 'fill' || attributeName === 'stroke') &&
+            value.trim().toLowerCase() === 'currentcolor') {
+          value = svgColor(attr.owner, fallbackColor);
+        }
 
         // e.g. fill="url(#bgGradient)"
         if (value.startsWith('url(#')) {
@@ -170,6 +288,18 @@ export function svgElementsToSerializedNodes(
         return prev;
       }, {} as SerializedNode);
 
+      // The 2D Rect stores one corner radius. Preserve both SVG radii for the
+      // extrusion converter before the attributes above collapse rx and ry.
+      if (type === 'rect' && rectRadii) {
+        const rxValue = element.getAttribute('rx');
+        const ryValue = element.getAttribute('ry');
+        if (rxValue !== null || ryValue !== null) {
+          const rx = Number((rxValue ?? ryValue)!.replace('px', ''));
+          const ry = Number((ryValue ?? rxValue)!.replace('px', ''));
+          rectRadii.set(id, { rx, ry });
+        }
+      }
+
       if (type === 'circle') {
         type = 'ellipse';
         Object.assign(attributes, {
@@ -194,11 +324,6 @@ export function svgElementsToSerializedNodes(
             element.style.fontWeight;
           (attributes as TextSerializedNode).fontVariant =
             element.style.fontVariant;
-        }
-        if (element.style.fill) {
-          (attributes as TextSerializedNode).fills = [
-            { type: 'solid', value: element.style.fill, opacity: 1 },
-          ];
         }
         if (element.style.textDecoration) {
           // e.g. text-decoration: underline 4px wavy rgb(0, 0, 0) ;
@@ -265,12 +390,11 @@ export function svgElementsToSerializedNodes(
       }
 
       // @see https://developer.mozilla.org/en-US/docs/Web/SVG/Reference/Attribute/visibility
-      const visibility = element.getAttribute('visibility');
-      if (visibility) {
-        attributes.visibility = visibility as Visibility['value'];
-      }
+      const visibility = attributes.visibility;
+      if (visibility) attributes.visibility = visibility as Visibility['value'];
 
-      const vectorEffect = element.getAttribute('vector-effect');
+      const vectorEffect = (attributes as unknown as Record<string, string>)
+        .vectorEffect;
       if (vectorEffect) {
         (attributes as AttenuationAttributes).sizeAttenuation =
           vectorEffect === 'non-scaling-size';
@@ -292,21 +416,53 @@ export function svgElementsToSerializedNodes(
         ...defaultAttributes[type],
         ...attributes,
       } as SerializedNode;
+      // A child without its own paint must inherit the group's paint rather
+      // than turning default opacity/`none` placeholders into a new layer.
+      if (
+        paintFromGroups.fill &&
+        !('fill' in attributes) &&
+        !('fillOpacity' in attributes) &&
+        !('fills' in attributes)
+      ) {
+        delete (node as unknown as Record<string, unknown>).fill;
+        delete (node as unknown as Record<string, unknown>).fillOpacity;
+      }
+      if (
+        paintFromGroups.stroke &&
+        !('stroke' in attributes) &&
+        !('strokeOpacity' in attributes) &&
+        !('strokes' in attributes)
+      ) {
+        delete (node as unknown as Record<string, unknown>).strokes;
+        delete (node as unknown as Record<string, unknown>).strokeOpacity;
+      }
       migrateLegacyFillWireInPlace(node as unknown as Record<string, unknown>);
       migrateLegacyStrokeWireInPlace(
         node as unknown as Record<string, unknown>,
       );
       nodes.push(node);
+      nodeElements?.set(node.id, element);
 
       fixTransform((attributes as any).transform || '', node);
     }
 
-    const children = svgElementsToSerializedNodes(
+    const children = deserializeSvgElements(
       Array.from(element.children) as SVGElement[],
       defsChildren,
       id,
       0,
-      overrideAttributes,
+      elementOverrideAttributes,
+      {
+        fill:
+          paintFromGroups.fill ||
+          (type === 'g' && (element.hasAttribute('fill') || !!element.style?.fill)),
+        stroke:
+          paintFromGroups.stroke ||
+          (type === 'g' && (element.hasAttribute('stroke') || !!element.style?.stroke)),
+      },
+      rectRadii,
+      nodeElements,
+      fallbackColor,
     ).filter(Boolean);
 
     nodes.push(...children);
@@ -315,22 +471,87 @@ export function svgElementsToSerializedNodes(
   return nodes;
 }
 
-/** Import closed, filled SVG paths and polygons as editable extrusion sources. */
+/** Import closed, filled SVG shapes as editable extrusion sources. */
 export function svgElementsToExtrudedNodes(
-  elements: SVGElement[],
+  elements: SVGElement[] | SVGSVGElement,
   depth: number,
 ): SerializedNode[] {
   if (!Number.isFinite(depth) || depth <= 0) {
     throw new RangeError('SVG extrusion depth must be finite and positive');
   }
-  return svgElementsToSerializedNodes(elements).map((node) => {
-    if (
-      node.type !== 'path' ||
-      !pathExtrusionPaintSupported(node.fills, node.strokes) ||
-      !buildPathExtrusionMesh(node.d, node.fillRule)
-    )
+  const rectRadii = new Map<string, { rx: number; ry: number }>();
+  const { root, children } = expandSvgUses(elements);
+  const fallbackColor = Array.isArray(elements)
+    ? svgColor(elements[0]?.parentElement)
+    : '#000000';
+  const nodeElements = new Map<string, SVGElement>();
+  const clipDefinitions = new Map<string, ReturnType<typeof parseSvgClipPath>>();
+  const allElements = root
+    ? [root, ...Array.from(root.querySelectorAll('*')) as SVGElement[]]
+    : children.flatMap((child) => [child, ...Array.from(child.querySelectorAll('*')) as SVGElement[]]);
+  const definitions = new Map(allElements.filter((element) => element.id)
+    .map((element) => [element.id, element] as const));
+  for (const element of allElements) {
+    if (element.localName === 'clipPath' && element.id)
+      clipDefinitions.set(element.id, parseSvgClipPath(element, definitions));
+  }
+  const nodes = deserializeSvgElements(
+    children,
+    [],
+    undefined,
+    0,
+    undefined,
+    { fill: false, stroke: false },
+    rectRadii,
+    nodeElements,
+    fallbackColor,
+  );
+  const inherited = getComputedInheritGroupWireMap(nodes);
+  const converted = nodes.map((node) => {
+    const paint = inherited.get(node.id) as
+      | Pick<PathSerializedNode, 'fills' | 'strokes'>
+      | undefined;
+    const paintSupported = pathExtrusionPaintSupported(
+      paint?.fills,
+      paint?.strokes,
+    );
+    if (node.type === 'path') {
+      if (paintSupported && buildPathExtrusionMesh(node.d, node.fillRule))
+        return { ...node, extrude3d: depth };
       return node;
-    return { ...node, extrude3d: depth };
+    }
+    return extrudeSvgPrimitive(
+      node,
+      depth,
+      paintSupported,
+      rectRadii.get(node.id),
+    );
+  });
+  const projected = reprojectSvgExtrusion(
+    converted,
+    () => {
+      const plainChildren = children.map((element) => element.cloneNode(true) as SVGElement);
+      for (const child of plainChildren) {
+        child.removeAttribute('transform');
+        child.querySelectorAll('*').forEach((element) => element.removeAttribute('transform'));
+      }
+      return deserializeSvgElements(
+        plainChildren, [], undefined, 0, undefined,
+        { fill: false, stroke: false },
+        undefined, undefined, fallbackColor,
+      );
+    },
+    root, nodeElements, inherited, depth, rectRadii, clipDefinitions,
+  );
+  const fallbackParent = Array.isArray(elements) ? elements[0]?.parentElement : null;
+  return projected.map((node) => {
+    const element = nodeElements.get(node.id);
+    if (!element) return node;
+    if (svgHidden(element, fallbackParent))
+      return { ...node, visibility: 'hidden', extrude3d: undefined };
+    if (hasUnsupportedSvgEffects(element, fallbackParent))
+      return { ...node, extrude3d: undefined };
+    return node;
   });
 }
 

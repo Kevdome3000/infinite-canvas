@@ -9,6 +9,7 @@ import {
   SerializedNode,
   ThemeMode,
   AppState,
+  DefaultRenderer3DPlugin,
   registerIconifyIconSet,
 } from '@infinite-canvas-tutorial/ecs';
 import type { ExtendedAPI } from '@infinite-canvas-tutorial/webcomponents';
@@ -29,6 +30,7 @@ import { useParams } from 'next/navigation';
 import { useAtom } from 'jotai';
 import { selectedNodesAtom, canvasApiAtom } from '@/atoms/canvas-selection';
 import { CanvasYjsManager } from '@/lib/yjs/canvas-yjs-manager';
+import { ensure3DCamera } from '@/lib/ensure-3d-camera';
 import ZoomToolbar from './zoom-toolbar';
 import lucide from '@iconify/json/json/lucide.json';
 import materialIconTheme from '@iconify/json/json/material-icon-theme.json';
@@ -36,6 +38,7 @@ import materialIconTheme from '@iconify/json/json/material-icon-theme.json';
 const canvasRuntime = createCanvasRuntime({
   plugins: [
     FilterPlugin,
+    DefaultRenderer3DPlugin,
     LaserPointerPlugin,
     LassoPlugin,
     EraserPlugin,
@@ -151,6 +154,7 @@ const Canvas = ({
     );
     await manager.waitForSync();
     if (signal.aborted) return;
+    if (!(await ensure3DCamera(api, signal)) || signal.aborted) return;
 
     // 从 Yjs 加载已保存的节点（如果有）
     const savedNodes = manager.loadNodes();

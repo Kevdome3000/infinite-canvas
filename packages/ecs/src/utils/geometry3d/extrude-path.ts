@@ -1,6 +1,8 @@
 import libtess from 'libtess';
+import polygonClipping from 'polygon-clipping';
 import { triangulate } from '../tessy';
 import type { Mesh3DGeometryData } from './types';
+import { insetFillBoundaries } from './inset-fill-boundaries';
 
 type Point = [number, number];
 
@@ -10,6 +12,7 @@ export type PathExtrusionResult =
       ok: false;
       reason:
         | 'invalid-depth'
+        | 'invalid-bevel'
         | 'invalid-contour'
         | 'empty-fill'
         | 'tessellation-failed'
@@ -95,6 +98,82 @@ function filledBoundaries(
 }
 
 /**
+ * Intersect the resolved fill with a convex SVG viewport. Resolve winding
+ * before clipping so evenodd holes, overlapping contours and nested islands
+ * retain the same visible region after the intersection.
+ */
+export function clipFilledContoursToPolygon(
+  contours: Point[][],
+  fillRule: CanvasFillRule,
+  clip: Point[],
+): Point[][] | undefined {
+  try {
+    const boundaries = filledBoundaries(contours, fillRule);
+    if (!boundaries) return;
+    if (!boundaries.length) return [];
+    // Boundary-only tessellation orients outer loops counterclockwise and
+    // holes clockwise. XOR of these nested loops reconstructs the fill,
+    // including islands within holes, without depending on ring orientation.
+    const rings = boundaries.map((boundary) => [
+      [...boundary, boundary[0]],
+    ]);
+    const filled = polygonClipping.xor(rings[0], ...rings.slice(1));
+    const viewport = [[...clip, clip[0]]];
+    const clipped = polygonClipping.intersection(filled, viewport);
+    return clipped.flatMap((polygon) =>
+      polygon.map((ring) =>
+        ring.slice(0, -1).map(([x, y]): Point => [x, y]),
+      ),
+    );
+  } catch {
+    return;
+  }
+}
+
+export type FilledContourShape = {
+  contours: Point[][];
+  fillRule: CanvasFillRule;
+};
+
+/** Union the shapes within each SVG clipPath, then intersect each clipPath. */
+export function clipFilledContoursToRegions(
+  contours: Point[][],
+  fillRule: CanvasFillRule,
+  regions: FilledContourShape[][],
+): { contours: Point[][]; inside: boolean } | undefined {
+  try {
+    const asPolygon = ({ contours, fillRule }: FilledContourShape) => {
+      const boundaries = filledBoundaries(contours, fillRule);
+      if (!boundaries) return;
+      if (!boundaries.length) return [];
+      const rings = boundaries.map((boundary) => [[...boundary, boundary[0]]]);
+      return polygonClipping.xor(rings[0], ...rings.slice(1));
+    };
+    const source = asPolygon({ contours, fillRule });
+    if (source === undefined) return;
+    if (!source.length) return { contours: [], inside: false };
+    let clipped = source;
+    for (const shapes of regions) {
+      const polygons = shapes.map(asPolygon);
+      if (polygons.some((polygon) => polygon === undefined)) return;
+      const nonempty = polygons.filter((polygon) => polygon?.length);
+      if (!nonempty.length) return { contours: [], inside: false };
+      const region = polygonClipping.union(nonempty[0]!, ...nonempty.slice(1));
+      clipped = polygonClipping.intersection(clipped, region);
+      if (!clipped.length) return { contours: [], inside: false };
+    }
+    const inside = !polygonClipping.difference(source, clipped).length;
+    return {
+      inside,
+      contours: clipped.flatMap((polygon) => polygon.map((ring) =>
+        ring.slice(0, -1).map(([x, y]): Point => [x, y]))),
+    };
+  } catch {
+    return;
+  }
+}
+
+/**
  * Build a closed, sharp-edged mesh centered on z=0 from already flattened,
  * closed Path contours in local coordinates. Curves must be sampled upstream.
  * The source arrays are never mutated. Failure is explicit so callers can keep
@@ -104,6 +183,8 @@ export function extrudePathContours(
   rawContours: Point[][],
   depth: number,
   fillRule: CanvasFillRule = 'nonzero',
+  bevel = 0,
+  bevelSegments = 1,
 ): PathExtrusionResult {
   if (
     !Number.isFinite(depth) ||
@@ -112,6 +193,18 @@ export function extrudePathContours(
   ) {
     return { ok: false, reason: 'invalid-depth' };
   }
+  if (
+    !Number.isFinite(bevel) ||
+    !Number.isFinite(Math.fround(bevel)) ||
+    bevel < 0
+  )
+    return { ok: false, reason: 'invalid-bevel' };
+  if (
+    !Number.isInteger(bevelSegments) ||
+    bevelSegments < 1 ||
+    bevelSegments > 8
+  )
+    return { ok: false, reason: 'invalid-bevel' };
   if (!rawContours.length) return { ok: false, reason: 'empty-fill' };
   const contours: Point[][] = [];
   for (const raw of rawContours) {
@@ -128,21 +221,42 @@ export function extrudePathContours(
   }
   if (!boundaries) return { ok: false, reason: 'tessellation-failed' };
   if (!boundaries.length) return { ok: false, reason: 'empty-fill' };
+  // Keep vertex correspondence between each wall and its cap. When an inward
+  // offset changes topology, retain the sharp extrusion instead.
+  let insets =
+    bevel > 0 && bevel * 2 < depth
+      ? insetFillBoundaries(boundaries, bevel)
+      : undefined;
+  if (insets) {
+    try {
+      if (filledBoundaries(insets, 'nonzero')?.length !== boundaries.length)
+        insets = undefined;
+    } catch {
+      insets = undefined;
+    }
+  }
+  const capBoundaries = insets ?? boundaries;
+  const fail = (
+    reason: 'empty-fill' | 'tessellation-failed' | 'non-manifold',
+  ): PathExtrusionResult =>
+    insets
+      ? extrudePathContours(rawContours, depth, fillRule)
+      : { ok: false, reason };
 
   // Triangulating the resolved boundaries ensures that caps and walls describe
   // the same region even when source contours overlap or self-intersect.
   let triangles: number[];
   try {
-    triangles = triangulate(boundaries, 'nonzero');
+    triangles = triangulate(capBoundaries, 'nonzero');
   } catch {
-    return { ok: false, reason: 'tessellation-failed' };
+    return fail('tessellation-failed');
   }
-  if (!triangles.length) return { ok: false, reason: 'empty-fill' };
+  if (!triangles.length) return fail('empty-fill');
   if (
     triangles.length % 6 !== 0 ||
     triangles.some((n) => !Number.isFinite(n))
   ) {
-    return { ok: false, reason: 'tessellation-failed' };
+    return fail('tessellation-failed');
   }
 
   let minX = Infinity;
@@ -158,7 +272,7 @@ export function extrudePathContours(
     }
   }
   if (minX === maxX || minY === maxY) {
-    return { ok: false, reason: 'empty-fill' };
+    return fail('empty-fill');
   }
 
   const positions: number[] = [];
@@ -186,6 +300,29 @@ export function extrudePathContours(
     (x - minX) / (maxX - minX),
     (y - minY) / (maxY - minY),
   ];
+  // Triangles on the same cap share positions, normals and UVs. Keep front and
+  // back separate because their normals point in opposite directions; walls
+  // also need separate vertices for their flat, outward-facing normals.
+  const capVertices = [new Map<string, number>(), new Map<string, number>()];
+  const capVertex = (point: Point, front: boolean): number => {
+    const vertices = capVertices[front ? 0 : 1];
+    const key = `${Math.fround(point[0])},${Math.fround(point[1])}`;
+    const existing = vertices.get(key);
+    if (existing !== undefined) return existing;
+    const [u, v] = capUv(point);
+    const index = addVertex(
+      point[0],
+      point[1],
+      front ? halfDepth : -halfDepth,
+      0,
+      0,
+      front ? 1 : -1,
+      u,
+      v,
+    );
+    vertices.set(key, index);
+    return index;
+  };
 
   for (let i = 0; i < triangles.length; i += 6) {
     const a: Point = [triangles[i], triangles[i + 1]];
@@ -193,21 +330,52 @@ export function extrudePathContours(
     const c: Point = [triangles[i + 4], triangles[i + 5]];
     const cross = (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
     if (!Number.isFinite(cross) || cross === 0) {
-      return { ok: false, reason: 'tessellation-failed' };
+      return fail('tessellation-failed');
     }
     const [first, second, third] = cross > 0 ? [a, b, c] : [a, c, b];
-    for (const z of [halfDepth, -halfDepth]) {
-      const face = z > 0 ? [first, second, third] : [third, second, first];
-      const base = positions.length / 3;
-      for (const point of face) {
-        const [u, v] = capUv(point);
-        addVertex(point[0], point[1], z, 0, 0, z > 0 ? 1 : -1, u, v);
-      }
-      indices.push(base, base + 1, base + 2);
-    }
+    indices.push(
+      capVertex(first, true),
+      capVertex(second, true),
+      capVertex(third, true),
+      capVertex(third, false),
+      capVertex(second, false),
+      capVertex(first, false),
+    );
   }
 
-  for (const boundary of boundaries) {
+  const addQuad = (
+    a: Point,
+    b: Point,
+    c: Point,
+    d: Point,
+    z0: number,
+    z1: number,
+    normal: [number, number, number],
+    u0: number,
+    u1: number,
+    v0: number,
+    v1: number,
+  ) => {
+    const base = positions.length / 3;
+    addVertex(a[0], a[1], z0, ...normal, u0, v0);
+    addVertex(b[0], b[1], z0, ...normal, u1, v0);
+    addVertex(c[0], c[1], z1, ...normal, u1, v1);
+    addVertex(d[0], d[1], z1, ...normal, u0, v1);
+    indices.push(base, base + 1, base + 2, base, base + 2, base + 3);
+  };
+  const roundedProfile =
+    insets && bevelSegments > 1
+      ? Array.from({ length: bevelSegments + 1 }, (_, step) => {
+          const angle = (step * Math.PI) / (2 * bevelSegments);
+          return {
+            fraction: step === bevelSegments ? 1 : 1 - Math.cos(angle),
+            radial: step === bevelSegments ? 0 : Math.cos(angle),
+            axial: step === bevelSegments ? 1 : Math.sin(angle),
+          };
+        })
+      : [];
+
+  for (const [boundaryIndex, boundary] of boundaries.entries()) {
     let distance = 0;
     for (let i = 0; i < boundary.length; i++) {
       const a = boundary[i];
@@ -216,17 +384,181 @@ export function extrudePathContours(
       const dy = b[1] - a[1];
       const length = Math.hypot(dx, dy);
       if (!Number.isFinite(length) || length === 0) {
-        return { ok: false, reason: 'tessellation-failed' };
+        return fail('tessellation-failed');
       }
       // libtess emits exterior loops counter-clockwise and holes clockwise.
       const nx = dy / length;
       const ny = -dx / length;
-      const base = positions.length / 3;
-      addVertex(a[0], a[1], -halfDepth, nx, ny, 0, distance, 0);
-      addVertex(b[0], b[1], -halfDepth, nx, ny, 0, distance + length, 0);
-      addVertex(b[0], b[1], halfDepth, nx, ny, 0, distance + length, depth);
-      addVertex(a[0], a[1], halfDepth, nx, ny, 0, distance, depth);
-      indices.push(base, base + 1, base + 2, base, base + 2, base + 3);
+      const chamfer = insets?.[boundaryIndex];
+      if (chamfer) {
+        const innerA = chamfer[i];
+        const innerB = chamfer[(i + 1) % chamfer.length];
+        if (bevelSegments === 1) {
+          const diagonal = 1 / Math.sqrt(2);
+          addQuad(
+            innerA,
+            innerB,
+            b,
+            a,
+            -halfDepth,
+            -halfDepth + bevel,
+            [nx * diagonal, ny * diagonal, -diagonal],
+            distance,
+            distance + length,
+            0,
+            bevel,
+          );
+          addQuad(
+            a,
+            b,
+            b,
+            a,
+            -halfDepth + bevel,
+            halfDepth - bevel,
+            [nx, ny, 0],
+            distance,
+            distance + length,
+            bevel,
+            depth - bevel,
+          );
+          addQuad(
+            a,
+            b,
+            innerB,
+            innerA,
+            halfDepth - bevel,
+            halfDepth,
+            [nx * diagonal, ny * diagonal, diagonal],
+            distance,
+            distance + length,
+            depth - bevel,
+            depth,
+          );
+        } else {
+          // Each edge owns its hard corner, but adjacent profile bands share
+          // their ring vertices and the wall uses the same outer ring.
+          const frontA: number[] = [];
+          const frontB: number[] = [];
+          const backA: number[] = [];
+          const backB: number[] = [];
+          for (const [step, profile] of roundedProfile.entries()) {
+            const atA: Point =
+              step === 0
+                ? a
+                : step === bevelSegments
+                ? innerA
+                : [
+                    a[0] + (innerA[0] - a[0]) * profile.fraction,
+                    a[1] + (innerA[1] - a[1]) * profile.fraction,
+                  ];
+            const atB: Point =
+              step === 0
+                ? b
+                : step === bevelSegments
+                ? innerB
+                : [
+                    b[0] + (innerB[0] - b[0]) * profile.fraction,
+                    b[1] + (innerB[1] - b[1]) * profile.fraction,
+                  ];
+            const frontZ =
+              step === bevelSegments
+                ? halfDepth
+                : halfDepth - bevel + bevel * profile.axial;
+            const backZ =
+              step === bevelSegments
+                ? -halfDepth
+                : -halfDepth + bevel - bevel * profile.axial;
+            const xNormal = nx * profile.radial;
+            const yNormal = ny * profile.radial;
+            frontA.push(
+              addVertex(
+                atA[0],
+                atA[1],
+                frontZ,
+                xNormal,
+                yNormal,
+                profile.axial,
+                distance,
+                frontZ + halfDepth,
+              ),
+            );
+            frontB.push(
+              addVertex(
+                atB[0],
+                atB[1],
+                frontZ,
+                xNormal,
+                yNormal,
+                profile.axial,
+                distance + length,
+                frontZ + halfDepth,
+              ),
+            );
+            backA.push(
+              addVertex(
+                atA[0],
+                atA[1],
+                backZ,
+                xNormal,
+                yNormal,
+                -profile.axial,
+                distance,
+                backZ + halfDepth,
+              ),
+            );
+            backB.push(
+              addVertex(
+                atB[0],
+                atB[1],
+                backZ,
+                xNormal,
+                yNormal,
+                -profile.axial,
+                distance + length,
+                backZ + halfDepth,
+              ),
+            );
+          }
+          for (let step = 0; step < bevelSegments; step++) {
+            indices.push(
+              frontA[step],
+              frontB[step],
+              frontB[step + 1],
+              frontA[step],
+              frontB[step + 1],
+              frontA[step + 1],
+              backA[step + 1],
+              backB[step + 1],
+              backB[step],
+              backA[step + 1],
+              backB[step],
+              backA[step],
+            );
+          }
+          indices.push(
+            backA[0],
+            backB[0],
+            frontB[0],
+            backA[0],
+            frontB[0],
+            frontA[0],
+          );
+        }
+      } else {
+        addQuad(
+          a,
+          b,
+          b,
+          a,
+          -halfDepth,
+          halfDepth,
+          [nx, ny, 0],
+          distance,
+          distance + length,
+          0,
+          depth,
+        );
+      }
       distance += length;
     }
   }
@@ -236,23 +568,27 @@ export function extrudePathContours(
     normals.some((n) => !Number.isFinite(Math.fround(n))) ||
     uvs.some((n) => !Number.isFinite(Math.fround(n)))
   ) {
-    return { ok: false, reason: 'tessellation-failed' };
+    return fail('tessellation-failed');
   }
 
   // A self crossing can create two solid lobes sharing a vertical edge. The
   // resulting mesh is pinched, so reject it rather than return invalid volume.
   // This also catches cracks between the independently tessellated caps/walls.
   const edges = new Map<string, { count: number; balance: number }>();
-  const pointKey = (index: number): string =>
-    positions
-      .slice(index * 3, index * 3 + 3)
-      .map(Math.fround)
-      .join(',');
+  const pointKeys: string[] = [];
+  const pointKey = (index: number): string => {
+    const existing = pointKeys[index];
+    if (existing !== undefined) return existing;
+    const offset = index * 3;
+    return (pointKeys[index] = `${Math.fround(positions[offset])},${Math.fround(
+      positions[offset + 1],
+    )},${Math.fround(positions[offset + 2])}`);
+  };
   for (let i = 0; i < indices.length; i += 3) {
     for (let j = 0; j < 3; j++) {
       const a = pointKey(indices[i + j]);
       const b = pointKey(indices[i + ((j + 1) % 3)]);
-      if (a === b) return { ok: false, reason: 'non-manifold' };
+      if (a === b) return fail('non-manifold');
       const forward = a < b;
       const key = forward ? `${a}|${b}` : `${b}|${a}`;
       const edge = edges.get(key) ?? { count: 0, balance: 0 };
@@ -266,7 +602,7 @@ export function extrudePathContours(
       ({ count, balance }) => count !== 2 || balance !== 0,
     )
   ) {
-    return { ok: false, reason: 'non-manifold' };
+    return fail('non-manifold');
   }
 
   return {

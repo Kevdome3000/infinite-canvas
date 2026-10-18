@@ -20,10 +20,13 @@ import {
   Mesh3D,
   Rect,
   Transform,
+  ExportFormat,
   svgElementsToExtrudedNodes,
 } from '@infinite-canvas-tutorial/ecs';
 import { YogaPlugin } from '@infinite-canvas-tutorial/yoga';
 import { BufferUsage } from '@infinite-canvas-tutorial/device-api';
+import { importExtrudedSvg } from '../../../packages/app/lib/import-extruded-svg';
+import { ensure3DCamera } from '../../../packages/app/lib/ensure-3d-camera';
 import { settleECSFrames } from './ecs-frames';
 
 let api: API;
@@ -48,7 +51,12 @@ class Bootstrap extends System {
     });
     api.createCamera({ zoom, x: 0, y: 0, rotation });
     api.setAppState({ penbarSelected: Pen.SELECT });
-    if (params.has('extrude') || params.has('extrudePath')) {
+    if (
+      !params.has('appCamera') &&
+      (params.has('extrude') ||
+        params.has('extrudePath') ||
+        params.has('extrudePrimitive'))
+    ) {
       const commands = new Commands(this);
       commands.spawn(
         new Camera3D({
@@ -86,6 +94,36 @@ const resetDerivedUpdates = () => {
 };
 const harness = {
   api: () => api,
+  importAndExportSvg: async (source: string) => {
+    const nodes = importExtrudedSvg(source, 24, { x: 100, y: 100 });
+    await api.edit((editor) => editor.replaceDocument(nodes, 'remote'));
+    await settleECSFrames(api, 3);
+    const initialGlb = api.export({
+      format: ExportFormat.GLB,
+      download: false,
+    });
+    const sourceNode = api
+      .getNodes()
+      .find((node) => 'extrude3d' in node && node.extrude3d);
+    if (!sourceNode) throw new Error('Imported SVG has no extrusion');
+    await api.edit((editor) =>
+      editor.updateNode(editor.getNodeById(sourceNode.id), {
+        extrude3d: {
+          depth: 32,
+          bevelSize: 3,
+          bevelSegments: 4,
+          sideColor: '#ff00ff',
+        },
+      }),
+    );
+    await settleECSFrames(api, 3);
+    const editedGlb = api.export({ format: ExportFormat.GLB, download: false });
+    return {
+      nodes: api.getNodes(),
+      initialGlb: Array.from(initialGlb),
+      editedGlb: Array.from(editedGlb),
+    };
+  },
   svgExtrusionState: () => {
     const node = api.getNodeById('model');
     const entity = api.getEntity(node);
@@ -156,6 +194,12 @@ window.gizmoTest = harness;
 async function init() {
   await app.run();
   while (!api.getCanvas().has(GPUResource)) await harness.settle();
+  if (params.has('appCamera')) {
+    const installation = ensure3DCamera(api);
+    if (ensure3DCamera(api) !== installation)
+      throw new Error('App 3D camera initialization was not idempotent');
+    await installation;
+  }
   // Observe actual scene/model UBO writes and mesh bindings, excluding gizmos.
   const device = api.getCanvas().read(GPUResource).device;
   const sceneBuffers = new WeakSet<object>();
@@ -164,7 +208,7 @@ async function init() {
     const buffer = createBuffer(descriptor);
     if (descriptor.usage === BufferUsage.UNIFORM) {
       const isScene = descriptor.viewOrSize === 188 * 4;
-      const isModel = descriptor.viewOrSize === 56 * 4;
+      const isModel = descriptor.viewOrSize === 60 * 4;
       if (isScene) sceneBuffers.add(buffer);
       if (isScene || isModel) {
         const upload = buffer.setSubData.bind(buffer);
@@ -194,39 +238,42 @@ async function init() {
   };
   await api.edit(
     (editor) => {
-      const node: SerializedNode = params.has('extrudePath')
-        ? svgElementsToExtrudedNodes(
-            [
-              new DOMParser().parseFromString(
-                '<svg xmlns="http://www.w3.org/2000/svg"><path id="model" d="M60 60 H100 V100 H60 Z M72 72 H88 V88 H72 Z" fill="#33aabb" fill-rule="evenodd"/></svg>',
-                'image/svg+xml',
-              ).documentElement.firstElementChild as SVGElement,
-            ],
-            20,
-          )[0]
-        : params.has('extrude')
-        ? {
-            id: 'model',
-            type: 'rect',
-            zIndex: 0,
-            x: 60,
-            y: 60,
-            width: 40,
-            height: 40,
-            extrude3d: { depth: 20, z: 10 },
-            fills: [{ type: 'solid', value: '#33aabb' }],
-          }
-        : {
-            id: 'model',
-            type: 'mesh3d',
-            zIndex: 0,
-            x: 60,
-            y: 60,
-            z,
-            width: 40,
-            height: 40,
-            scale3d: 20,
-          };
+      const node: SerializedNode =
+        params.has('extrudePath') || params.has('extrudePrimitive')
+          ? svgElementsToExtrudedNodes(
+              [
+                new DOMParser().parseFromString(
+                  params.has('extrudePrimitive')
+                    ? '<svg xmlns="http://www.w3.org/2000/svg"><ellipse id="model" cx="80" cy="80" rx="20" ry="15" fill="#33aabb"/></svg>'
+                    : '<svg xmlns="http://www.w3.org/2000/svg"><path id="model" d="M60 60 H100 V100 H60 Z M72 72 H88 V88 H72 Z" fill="#33aabb" fill-rule="evenodd"/></svg>',
+                  'image/svg+xml',
+                ).documentElement.firstElementChild as SVGElement,
+              ],
+              20,
+            )[0]
+          : params.has('extrude')
+          ? {
+              id: 'model',
+              type: 'rect',
+              zIndex: 0,
+              x: 60,
+              y: 60,
+              width: 40,
+              height: 40,
+              extrude3d: { depth: 20, z: 10 },
+              fills: [{ type: 'solid', value: '#33aabb' }],
+            }
+          : {
+              id: 'model',
+              type: 'mesh3d',
+              zIndex: 0,
+              x: 60,
+              y: 60,
+              z,
+              width: 40,
+              height: 40,
+              scale3d: 20,
+            };
       const nodes: SerializedNode[] = [node];
       if (params.has('yoga')) {
         node.parentId = 'layout';

@@ -9,6 +9,7 @@ import {
   Material3D,
   Mesh3D,
   Path,
+  Rect,
   StrokeLayers,
   ToBeDeleted,
   Transform3D,
@@ -18,13 +19,17 @@ import {
   Selected,
   Selected3D,
 } from '../components';
-import { extrudeMaterialBaseColorFromEntity } from '../utils/extrude3d';
+import {
+  extrudeMaterialBaseColorFromEntity,
+  extrudeMaterialSideColorFromEntity,
+} from '../utils/extrude3d';
 import { resolveExtrudeCompanionTransform } from '../utils/extrude3d-transform';
 import { resolveCanvasFromSceneGraph } from '../utils/canvas3d-scope';
 import { ensureCompanionGizmoWhenSourceSelected } from '../utils/mesh3d-node';
 import { isEntityAlive } from './Transform';
 import { syncMaterial3D, syncTransform3D } from '../utils/sync3d';
 import { pathExtrusionGeometry } from '../utils/path-extrusion-source';
+import { rectExtrusionGeometry } from '../utils/rect-extrusion-source';
 
 /**
  * Keeps Extrude3D mesh companions aligned to their 2D sources.
@@ -51,6 +56,7 @@ export class SyncExtrude3D extends System {
             FillLayers,
             GlobalTransform,
             Path,
+            Rect,
             StrokeLayers,
             Camera,
             Canvas,
@@ -79,25 +85,24 @@ export class SyncExtrude3D extends System {
         continue;
       }
 
-      if (entity.has(Path)) {
-        const pathMesh = pathExtrusionGeometry(entity);
-        if (!pathMesh) {
-          meshEntity.add(ToBeDeleted);
-          entity.write(Extrude3D).meshEntity = undefined;
-          continue;
-        }
-        const { geometry } = pathMesh;
-        if (
-          meshEntity.read(Mesh3D).positions !== geometry.positions ||
-          meshEntity.read(Mesh3D).indices !== geometry.indices
-        ) {
-          Object.assign(meshEntity.write(Mesh3D), {
-            positions: geometry.positions,
-            normals: geometry.normals,
-            uvs: geometry.uvs ?? null,
-            indices: geometry.indices,
-          });
-        }
+      const geometry = entity.has(Path)
+        ? pathExtrusionGeometry(entity)?.geometry
+        : rectExtrusionGeometry(entity);
+      if (!geometry) {
+        meshEntity.add(ToBeDeleted);
+        entity.write(Extrude3D).meshEntity = undefined;
+        continue;
+      }
+      if (
+        meshEntity.read(Mesh3D).positions !== geometry.positions ||
+        meshEntity.read(Mesh3D).indices !== geometry.indices
+      ) {
+        Object.assign(meshEntity.write(Mesh3D), {
+          positions: geometry.positions,
+          normals: geometry.normals,
+          uvs: geometry.uvs ?? null,
+          indices: geometry.indices,
+        });
       }
 
       const dragging =
@@ -115,6 +120,7 @@ export class SyncExtrude3D extends System {
 
       syncMaterial3D(meshEntity, {
         baseColor: extrudeMaterialBaseColorFromEntity(entity),
+        sideColor: extrudeMaterialSideColorFromEntity(entity),
       });
     }
   }
