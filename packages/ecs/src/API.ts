@@ -3174,9 +3174,11 @@ export class API {
     this.#history.clear();
   }
 
-  export(options: ExportOptions & { format: ExportFormat.GLB }): Uint8Array;
-  export(options: ExportOptions): Uint8Array | void;
-  export(options: ExportOptions): Uint8Array | void {
+  export(
+    options: ExportOptions & { format: ExportFormat.GLB },
+  ): Uint8Array<ArrayBuffer>;
+  export(options: ExportOptions): Uint8Array<ArrayBuffer> | void;
+  export(options: ExportOptions): Uint8Array<ArrayBuffer> | void {
     const { format, download = true, nodes = [] } = options;
     if (format === ExportFormat.GLB) {
       const scene = this.getNodes();

@@ -41,7 +41,7 @@ const finite = (values: ArrayLike<number>): boolean => {
 /** Export untextured 3D meshes to a self-contained GLB in glTF's Y-up space. */
 export function exportMeshesToGlb(
   sources: readonly GlbMeshSource[],
-): Uint8Array {
+): Uint8Array<ArrayBuffer> {
   if (!sources.length) throw new Error('No 3D meshes to export');
 
   const chunks: Uint8Array[] = [];
