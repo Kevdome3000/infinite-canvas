@@ -8,7 +8,7 @@ test.beforeEach(async ({ page }, testInfo) => {
 });
 
 test.describe('E2E Suite', () => {
-  tests.forEach(({ name }) => {
+  tests.forEach(({ name, nodeCount }) => {
     test(`${name} with ${renderer}`, async ({ page, context }) => {
       let resolveReadyPromise: () => void;
       const readyPromise = new Promise((resolve) => {
@@ -24,6 +24,11 @@ test.describe('E2E Suite', () => {
       const url = `./infinitecanvas/?name=${name}&renderer=webgl`;
       await page.goto(url);
       await readyPromise;
+      const scene = name === 'drop-shadow' ? 'drop_shadow' : name;
+      await expect(page.locator('#example-select')).toHaveValue(scene);
+      await expect(page.locator('#container')).toHaveAttribute('data-scene', scene);
+      await expect(page.locator('#container')).toHaveAttribute('data-node-count', String(nodeCount));
+      await expect(page.locator('#container canvas')).toHaveCount(1);
 
       await expect(page.locator('canvas')).toHaveScreenshot([
         renderer,

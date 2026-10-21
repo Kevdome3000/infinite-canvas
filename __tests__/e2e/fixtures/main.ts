@@ -16,29 +16,36 @@ const options = Object.keys(demos).map((d) => {
 });
 options.forEach((d) => select.append(d));
 
-const initialValue = new URL(location as any).searchParams.get(
-  'name',
-) as string;
+const requestedName = new URL(location.href).searchParams.get('name');
+// Preserve the historical URL/snapshot name while selecting the actual export.
+const initialValue = requestedName === 'drop-shadow' ? 'drop_shadow' : requestedName;
+if (initialValue && !Object.hasOwn(demos, initialValue)) {
+  throw new Error(`Unknown visual fixture: ${initialValue}`);
+}
 const renderer =
   (new URL(location as any).searchParams.get('renderer') as
     | 'webgl'
     | 'webgpu'
     | undefined) || 'webgl';
-if (demos[initialValue]) select.value = initialValue;
+if (initialValue) select.value = initialValue;
 
 const $container = document.getElementById('container')!;
 
-let callback: () => void;
-render();
+let callback: (() => Promise<void>) | undefined;
+let rendering = Promise.resolve();
+queueRender(select.value);
 
-async function render() {
-  if (callback) {
-    callback();
-  }
+async function render(name: string) {
+  const dispose = callback;
+  callback = undefined;
+  await dispose?.();
   $container.innerHTML = '';
+  delete $container.dataset.nodeCount;
+  delete $container.dataset.scene;
 
-  const demo = demos[select.value];
+  const demo = demos[name];
   callback = await initExample($container, demo, renderer);
+  $container.dataset.scene = name;
 
   // @ts-ignore
   if (window.screenshot) {
@@ -47,8 +54,14 @@ async function render() {
   }
 }
 
+function queueRender(name: string) {
+  // Becsy initialization and asynchronous disposal must never overlap worlds.
+  // Capture the requested demo rather than reading a later select value.
+  rendering = rendering.then(() => render(name));
+}
+
 function onChange() {
   const { value } = select;
   history.pushState({ value }, '', `?name=${value}&renderer=${renderer}`);
-  render();
+  queueRender(value);
 }

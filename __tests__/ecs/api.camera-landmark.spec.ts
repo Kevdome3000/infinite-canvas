@@ -148,3 +148,50 @@ it('applies an immediate landmark and cancels a pending animation', async () => 
   expect(pendingFinish).not.toHaveBeenCalled();
   expect(immediateFinish).toHaveBeenCalledTimes(1);
 });
+
+// Exercise public framing against the real scene index, not mocked bounds.
+it('fits the complete rectangular scene and fills the viewport around the same center', async () => {
+  await world.reset(api, [{
+    id: 'framing-rect', type: 'rect', x: 50, y: 75, width: 100, height: 50,
+    fills: [{ type: 'solid', value: 'black' }],
+  }]);
+  try {
+    await world.frame();
+    await world.edit(api, (editor) => editor.fitToScreen({ duration: 0 }), 'NEVER');
+    await world.frame();
+    expectCamera(50, 50, 2);
+    // Fitting leaves vertical margin; filling instead crops the wider axis.
+    await world.edit(api, (editor) => editor.fillScreen({ duration: 0 }), 'NEVER');
+    await world.frame();
+    expectCamera(75, 75, 4);
+    expect(api.getNodeById('framing-rect')).toMatchObject({ x: 50, y: 75, width: 100, height: 50 });
+  } finally {
+    await world.reset(api, []);
+  }
+});
+
+it('keeps an empty scene camera unchanged when fitting or filling', async () => {
+  await world.reset(api, []);
+  await world.frame();
+  await world.edit(api, (editor) => {
+    editor.gotoLandmark({ x: 12, y: -8, zoom: 1.5 }, { duration: 0 });
+  }, 'NEVER');
+  await world.frame();
+  await world.edit(api, (editor) => {
+    editor.fitToScreen({ duration: 0 });
+    editor.fillScreen({ duration: 0 });
+  }, 'NEVER');
+  await world.frame();
+  expectCamera(12, -8, 1.5);
+  expect(callbacks.size).toBe(0);
+});
+
+it('zooms around the viewport center without moving that world-space anchor', async () => {
+  await world.edit(api, (editor) => editor.zoomTo(2, { duration: 0 }), 'NEVER');
+  await world.frame();
+  expectCamera(50, 50, 2);
+  const camera = api.getCamera().read(ComputedCamera);
+  expect(camera.x + 100 / camera.zoom).toBeCloseTo(100);
+  expect(camera.y + 100 / camera.zoom).toBeCloseTo(100);
+  expect(callbacks.size).toBe(0);
+});

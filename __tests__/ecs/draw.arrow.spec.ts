@@ -28,6 +28,7 @@ import {
   ZIndex,
   ComputeZIndex,
   Pen,
+  Path,
   ToBeDeleted,
   PartialBinding,
   Binded,
@@ -115,6 +116,10 @@ describe('Draw arrow', () => {
 
     app.addPlugins(...DefaultPlugins, MyPlugin);
 
+    const originalPathHitTest = Path.hitTestProvider;
+    // The only path is an unbound preview; it cannot be a binding target.
+    // Keep pointer/controller and real GL rendering, without Node Path2D picking.
+    Path.hitTestProvider = () => false;
     try {
       await app.run();
       await frames();
@@ -123,18 +128,31 @@ describe('Draw arrow', () => {
       await interaction.mouse($canvas!, 'mousemove', 100, 100);
       await interaction.mouse($canvas!, 'mousemove', 150, 150);
       await interaction.mouse($canvas!, 'mouseup', 150, 150);
-      await frames(6);
+      // The first click establishes the source; pointer motion only previews.
+      expect(api!.getAppState().penbarSelected).toBe(Pen.DRAW_ARROW);
       expect(api!.getNodes()).toHaveLength(1);
-      expect(api!.getAppState().penbarSelected).toBe(Pen.SELECT);
-      expect(api!.getAppState().layersSelected).toEqual([api!.getNodes()[0].id]);
-
+      const previewId = api!.getNodes()[0].id;
+      // The historical baseline captures the source-to-pointer preview.
+      await frames(6);
       const dir = `${__dirname}/snapshots`;
       await expect($canvas!.getContext('webgl1')).toMatchWebGLSnapshot(
         dir,
         'draw-arrow',
       );
+      await interaction.mouse($canvas!, 'mousedown', 150, 150);
+      await interaction.mouse($canvas!, 'mouseup', 150, 150);
+      await frames(6);
+      expect(api!.getNodes()).toHaveLength(1);
+      expect(api!.getNodes()[0].id).not.toBe(previewId);
+      expect(api!.getAppState().penbarSelected).toBe(Pen.SELECT);
+      expect(api!.getAppState().layersSelected).toEqual([api!.getNodes()[0].id]);
+
     } finally {
-      await interaction.dispose();
+      try {
+        await interaction.dispose();
+      } finally {
+        Path.hitTestProvider = originalPathHitTest;
+      }
     }
   });
 });

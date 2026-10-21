@@ -1,20 +1,26 @@
 [
   {
-    "name": "circle"
+    "name": "circle",
+    "nodeCount": 9
   },
   {
-    "name": "ellipse"
+    "name": "ellipse",
+    "nodeCount": 9
   },
   {
-    "name": "rect"
+    "name": "rect",
+    "nodeCount": 9
   },
   {
-    "name": "drop-shadow"
+    "name": "drop-shadow",
+    "nodeCount": 3
   },
   {
-    "name": "grid_lines"
+    "name": "grid_lines",
+    "nodeCount": 0
   },
   {
-    "name": "grid_dots"
+    "name": "grid_dots",
+    "nodeCount": 0
   }
 ]

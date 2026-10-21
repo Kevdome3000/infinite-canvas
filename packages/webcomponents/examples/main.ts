@@ -49,7 +49,6 @@ import {
   Transform3D,
   Light3D,
 } from '../../ecs';
-import { Event, UIPlugin } from '../src';
 import '../src/spectrum';
 import { LaserPointerPlugin } from '../../plugin-laser-pointer/src';
 import { EraserPlugin } from '../../plugin-eraser/src';
