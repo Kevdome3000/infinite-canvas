@@ -27,7 +27,12 @@ export function meshWorldCorners({
       i & 4 ? max[2] : min[2],
     );
     vec3.transformMat4(p, p, model);
-    if (p.every(Number.isFinite)) points.push(p);
+    if (
+      Number.isFinite(p[0]) &&
+      Number.isFinite(p[1]) &&
+      Number.isFinite(p[2])
+    )
+      points.push(p);
   }
   return points;
 }

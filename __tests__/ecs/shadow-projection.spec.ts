@@ -13,6 +13,23 @@ const identity = new Float32Array([
   1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1,
 ]);
 
+it.each(
+  [0, 1, 2].flatMap((axis) =>
+    [NaN, Infinity, -Infinity].map((value) => ({ axis, value })),
+  ),
+)('rejects nonfinite world-corner coordinate $axis: $value', ({ axis, value }) => {
+  const model = new Float32Array(identity);
+  model[12 + axis] = value;
+  const bounds = {
+    min: [-1, -1, -1] as [number, number, number],
+    max: [1, 1, 1] as [number, number, number],
+    model,
+  };
+  expect(meshWorldCorners(bounds)).toEqual([]);
+  expect(fitDirectionalShadow([0, 0, 1], [bounds])).toBeNull();
+  expect(fitPointShadow([0, 0, 0], 50, [bounds])).toBeNull();
+});
+
 it('fits all caster corners inside directional shadow clip space', () => {
   const floor = {
     min: [-100, -80, 100] as [number, number, number],
