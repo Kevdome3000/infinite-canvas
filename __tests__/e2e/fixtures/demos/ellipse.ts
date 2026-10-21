@@ -1,116 +1,89 @@
-import { Canvas, Ellipse } from '../../../../packages/core/src';
-import { ImageLoader } from '@loaders.gl/images';
-import { load } from '@loaders.gl/core';
+import type { API, SerializedNode } from '@infinite-canvas-tutorial/ecs';
 
-export async function render(canvas: Canvas) {
-  const image = (await load('./canvas.png', ImageLoader)) as ImageBitmap;
-
-  const ellipse1 = new Ellipse({
+export async function render(api: API) {
+  const nodes: SerializedNode[] = [
+    { id: 'ellipse1', type: 'ellipse', zIndex: 0,
     cx: 100,
     cy: 100,
     rx: 50,
     ry: 30,
-    fill: 'black',
-  });
-  canvas.appendChild(ellipse1);
-
-  const ellipse2 = new Ellipse({
+    fills: [{ type: 'solid', value: 'black' }],
+    },
+    { id: 'ellipse2', type: 'ellipse', zIndex: 1,
     cx: 200,
     cy: 100,
     rx: 50,
     ry: 30,
-    fill: 'black',
+    fills: [{ type: 'solid', value: 'black' }],
     opacity: 0.5,
-  });
-  canvas.appendChild(ellipse2);
-
-  const ellipse3 = new Ellipse({
+    },
+    { id: 'ellipse3', type: 'ellipse', zIndex: 2,
     cx: 300,
     cy: 100,
     rx: 50,
     ry: 30,
-    fill: 'black',
-    stroke: 'red',
+    fills: [{ type: 'solid', value: 'black' }],
+    strokes: [{ type: 'solid', value: 'red', opacity: 0.5 }],
     strokeWidth: 20,
-    strokeOpacity: 0.5,
-  });
-  canvas.appendChild(ellipse3);
-
-  const ellipse4 = new Ellipse({
+    },
+    { id: 'ellipse4', type: 'ellipse', zIndex: 3,
     cx: 100,
     cy: 200,
     rx: 50,
     ry: 30,
-    fill: 'black',
-    stroke: 'red',
+    fills: [{ type: 'solid', value: 'black' }],
+    strokes: [{ type: 'solid', value: 'red', opacity: 0.5 }],
     strokeWidth: 20,
-    strokeOpacity: 0.5,
-  });
-  canvas.appendChild(ellipse4);
-
-  const ellipse5 = new Ellipse({
+    },
+    { id: 'ellipse5', type: 'ellipse', zIndex: 4,
     cx: 200,
     cy: 200,
     rx: 50,
     ry: 30,
-    fill: 'black',
-    stroke: 'red',
+    fills: [{ type: 'solid', value: 'black' }],
+    strokes: [{ type: 'solid', value: 'red', opacity: 0.5 }],
     strokeWidth: 20,
-    strokeOpacity: 0.5,
     strokeAlignment: 'inner',
-  });
-  canvas.appendChild(ellipse5);
-
-  const ellipse6 = new Ellipse({
+    },
+    { id: 'ellipse6', type: 'ellipse', zIndex: 5,
     cx: 300,
     cy: 200,
     rx: 50,
     ry: 30,
-    fill: 'black',
-    stroke: 'red',
+    fills: [{ type: 'solid', value: 'black' }],
+    strokes: [{ type: 'solid', value: 'red', opacity: 0.5 }],
     strokeWidth: 20,
-    strokeOpacity: 0.5,
     strokeAlignment: 'outer',
-  });
-  canvas.appendChild(ellipse6);
-
-  const ellipse7 = new Ellipse({
+    },
+    { id: 'ellipse7', type: 'ellipse', zIndex: 6,
     cx: 100,
     cy: 300,
     rx: 50,
     ry: 30,
-    fill: image,
-    stroke: 'red',
+    fills: [{ type: 'image', value: new URL('canvas.png', document.baseURI).href }],
+    strokes: [{ type: 'solid', value: 'red', opacity: 0.5 }],
     strokeWidth: 20,
-    strokeOpacity: 0.5,
-  });
-  canvas.appendChild(ellipse7);
-
-  const ellipse8 = new Ellipse({
+    },
+    { id: 'ellipse8', type: 'ellipse', zIndex: 7,
     cx: 200,
     cy: 300,
     rx: 50,
     ry: 30,
-    fill: image,
-    stroke: 'red',
+    fills: [{ type: 'image', value: new URL('canvas.png', document.baseURI).href }],
+    strokes: [{ type: 'solid', value: 'red', opacity: 0.5 }],
     strokeWidth: 20,
-    strokeOpacity: 0.5,
     strokeAlignment: 'inner',
-  });
-  canvas.appendChild(ellipse8);
-
-  const ellipse9 = new Ellipse({
+    },
+    { id: 'ellipse9', type: 'ellipse', zIndex: 8,
     cx: 300,
     cy: 300,
     rx: 50,
     ry: 30,
-    fill: image,
-    stroke: 'red',
+    fills: [{ type: 'image', value: new URL('canvas.png', document.baseURI).href }],
+    strokes: [{ type: 'solid', value: 'red', opacity: 0.5 }],
     strokeWidth: 20,
-    strokeOpacity: 0.5,
     strokeAlignment: 'outer',
-  });
-  canvas.appendChild(ellipse9);
-
-  canvas.render();
+    }
+  ];
+  await api.edit(() => api.updateNodes(nodes));
 }

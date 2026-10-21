@@ -480,7 +480,7 @@ module.exports = {
   },
   transform: {
     '^.+\\.[cm]?[tj]s$': [
-      'ts-jest',
+      '<rootDir>/scripts/jest-coverage-transformer.cjs',
       {
         isolatedModules: true,
         tsconfig: {

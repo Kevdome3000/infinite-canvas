@@ -1,82 +1,45 @@
-import { Canvas, Polyline } from '../../../../packages/core/src';
+import type { API, SerializedNode } from '@infinite-canvas-tutorial/ecs';
 
-export async function render(canvas: Canvas) {
-  const polyline1 = new Polyline({
-    points: [
-      [50, 100],
-      [50, 200],
-      [150, 200],
-      [150, 100],
-    ],
-    stroke: 'black',
+export async function render(api: API) {
+  const nodes: SerializedNode[] = [
+    { id: 'polyline1', type: 'polyline', zIndex: 0,
+    points: '50,100 50,200 150,200 150,100',
+    strokes: [{ type: 'solid', value: 'black' }],
     strokeWidth: 20,
     strokeAlignment: 'outer',
-    fill: 'none',
-  });
-  canvas.appendChild(polyline1);
-  const polyline4 = new Polyline({
-    points: [
-      [50, 100],
-      [50, 200],
-      [150, 200],
-      [150, 100],
-    ],
-    stroke: 'red',
+    fills: [],
+    },
+    { id: 'polyline4', type: 'polyline', zIndex: 1,
+    points: '50,100 50,200 150,200 150,100',
+    strokes: [{ type: 'solid', value: 'red' }],
     strokeWidth: 2,
-    fill: 'none',
-  });
-  canvas.appendChild(polyline4);
-
-  const polyline2 = new Polyline({
-    points: [
-      [170, 100],
-      [170, 200],
-      [270, 200],
-      [270, 100],
-    ],
-    stroke: 'black',
+    fills: [],
+    },
+    { id: 'polyline2', type: 'polyline', zIndex: 2,
+    points: '170,100 170,200 270,200 270,100',
+    strokes: [{ type: 'solid', value: 'black' }],
     strokeWidth: 20,
-    fill: 'none',
-  });
-  canvas.appendChild(polyline2);
-  const polyline5 = new Polyline({
-    points: [
-      [170, 100],
-      [170, 200],
-      [270, 200],
-      [270, 100],
-    ],
-    stroke: 'red',
+    fills: [],
+    },
+    { id: 'polyline5', type: 'polyline', zIndex: 3,
+    points: '170,100 170,200 270,200 270,100',
+    strokes: [{ type: 'solid', value: 'red' }],
     strokeWidth: 2,
-    fill: 'none',
-  });
-  canvas.appendChild(polyline5);
-
-  const polyline3 = new Polyline({
-    points: [
-      [310, 100],
-      [310, 200],
-      [410, 200],
-      [410, 100],
-    ],
-    stroke: 'black',
+    fills: [],
+    },
+    { id: 'polyline3', type: 'polyline', zIndex: 4,
+    points: '310,100 310,200 410,200 410,100',
+    strokes: [{ type: 'solid', value: 'black' }],
     strokeWidth: 20,
     strokeAlignment: 'inner',
-    fill: 'none',
-  });
-  canvas.appendChild(polyline3);
-  const polyline6 = new Polyline({
-    points: [
-      [310, 100],
-      [310, 200],
-      [410, 200],
-      [410, 100],
-    ],
-    stroke: 'red',
+    fills: [],
+    },
+    { id: 'polyline6', type: 'polyline', zIndex: 5,
+    points: '310,100 310,200 410,200 410,100',
+    strokes: [{ type: 'solid', value: 'red' }],
     strokeWidth: 2,
-    fill: 'none',
-  });
-  canvas.appendChild(polyline6);
-
-  canvas.render();
+    fills: [],
+    }
+  ];
+  await api.edit(() => api.updateNodes(nodes));
 }

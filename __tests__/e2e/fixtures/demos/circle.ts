@@ -1,107 +1,89 @@
-import { Canvas, Circle } from '../../../../packages/core/src';
-import { ImageLoader } from '@loaders.gl/images';
-import { load } from '@loaders.gl/core';
+import type { API, SerializedNode } from '@infinite-canvas-tutorial/ecs';
 
-export async function render(canvas: Canvas) {
-  const image = (await load('./canvas.png', ImageLoader)) as ImageBitmap;
-
-  const circle1 = new Circle({
+export async function render(api: API) {
+  const nodes: SerializedNode[] = [
+    { id: 'circle1', type: 'ellipse', zIndex: 0,
     cx: 100,
     cy: 100,
-    r: 50,
-    fill: 'black',
-  });
-  canvas.appendChild(circle1);
-
-  const circle2 = new Circle({
+    rx: 50,
+    ry: 50,
+    fills: [{ type: 'solid', value: 'black' }],
+    },
+    { id: 'circle2', type: 'ellipse', zIndex: 1,
     cx: 200,
     cy: 100,
-    r: 50,
-    fill: 'black',
+    rx: 50,
+    ry: 50,
+    fills: [{ type: 'solid', value: 'black' }],
     opacity: 0.5,
-  });
-  canvas.appendChild(circle2);
-
-  const circle3 = new Circle({
+    },
+    { id: 'circle3', type: 'ellipse', zIndex: 2,
     cx: 300,
     cy: 100,
-    r: 50,
-    fill: 'black',
-    stroke: 'red',
+    rx: 50,
+    ry: 50,
+    fills: [{ type: 'solid', value: 'black' }],
+    strokes: [{ type: 'solid', value: 'red', opacity: 0.5 }],
     strokeWidth: 20,
-    strokeOpacity: 0.5,
-  });
-  canvas.appendChild(circle3);
-
-  const circle4 = new Circle({
+    },
+    { id: 'circle4', type: 'ellipse', zIndex: 3,
     cx: 100,
     cy: 200,
-    r: 50,
-    fill: 'black',
-    stroke: 'red',
+    rx: 50,
+    ry: 50,
+    fills: [{ type: 'solid', value: 'black' }],
+    strokes: [{ type: 'solid', value: 'red', opacity: 0.5 }],
     strokeWidth: 20,
-    strokeOpacity: 0.5,
-  });
-  canvas.appendChild(circle4);
-
-  const circle5 = new Circle({
+    },
+    { id: 'circle5', type: 'ellipse', zIndex: 4,
     cx: 200,
     cy: 200,
-    r: 50,
-    fill: 'black',
-    stroke: 'red',
+    rx: 50,
+    ry: 50,
+    fills: [{ type: 'solid', value: 'black' }],
+    strokes: [{ type: 'solid', value: 'red', opacity: 0.5 }],
     strokeWidth: 20,
-    strokeOpacity: 0.5,
     strokeAlignment: 'inner',
-  });
-  canvas.appendChild(circle5);
-
-  const circle6 = new Circle({
+    },
+    { id: 'circle6', type: 'ellipse', zIndex: 5,
     cx: 300,
     cy: 200,
-    r: 50,
-    fill: 'black',
-    stroke: 'red',
+    rx: 50,
+    ry: 50,
+    fills: [{ type: 'solid', value: 'black' }],
+    strokes: [{ type: 'solid', value: 'red', opacity: 0.5 }],
     strokeWidth: 20,
-    strokeOpacity: 0.5,
     strokeAlignment: 'outer',
-  });
-  canvas.appendChild(circle6);
-
-  const circle7 = new Circle({
+    },
+    { id: 'circle7', type: 'ellipse', zIndex: 6,
     cx: 100,
     cy: 300,
-    r: 50,
-    fill: image,
-    stroke: 'red',
+    rx: 50,
+    ry: 50,
+    fills: [{ type: 'image', value: new URL('canvas.png', document.baseURI).href }],
+    strokes: [{ type: 'solid', value: 'red', opacity: 0.5 }],
     strokeWidth: 20,
-    strokeOpacity: 0.5,
-  });
-  canvas.appendChild(circle7);
-
-  const circle8 = new Circle({
+    },
+    { id: 'circle8', type: 'ellipse', zIndex: 7,
     cx: 200,
     cy: 300,
-    r: 50,
-    fill: image,
-    stroke: 'red',
+    rx: 50,
+    ry: 50,
+    fills: [{ type: 'image', value: new URL('canvas.png', document.baseURI).href }],
+    strokes: [{ type: 'solid', value: 'red', opacity: 0.5 }],
     strokeWidth: 20,
-    strokeOpacity: 0.5,
     strokeAlignment: 'inner',
-  });
-  canvas.appendChild(circle8);
-
-  const circle9 = new Circle({
+    },
+    { id: 'circle9', type: 'ellipse', zIndex: 8,
     cx: 300,
     cy: 300,
-    r: 50,
-    fill: image,
-    stroke: 'red',
+    rx: 50,
+    ry: 50,
+    fills: [{ type: 'image', value: new URL('canvas.png', document.baseURI).href }],
+    strokes: [{ type: 'solid', value: 'red', opacity: 0.5 }],
     strokeWidth: 20,
-    strokeOpacity: 0.5,
     strokeAlignment: 'outer',
-  });
-  canvas.appendChild(circle9);
-
-  canvas.render();
+    }
+  ];
+  await api.edit(() => api.updateNodes(nodes));
 }

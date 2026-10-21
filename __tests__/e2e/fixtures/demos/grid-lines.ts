@@ -1,5 +1,5 @@
-import { Canvas } from '../../../../packages/core/src';
+import { CheckboardStyle, type API } from '@infinite-canvas-tutorial/ecs';
 
-export async function render(canvas: Canvas) {
-  canvas.render();
+export async function render(api: API) {
+  await api.edit(() => api.setAppState({ checkboardStyle: CheckboardStyle.GRID }));
 }

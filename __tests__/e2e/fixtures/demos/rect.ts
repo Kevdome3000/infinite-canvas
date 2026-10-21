@@ -1,116 +1,89 @@
-import { Canvas, Rect } from '../../../../packages/core/src';
-import { ImageLoader } from '@loaders.gl/images';
-import { load } from '@loaders.gl/core';
+import type { API, SerializedNode } from '@infinite-canvas-tutorial/ecs';
 
-export async function render(canvas: Canvas) {
-  const image = (await load('./canvas.png', ImageLoader)) as ImageBitmap;
-
-  const rect1 = new Rect({
+export async function render(api: API) {
+  const nodes: SerializedNode[] = [
+    { id: 'rect1', type: 'rect', zIndex: 0,
     x: 50,
     y: 50,
     width: 100,
     height: 100,
-    fill: 'black',
-  });
-  canvas.appendChild(rect1);
-
-  const rect2 = new Rect({
+    fills: [{ type: 'solid', value: 'black' }],
+    },
+    { id: 'rect2', type: 'rect', zIndex: 1,
     x: 150,
     y: 50,
     width: 100,
     height: 100,
-    fill: 'black',
+    fills: [{ type: 'solid', value: 'black' }],
     opacity: 0.5,
-  });
-  canvas.appendChild(rect2);
-
-  const rect3 = new Rect({
+    },
+    { id: 'rect3', type: 'rect', zIndex: 2,
     x: 250,
     y: 50,
     width: 100,
     height: 100,
-    fill: 'black',
-    stroke: 'red',
+    fills: [{ type: 'solid', value: 'black' }],
+    strokes: [{ type: 'solid', value: 'red', opacity: 0.5 }],
     strokeWidth: 20,
-    strokeOpacity: 0.5,
-  });
-  canvas.appendChild(rect3);
-
-  const rect4 = new Rect({
+    },
+    { id: 'rect4', type: 'rect', zIndex: 3,
     x: 50,
     y: 150,
     width: 100,
     height: 100,
-    fill: 'black',
-    stroke: 'red',
+    fills: [{ type: 'solid', value: 'black' }],
+    strokes: [{ type: 'solid', value: 'red', opacity: 0.5 }],
     strokeWidth: 20,
-    strokeOpacity: 0.5,
-  });
-  canvas.appendChild(rect4);
-
-  const rect5 = new Rect({
+    },
+    { id: 'rect5', type: 'rect', zIndex: 4,
     x: 150,
     y: 150,
     width: 100,
     height: 100,
-    fill: 'black',
-    stroke: 'red',
+    fills: [{ type: 'solid', value: 'black' }],
+    strokes: [{ type: 'solid', value: 'red', opacity: 0.5 }],
     strokeWidth: 20,
-    strokeOpacity: 0.5,
     strokeAlignment: 'inner',
-  });
-  canvas.appendChild(rect5);
-
-  const rect6 = new Rect({
+    },
+    { id: 'rect6', type: 'rect', zIndex: 5,
     x: 250,
     y: 150,
     width: 100,
     height: 100,
-    fill: 'black',
-    stroke: 'red',
+    fills: [{ type: 'solid', value: 'black' }],
+    strokes: [{ type: 'solid', value: 'red', opacity: 0.5 }],
     strokeWidth: 20,
-    strokeOpacity: 0.5,
     strokeAlignment: 'outer',
-  });
-  canvas.appendChild(rect6);
-
-  const rect7 = new Rect({
+    },
+    { id: 'rect7', type: 'rect', zIndex: 6,
     x: 50,
     y: 250,
     width: 100,
     height: 100,
-    fill: image,
-    stroke: 'red',
+    fills: [{ type: 'image', value: new URL('canvas.png', document.baseURI).href }],
+    strokes: [{ type: 'solid', value: 'red', opacity: 0.5 }],
     strokeWidth: 20,
-    strokeOpacity: 0.5,
-  });
-  canvas.appendChild(rect7);
-
-  const rect8 = new Rect({
+    },
+    { id: 'rect8', type: 'rect', zIndex: 7,
     x: 150,
     y: 250,
     width: 100,
     height: 100,
-    fill: image,
-    stroke: 'red',
+    fills: [{ type: 'image', value: new URL('canvas.png', document.baseURI).href }],
+    strokes: [{ type: 'solid', value: 'red', opacity: 0.5 }],
     strokeWidth: 20,
-    strokeOpacity: 0.5,
     strokeAlignment: 'inner',
-  });
-  canvas.appendChild(rect8);
-
-  const rect9 = new Rect({
+    },
+    { id: 'rect9', type: 'rect', zIndex: 8,
     x: 250,
     y: 250,
     width: 100,
     height: 100,
-    fill: image,
-    stroke: 'red',
+    fills: [{ type: 'image', value: new URL('canvas.png', document.baseURI).href }],
+    strokes: [{ type: 'solid', value: 'red', opacity: 0.5 }],
     strokeWidth: 20,
-    strokeOpacity: 0.5,
     strokeAlignment: 'outer',
-  });
-  canvas.appendChild(rect9);
-
-  canvas.render();
+    }
+  ];
+  await api.edit(() => api.updateNodes(nodes));
 }

@@ -1,50 +1,40 @@
-import { Canvas, Rect } from '../../../../packages/core/src';
-import { ImageLoader } from '@loaders.gl/images';
-import { load } from '@loaders.gl/core';
+import type { API, SerializedNode } from '@infinite-canvas-tutorial/ecs';
 
-export async function render(canvas: Canvas) {
-  const image = (await load('./canvas.png', ImageLoader)) as ImageBitmap;
-
-  const rect1 = new Rect({
+export async function render(api: API) {
+  const nodes: SerializedNode[] = [
+    { id: 'rect1', type: 'rect', zIndex: 0,
     x: 50,
     y: 50,
     width: 100,
     height: 100,
-    fill: 'black',
+    fills: [{ type: 'solid', value: 'black' }],
     dropShadowBlurRadius: 10,
     dropShadowColor: 'red',
     dropShadowOffsetX: 10,
     dropShadowOffsetY: 10,
-  });
-  canvas.appendChild(rect1);
-
-  const rect2 = new Rect({
+    },
+    { id: 'rect2', type: 'rect', zIndex: 1,
     x: 200,
     y: 50,
     width: 100,
     height: 100,
-    fill: 'black',
-    stroke: 'black',
+    fills: [{ type: 'solid', value: 'black' }],
+    strokes: [{ type: 'solid', value: 'black', opacity: 0.5 }],
     strokeWidth: 10,
-    strokeOpacity: 0.5,
     dropShadowBlurRadius: 10,
     dropShadowColor: 'red',
-  });
-  canvas.appendChild(rect2);
-
-  const rect3 = new Rect({
+    },
+    { id: 'rect3', type: 'rect', zIndex: 2,
     x: 50,
     y: 250,
     width: 100,
     height: 100,
-    fill: image,
-    stroke: 'black',
+    fills: [{ type: 'image', value: new URL('canvas.png', document.baseURI).href }],
+    strokes: [{ type: 'solid', value: 'black', opacity: 0.5 }],
     strokeWidth: 10,
-    strokeOpacity: 0.5,
     dropShadowBlurRadius: 10,
     dropShadowColor: 'red',
-  });
-  canvas.appendChild(rect3);
-
-  canvas.render();
+    }
+  ];
+  await api.edit(() => api.updateNodes(nodes));
 }

@@ -1,50 +1,31 @@
-import { Canvas, Polyline } from '../../../../packages/core/src';
+import type { API, SerializedNode } from '@infinite-canvas-tutorial/ecs';
 
-export async function render(canvas: Canvas) {
-  const polyline1 = new Polyline({
-    points: [
-      [50, 50],
-      [50, 150],
-      [100, 150],
-      [100, 50],
-    ],
-    stroke: 'black',
+export async function render(api: API) {
+  const nodes: SerializedNode[] = [
+    { id: 'polyline1', type: 'polyline', zIndex: 0,
+    points: '50,50 50,150 100,150 100,50',
+    strokes: [{ type: 'solid', value: 'black' }],
     strokeWidth: 20,
     strokeDasharray: [10, 10],
-    fill: 'none',
-  });
-  canvas.appendChild(polyline1);
-
-  const polyline2 = new Polyline({
-    points: [
-      [150, 50],
-      [150, 150],
-      [200, 150],
-      [200, 50],
-    ],
-    stroke: 'black',
+    fills: [],
+    },
+    { id: 'polyline2', type: 'polyline', zIndex: 1,
+    points: '150,50 150,150 200,150 200,50',
+    strokes: [{ type: 'solid', value: 'black' }],
     strokeWidth: 20,
     strokeDasharray: [10, 10],
     strokeDashoffset: 10,
-    fill: 'none',
-  });
-  canvas.appendChild(polyline2);
-
-  const polyline3 = new Polyline({
-    points: [
-      [250, 50],
-      [250, 150],
-      [300, 150],
-      [300, 50],
-    ],
-    stroke: 'black',
+    fills: [],
+    },
+    { id: 'polyline3', type: 'polyline', zIndex: 2,
+    points: '250,50 250,150 300,150 300,50',
+    strokes: [{ type: 'solid', value: 'black' }],
     strokeWidth: 20,
     strokeDasharray: [5, 10],
     strokeLinecap: 'round',
     strokeLinejoin: 'round',
-    fill: 'none',
-  });
-  canvas.appendChild(polyline3);
-
-  canvas.render();
+    fills: [],
+    }
+  ];
+  await api.edit(() => api.updateNodes(nodes));
 }

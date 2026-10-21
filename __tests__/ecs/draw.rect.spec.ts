@@ -1,7 +1,6 @@
 import _gl from 'gl';
 import '../useSnapshotMatchers';
 import {
-  App,
   Camera,
   Canvas,
   Children,
@@ -32,13 +31,13 @@ import {
   Opacity,
   GlobalTransform,
 } from '../../packages/ecs/src';
-import { NodeJSAdapter, sleep, createMouseEvent } from '../utils';
-
-DOMAdapter.set(NodeJSAdapter);
+import { createECSInteraction } from '../helpers/ecs-interaction';
 
 describe('Draw rect', () => {
   it('should render rect correctly', async () => {
-    const app = new App();
+    const interaction = createECSInteraction();
+    const { app, frames } = interaction;
+    let api: API;
 
     let $canvas: HTMLCanvasElement | undefined;
     let canvasEntity: Entity | undefined;
@@ -78,7 +77,7 @@ describe('Draw rect', () => {
       initialize(): void {
         $canvas = DOMAdapter.get().createCanvas(200, 200) as HTMLCanvasElement;
 
-        const api = new API(new DefaultStateManagement(), this.commands);
+        api = new API(new DefaultStateManagement(), this.commands);
 
         canvasEntity = api.createCanvas({
           element: $canvas,
@@ -99,32 +98,24 @@ describe('Draw rect', () => {
 
     app.addPlugins(...DefaultPlugins, MyPlugin);
 
-    await app.run();
+    try {
+      await app.run();
+      await frames();
+      await interaction.mouse($canvas!, 'mousedown', 50, 50);
+      await interaction.mouse($canvas!, 'mousemove', 150, 150);
+      await interaction.mouse($canvas!, 'mouseup', 150, 150);
+      await frames(6);
+      expect(api!.getNodes()).toHaveLength(1);
+      expect(api!.getAppState().penbarSelected).toBe(Pen.SELECT);
+      expect(api!.getAppState().layersSelected).toEqual([api!.getNodes()[0].id]);
 
-    await sleep(300);
-
-    if ($canvas) {
-      $canvas.dispatchEvent(
-        createMouseEvent('mousedown', { clientX: 50, clientY: 50 }),
+      const dir = `${__dirname}/snapshots`;
+      await expect($canvas!.getContext('webgl1')).toMatchWebGLSnapshot(
+        dir,
+        'draw-rect',
       );
-      await sleep(100);
-      $canvas.dispatchEvent(
-        createMouseEvent('mousemove', { clientX: 150, clientY: 150 }),
-      );
-      await sleep(100);
-      $canvas.dispatchEvent(
-        createMouseEvent('mouseup', { clientX: 150, clientY: 150 }),
-      );
+    } finally {
+      await interaction.dispose();
     }
-
-    await sleep(300);
-
-    const dir = `${__dirname}/snapshots`;
-    await expect($canvas!.getContext('webgl1')).toMatchWebGLSnapshot(
-      dir,
-      'draw-rect',
-    );
-
-    await app.exit();
   });
 });
