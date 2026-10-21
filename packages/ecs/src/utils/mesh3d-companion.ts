@@ -47,9 +47,14 @@ export function queueMesh3DCompanion(
   const metallic = node.metallic;
   const roughness = node.roughness;
   const map = node.map ?? null;
+  const alphaMode = node.alphaMode;
+  const alphaCutoff = node.alphaCutoff;
   const specularMap = node.specularMap ?? null;
   const bumpMap = node.bumpMap ?? null;
+  const environmentMap = node.environmentMap ?? null;
   const bumpScale = node.bumpScale;
+  const castShadow = node.castShadow;
+  const receiveShadow = node.receiveShadow;
 
   const spec = normalizeGeometry(geometry);
   const meshData = resolveMesh3DNodeGeometry(geometry);
@@ -81,9 +86,14 @@ export function queueMesh3DCompanion(
         metallic,
         roughness,
         map,
+        alphaMode,
+        alphaCutoff,
         specularMap,
         bumpMap,
+        environmentMap,
         bumpScale,
+        castShadow,
+        receiveShadow,
       }),
       new Transform3D(transformProps),
       new Mesh3DNodeTarget({ source: source.hold() }),

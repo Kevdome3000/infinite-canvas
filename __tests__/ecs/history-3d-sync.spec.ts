@@ -81,6 +81,8 @@ const materialKeys = [
   'specularMap',
   'bumpMap',
   'bumpScale',
+  'castShadow',
+  'receiveShadow',
 ] as const;
 const state = (editor = api) => {
   const e = entity(editor);
@@ -92,8 +94,15 @@ const state = (editor = api) => {
       'position',
       'direction',
       'range',
+      'attenuation',
+      'referenceDistance',
       'innerConeAngle',
       'outerConeAngle',
+      'castShadow',
+      'shadowStrength',
+      'shadowSoftness',
+      'shadowBiasScale',
+      'shadowNormalBias',
     ]);
   const source = e.read(Mesh3DNode);
   const companion = source.meshEntity!;
@@ -183,6 +192,8 @@ it.each([
   ['metallic', 0.8],
   ['roughness', 0.2],
   ['bumpScale', 0],
+  ['castShadow', false],
+  ['receiveShadow', false],
   ['map', 'data:image/png;base64,base'],
   ['specularMap', 'data:image/png;base64,specular'],
   ['bumpMap', 'data:image/png;base64,bump'],
@@ -229,8 +240,15 @@ it.each([
   ['direction', [0, 1, 0]],
   ['z', 30],
   ['range', 100],
+  ['attenuation', 'inverse-square'],
+  ['referenceDistance', 80],
   ['innerConeAngle', 0],
   ['outerConeAngle', 0.2],
+  ['castShadow', true],
+  ['shadowStrength', 0.4],
+  ['shadowSoftness', 2],
+  ['shadowBiasScale', 0.5],
+  ['shadowNormalBias', 2],
 ] as const)(
   'restores light %s defaults through history and reload',
   async (key, value) => {

@@ -497,7 +497,11 @@ edge cut by the SVG viewport.
 
 ## Lighting {#lighting}
 
-Demonstrates `Light3D` with metallic-roughness materials: ambient fill, two directional lights, a warm spotlight orbiting the scene center, and three meshes (cube, sphere, cylinder) with different metallic and roughness settings. Mesh colors are converted from sRGB to linear space for lighting and back to sRGB for display.
+Compare ambient, directional, point, and spot lights on a stationary cube, sphere, and cylinder. Switch lights, adjust intensity/range and the sphere's metallic/roughness values, enable studio environment lighting and cast shadows, or play the spotlight orbit. Point and spot lights can use the original smooth range falloff or opt into inverse-square falloff with a configurable reference distance. The renderer uses GGX direct lighting with sRGB-to-linear inputs and filmic tone mapping. An LDR panorama or Radiance HDR image provides spherical-harmonic diffuse lighting and prefiltered reflections with a split-sum BRDF lookup.
+
+Up to two directional, point, or spot lights with `castShadow: true` cast shadows at once, filtered with 3 × 3 PCF. Each light can set `shadowStrength` (0–1), `shadowSoftness` (0–4 texels), `shadowBiasScale` (0–4), and `shadowNormalBias` (0–10 canvas units); defaults preserve the original appearance. Each mesh can independently opt out of casting or receiving via `material3d.castShadow` and `material3d.receiveShadow` (both default to `true`). Directional maps fit the current meshes; spot cones below 85° half-angle use one perspective map, while wider cones and point lights use six atlas faces. PCF taps at atlas-face seams sample the neighboring face rather than repeating the border texel. See the [lighting example](/example/lighting) for controls, map sizes, and API details.
+
+For textured cutouts and translucent surfaces, `material3d.alphaMode` offers `mask` and `blend`; see the [3D mesh transparency example](/example/mesh3d-alpha) for their shadow behavior and ordering limits.
 
 <Lighting />
 

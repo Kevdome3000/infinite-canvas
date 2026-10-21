@@ -11,52 +11,90 @@ function setup() {
   const gpu = fakeMeshGPU();
   const model = {} as Buffer;
   const cache = new MeshDrawBindings(gpu.device, model);
-  const args: [RenderPipeline, Buffer, Sampler, Texture, Texture, Texture] = [
+  const args: [
+    RenderPipeline,
+    Buffer,
+    Sampler,
+    Texture,
+    Texture,
+    Texture,
+    Texture,
+    Texture,
+    Texture,
+    Sampler,
+    Texture,
+    Sampler,
+  ] = [
     {} as RenderPipeline,
     {} as Buffer,
     {} as Sampler,
     {} as Texture,
     {} as Texture,
     {} as Texture,
+    {} as Texture,
+    {} as Texture,
+    {} as Texture,
+    {} as Sampler,
+    {} as Texture,
+    {} as Sampler,
   ];
   return { gpu, model, cache, args };
 }
 
-it.each(['pipeline', 'scene UBO', 'sampler', 'base color', 'specular', 'bump'])(
-  'reuses bindings until the %s resource changes',
-  (kind) => {
-    const { gpu, model, cache, args } = setup();
-    const first = cache.get(...args);
-    expect(cache.get(...args)).toBe(first);
-    expect(first.destroy).not.toHaveBeenCalled();
-    const index = [
-      'pipeline',
-      'scene UBO',
-      'sampler',
-      'base color',
-      'specular',
-      'bump',
-    ].indexOf(kind);
-    args[index] = {} as Texture & Sampler & Buffer & RenderPipeline;
-    const second = cache.get(...args);
-    expect(second).not.toBe(first);
-    expect(gpu.mocks.createBindings).toHaveBeenCalledTimes(2);
-    expect(gpu.mocks.createBindings).toHaveBeenLastCalledWith({
-      pipeline: args[0],
-      uniformBufferBindings: [{ buffer: args[1] }, { buffer: model }],
-      samplerBindings: args
-        .slice(3)
-        .map((texture) => ({ texture, sampler: args[2] })),
-    });
-    expect(first.destroy).toHaveBeenCalledTimes(1);
-    expect(cache.get(...args)).toBe(second);
-    cache.destroy();
-    cache.destroy();
-    expect(second.destroy).toHaveBeenCalledTimes(1);
-    expect(() => cache.get(...args)).toThrow('disposed');
-    gpu.scope.dispose();
-  },
-);
+it.each([
+  'pipeline',
+  'scene UBO',
+  'sampler',
+  'base color',
+  'specular',
+  'bump',
+  'environment',
+  'first shadow',
+  'second shadow',
+  'shadow sampler',
+  'environment BRDF',
+  'BRDF sampler',
+])('reuses bindings until the %s resource changes', (kind) => {
+  const { gpu, model, cache, args } = setup();
+  const first = cache.get(...args);
+  expect(cache.get(...args)).toBe(first);
+  expect(first.destroy).not.toHaveBeenCalled();
+  const index = [
+    'pipeline',
+    'scene UBO',
+    'sampler',
+    'base color',
+    'specular',
+    'bump',
+    'environment',
+    'first shadow',
+    'second shadow',
+    'shadow sampler',
+    'environment BRDF',
+    'BRDF sampler',
+  ].indexOf(kind);
+  args[index] = {} as Texture & Sampler & Buffer & RenderPipeline;
+  const second = cache.get(...args);
+  expect(second).not.toBe(first);
+  expect(gpu.mocks.createBindings).toHaveBeenCalledTimes(2);
+  expect(gpu.mocks.createBindings).toHaveBeenLastCalledWith({
+    pipeline: args[0],
+    uniformBufferBindings: [{ buffer: args[1] }, { buffer: model }],
+    samplerBindings: [
+      ...args.slice(3, 7).map((texture) => ({ texture, sampler: args[2] })),
+      { texture: args[7], sampler: args[9] },
+      { texture: args[8], sampler: args[9] },
+      { texture: args[10], sampler: args[11] },
+    ],
+  });
+  expect(first.destroy).toHaveBeenCalledTimes(1);
+  expect(cache.get(...args)).toBe(second);
+  cache.destroy();
+  cache.destroy();
+  expect(second.destroy).toHaveBeenCalledTimes(1);
+  expect(() => cache.get(...args)).toThrow('disposed');
+  gpu.scope.dispose();
+});
 
 it('keeps the previous binding through allocation failure and retries the new resources', () => {
   const { gpu, cache, args } = setup();

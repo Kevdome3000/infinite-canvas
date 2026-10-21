@@ -1,12 +1,15 @@
 import { field } from '@lastolivegames/becsy';
 
+export type Material3DAlphaMode = 'opaque' | 'mask' | 'blend';
+
 /**
  * A 3D material component defining surface appearance.
  * @see https://docs.rs/bevy/latest/bevy/pbr/struct.StandardMaterial.html
  */
 export class Material3D {
   /**
-   * Base color [r, g, b, a], each in 0..1 range.
+   * Authored sRGB base color [r, g, b, a], each in 0..1 range. Lighting uses
+   * linear RGB; alpha is unchanged.
    */
   @field.object declare baseColor: [number, number, number, number];
 
@@ -19,12 +22,16 @@ export class Material3D {
   @field.float32 declare ambient: number;
 
   /**
-   * Diffuse light intensity (0..1).
+   * Legacy diffuse light intensity (0..1).
+   * @deprecated Retained for wire compatibility; metallic and roughness now
+   * control the direct-light response.
    */
   @field.float32 declare diffuse: number;
 
   /**
-   * Specular light intensity (0..1).
+   * Legacy specular light intensity (0..1).
+   * @deprecated Retained for wire compatibility; metallic and roughness now
+   * control the direct-light response.
    */
   @field.float32 declare specular: number;
 
@@ -39,7 +46,8 @@ export class Material3D {
 
   /**
    * Metalness in the 0..1 range. 0 = dielectric, 1 = metal. Metals reflect the
-   * environment tinted by {@link baseColor} and have no diffuse contribution.
+   * direct light tinted by {@link baseColor} and have no direct diffuse contribution.
+   * Without an environment map, ambient remains a simple fill.
    */
   @field.float32 declare metallic: number;
 
@@ -55,14 +63,29 @@ export class Material3D {
    */
   @field.object declare map: string | null;
 
+  /** Opaque, alpha-tested cutout, or sorted alpha blending. */
+  @field.object declare alphaMode: Material3DAlphaMode;
+
+  /** Alpha-test threshold for `mask` materials, in the 0..1 range. */
+  @field.float32 declare alphaCutoff: number;
+
   /** Optional specular intensity texture (grayscale), multiplied into specular. */
   @field.object declare specularMap: string | null;
 
   /** Optional bump / height map (grayscale) for normal perturbation. */
   @field.object declare bumpMap: string | null;
 
+  /** Optional equirectangular LDR image or Radiance .hdr URL for environment light. */
+  @field.object declare environmentMap: string | null;
+
   /** Bump map strength (AntV G `bumpScale`, typically 1–10). */
   @field.float32 declare bumpScale: number;
+
+  /** Whether this mesh is drawn into shadow maps. */
+  @field.boolean declare castShadow: boolean;
+
+  /** Whether direct lighting on this mesh is occluded by shadow maps. */
+  @field.boolean declare receiveShadow: boolean;
 
   constructor(material?: Partial<Material3D>) {
     if (material) {
@@ -77,8 +100,13 @@ export class Material3D {
     this.metallic ??= 0;
     this.roughness ??= 1;
     this.map ??= null;
+    this.alphaMode ??= 'opaque';
+    this.alphaCutoff ??= 0.5;
     this.specularMap ??= null;
     this.bumpMap ??= null;
+    this.environmentMap ??= null;
     this.bumpScale ??= 1;
+    this.castShadow ??= true;
+    this.receiveShadow ??= true;
   }
 }

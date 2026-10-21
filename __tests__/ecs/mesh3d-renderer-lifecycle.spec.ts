@@ -142,6 +142,584 @@ it('reuses geometry while updating pose/material uniforms and avoids duplicate h
   expect(buffers[0].setSubData).toHaveBeenCalledTimes(1);
 });
 
+it('draws opaque meshes first and blends transparent meshes from far to near', () => {
+  const {
+    renderer,
+    queries,
+    slots: [slot],
+    entity,
+    draw,
+  } = fixture();
+  const createMesh = (id: number, z: number, alphaMode: 'opaque' | 'blend') =>
+    entity(
+      new Map<any, any>([
+        [Canvas3DScope, { canvas: slot.canvas }],
+        [Mesh3D, new Mesh3D(createGeometry({ type: 'plane' }))],
+        [Material3D, new Material3D({ alphaMode })],
+        [Transform3D, new Transform3D({ translation: [0, 0, z] })],
+      ]),
+      id,
+    );
+  const opaque = createMesh(90, 0, 'opaque');
+  const far = createMesh(91, -2, 'blend');
+  slot.material.alphaMode = 'blend';
+  slot.transform.translation = [0, 0, 2];
+  queries.meshes3D.current = [slot.target, opaque, far];
+
+  draw();
+  const state = (renderer as any).states.get(slot.canvas.read(Canvas).api);
+  const vertices = [opaque, far, slot.target].map(
+    (mesh) => state.meshGPUCache.get(mesh.__id, mesh.read(Mesh3D)).vertexBuffer,
+  );
+  expect(
+    (slot.gpu.pass.setVertexInput as jest.Mock).mock.calls.map(
+      ([, buffers]) => buffers[0].buffer,
+    ),
+  ).toEqual(vertices);
+  expect(slot.gpu.pass.setPipeline).toHaveBeenCalledTimes(2);
+});
+
+it('schedules a sampled shadow map for enabled directional and spot lights', () => {
+  const {
+    renderer,
+    queries,
+    slots: [slot],
+    entity,
+  } = fixture();
+  const light = new Light3D({ type: 'directional', castShadow: true });
+  queries.lights3D.current = [
+    entity(
+      new Map([
+        [Canvas3DScope, { canvas: slot.canvas }],
+        [Light3D, light],
+      ]),
+      90,
+    ),
+  ];
+  const targets: { width: number; sampledForShaderRead: boolean }[] = [];
+  let setup: ((pass: any) => void) | undefined;
+  const builder = {
+    createRenderTargetID: (desc: any) => {
+      targets.push(desc);
+      return targets.length;
+    },
+    pushPass: (callback: (pass: any) => void) => {
+      setup = callback;
+    },
+    resolveRenderTarget: (id: number) => id + 10,
+  };
+  const frame = renderer.scheduleShadowPass(builder as any, slot.canvas);
+  expect(frame).toMatchObject([
+    {
+      lightIndex: 0,
+      strength: 1,
+      softness: 1,
+      biasScale: 1,
+      normalBias: 0,
+      resolveID: 11,
+    },
+  ]);
+  expect(targets[0]).toMatchObject({
+    width: 1024,
+    sampledForShaderRead: true,
+    colorClearColor: { r: 1, g: 1, b: 1, a: 1 },
+  });
+  let execute: ((renderPass: any) => void) | undefined;
+  setup!({
+    setDebugName: jest.fn(),
+    attachRenderTargetID: jest.fn(),
+    exec: (callback: (renderPass: any) => void) => {
+      execute = callback;
+    },
+  });
+  execute!(slot.gpu.pass);
+  expect(slot.gpu.pass.drawIndexed).toHaveBeenCalledTimes(1);
+  slot.material.castShadow = false;
+  expect(renderer.scheduleShadowPass(builder as any, slot.canvas)).toEqual([]);
+  expect(targets).toHaveLength(2);
+  slot.material.castShadow = true;
+  light.castShadow = false;
+  expect(renderer.scheduleShadowPass(builder as any, slot.canvas)).toEqual([]);
+  expect(targets).toHaveLength(2);
+  light.castShadow = true;
+  light.shadowStrength = 0;
+  expect(renderer.scheduleShadowPass(builder as any, slot.canvas)).toEqual([]);
+  expect(targets).toHaveLength(2);
+  light.shadowStrength = 0.5;
+  light.shadowSoftness = 2;
+  light.shadowBiasScale = 0.5;
+  light.shadowNormalBias = 2;
+  light.type = 'spot';
+  light.position = [0, 0, -100];
+  light.direction = [0, 0, 1];
+  light.range = 500;
+  light.castShadow = true;
+  const spotFrame = renderer.scheduleShadowPass(builder as any, slot.canvas);
+  expect(spotFrame).toMatchObject([
+    {
+      lightIndex: 0,
+      strength: 0.5,
+      softness: 2,
+      biasScale: 0.5,
+      normalBias: 2,
+      resolveID: 13,
+    },
+  ]);
+  expect(targets[2]).toMatchObject({ width: 1024, sampledForShaderRead: true });
+  setup!({
+    setDebugName: jest.fn(),
+    attachRenderTargetID: jest.fn(),
+    exec: (callback: (renderPass: any) => void) => {
+      execute = callback;
+    },
+  });
+  execute!(slot.gpu.pass);
+  expect(slot.gpu.pass.drawIndexed).toHaveBeenCalledTimes(2);
+  const invalid = new Light3D({ type: 'spot', castShadow: true });
+  invalid.direction = [0, 0, 0];
+  queries.lights3D.current.unshift(
+    entity(
+      new Map([
+        [Canvas3DScope, { canvas: slot.canvas }],
+        [Light3D, invalid],
+      ]),
+      89,
+    ),
+  );
+  expect(
+    renderer.scheduleShadowPass(builder as any, slot.canvas),
+  ).toMatchObject([{ lightIndex: 1, resolveID: 15 }]);
+});
+
+it('refreshes alpha-test inputs before drawing a shadow map', () => {
+  const {
+    renderer,
+    queries,
+    slots: [slot],
+    entity,
+  } = fixture();
+  queries.lights3D.current = [
+    entity(new Map([[Light3D, new Light3D({ castShadow: true })]]), 90),
+  ];
+  slot.material.alphaMode = 'mask';
+  slot.material.alphaCutoff = 0.4;
+  slot.material.baseColor = [1, 1, 1, 0.3];
+  let setup: ((pass: any) => void) | undefined;
+  const builder = {
+    createRenderTargetID: jest.fn().mockReturnValue(1),
+    pushPass: (callback: (pass: any) => void) => {
+      setup = callback;
+    },
+    resolveRenderTarget: jest.fn().mockReturnValue(1),
+  };
+  expect(renderer.scheduleShadowPass(builder as any, slot.canvas)).toHaveLength(1);
+  const state = (renderer as any).states.get(slot.canvas.read(Canvas).api);
+  const gpu = state.meshGPUCache.get(slot.target.__id, slot.mesh);
+  const model = new Float32Array(gpu.modelUniformBuffer.bytes.buffer);
+  expect(model[35]).toBeCloseTo(0.3);
+  expect(model[97]).toBe(1);
+  expect(model[98]).toBeCloseTo(0.4);
+  let execute: ((renderPass: any) => void) | undefined;
+  setup!({
+    setDebugName: jest.fn(),
+    attachRenderTargetID: jest.fn(),
+    exec: (callback: (renderPass: any) => void) => {
+      execute = callback;
+    },
+  });
+  execute!(slot.gpu.pass);
+  expect(slot.gpu.bindings.at(-1)?.samplerBindings).toHaveLength(1);
+  expect(slot.gpu.pass.setVertexInput).toHaveBeenCalledWith(
+    expect.anything(),
+    expect.arrayContaining([
+      { buffer: gpu.vertexBuffer },
+      { buffer: gpu.uvBuffer },
+      { buffer: gpu.normalBuffer },
+    ]),
+    expect.anything(),
+  );
+  slot.material.alphaMode = 'opaque';
+  renderer.scheduleShadowPass(builder as any, slot.canvas);
+  expect(model[97]).toBe(0);
+});
+
+it('uses six shadow faces for a wide spotlight while keeping narrow cones on one map', () => {
+  const {
+    renderer,
+    queries,
+    slots: [slot],
+    entity,
+  } = fixture();
+  const light = new Light3D({
+    type: 'spot',
+    castShadow: true,
+    position: [0, 0, -100],
+    direction: [0, 0, 1],
+    outerConeAngle: Math.PI / 2,
+    range: 500,
+  });
+  queries.lights3D.current = [entity(new Map([[Light3D, light]]), 90)];
+  const targets: any[] = [];
+  let setup: ((pass: any) => void) | undefined;
+  const builder = {
+    createRenderTargetID: (description: any) => {
+      targets.push(description);
+      return targets.length;
+    },
+    pushPass: (callback: (pass: any) => void) => {
+      setup = callback;
+    },
+    resolveRenderTarget: (id: number) => id,
+  };
+
+  const [wide] = renderer.scheduleShadowPass(builder as any, slot.canvas);
+  expect(wide.faces).toHaveLength(6);
+  expect(targets[0]).toMatchObject({ width: 1536, height: 1024 });
+  let execute: ((renderPass: any) => void) | undefined;
+  setup!({
+    setDebugName: jest.fn(),
+    attachRenderTargetID: jest.fn(),
+    exec: (callback: (renderPass: any) => void) => {
+      execute = callback;
+    },
+  });
+  execute!(slot.gpu.pass);
+  expect(slot.gpu.pass.setViewport).toHaveBeenCalledTimes(6);
+  expect(slot.gpu.pass.drawIndexed).toHaveBeenCalled();
+
+  light.outerConeAngle = Math.PI / 4;
+  const [narrow] = renderer.scheduleShadowPass(builder as any, slot.canvas);
+  expect(narrow.faces).toBeUndefined();
+  expect(targets[2]).toMatchObject({ width: 1024, height: 1024 });
+  // The shading cone widens invalid/equal authored inputs. The shadow map
+  // must use the same sanitized angle or it misses illuminated receivers.
+  light.innerConeAngle = Math.PI / 2;
+  const [sanitized] = renderer.scheduleShadowPass(builder as any, slot.canvas);
+  expect(sanitized.faces).toHaveLength(6);
+  light.direction = [0, 0, 0];
+  light.outerConeAngle = (120 * Math.PI) / 180;
+  expect(renderer.scheduleShadowPass(builder as any, slot.canvas)).toEqual([]);
+});
+
+it('skips mesh bounds work when no light can cast a shadow', () => {
+  const {
+    renderer,
+    queries,
+    slots: [slot],
+    draw,
+    entity,
+  } = fixture();
+  draw();
+  const state = (renderer as any).states.get(slot.canvas.read(Canvas).api);
+  const getMesh = jest.spyOn(state.meshGPUCache, 'get');
+  const light = new Light3D({ type: 'directional', castShadow: false });
+  queries.lights3D.current = [
+    entity(new Map([[Light3D, new Light3D({ type: 'ambient' })]]), 89),
+    entity(new Map([[Light3D, light]]), 90),
+  ];
+  expect(renderer.scheduleShadowPass({} as any, slot.canvas)).toEqual([]);
+  light.castShadow = true;
+  light.shadowStrength = 0;
+  expect(renderer.scheduleShadowPass({} as any, slot.canvas)).toEqual([]);
+  expect(getMesh).not.toHaveBeenCalled();
+});
+
+it('does not allocate a shadow map without a receiving mesh', () => {
+  const {
+    renderer,
+    queries,
+    slots: [slot],
+    entity,
+  } = fixture();
+  queries.lights3D.current = [
+    entity(
+      new Map([
+        [Light3D, new Light3D({ type: 'directional', castShadow: true })],
+      ]),
+      90,
+    ),
+  ];
+  const builder = {
+    createRenderTargetID: jest.fn().mockReturnValue(1),
+    pushPass: jest.fn(),
+    resolveRenderTarget: jest.fn().mockReturnValue(1),
+  };
+  slot.material.receiveShadow = false;
+  expect(renderer.scheduleShadowPass(builder as any, slot.canvas)).toEqual([]);
+  expect(builder.createRenderTargetID).not.toHaveBeenCalled();
+  queries.meshes3D.current.push(
+    entity(
+      new Map<any, any>([
+        [Canvas3DScope, { canvas: slot.canvas }],
+        [Mesh3D, new Mesh3D()],
+        [Material3D, new Material3D({ castShadow: false })],
+        [Transform3D, new Transform3D()],
+      ]),
+      99,
+    ),
+  );
+  expect(renderer.scheduleShadowPass(builder as any, slot.canvas)).toEqual([]);
+  expect(builder.createRenderTargetID).not.toHaveBeenCalled();
+  slot.material.receiveShadow = true;
+  expect(
+    renderer.scheduleShadowPass(builder as any, slot.canvas),
+  ).toMatchObject([{ lightIndex: 0 }]);
+  expect(builder.pushPass).toHaveBeenCalledTimes(1);
+});
+
+it('skips a spot shadow map when its cone contains no casting mesh', () => {
+  const {
+    renderer,
+    queries,
+    slots: [slot],
+    entity,
+  } = fixture();
+  const receiver = entity(
+    new Map<any, any>([
+      [Canvas3DScope, { canvas: slot.canvas }],
+      [Mesh3D, new Mesh3D(createGeometry({ type: 'cube' }))],
+      [Material3D, new Material3D({ castShadow: false })],
+      [Transform3D, new Transform3D({ translation: [100, 0, -100] })],
+    ]),
+    99,
+  );
+  queries.meshes3D.current.push(receiver);
+  queries.lights3D.current = [
+    entity(
+      new Map([
+        [
+          Light3D,
+          new Light3D({
+            type: 'spot',
+            castShadow: true,
+            position: [0, 0, -100],
+            direction: [1, 0, 0],
+            range: 300,
+          }),
+        ],
+      ]),
+      90,
+    ),
+  ];
+  const builder = {
+    createRenderTargetID: jest.fn().mockReturnValue(1),
+    pushPass: jest.fn(),
+    resolveRenderTarget: jest.fn().mockReturnValue(1),
+  };
+  expect(renderer.scheduleShadowPass(builder as any, slot.canvas)).toEqual([]);
+  expect(builder.createRenderTargetID).not.toHaveBeenCalled();
+  slot.transform.translation = [50, 0, -100];
+  expect(
+    renderer.scheduleShadowPass(builder as any, slot.canvas),
+  ).toMatchObject([{ lightIndex: 0 }]);
+  expect(builder.pushPass).toHaveBeenCalledTimes(1);
+});
+
+it('snapshots light data before another ECS component read invalidates it', () => {
+  const {
+    renderer,
+    queries,
+    slots: [slot],
+    entity,
+  } = fixture();
+  let firstValid = true;
+  const firstLight = new Proxy(
+    new Light3D({ type: 'directional', castShadow: true }),
+    {
+      get(target, key) {
+        if (!firstValid) throw new Error('stale Light3D component');
+        return Reflect.get(target, key);
+      },
+    },
+  );
+  const first = entity(new Map([[Light3D, firstLight]]), 90);
+  const second = entity(
+    new Map([
+      [Light3D, new Light3D({ type: 'directional', castShadow: true })],
+    ]),
+    91,
+  );
+  const readSecond = second.read.bind(second);
+  (second as any).read = (type: any) => {
+    if (type === Light3D) firstValid = false;
+    return readSecond(type);
+  };
+  queries.lights3D.current = [first, second];
+  let target = 0;
+  const builder = {
+    createRenderTargetID: () => ++target,
+    pushPass: jest.fn(),
+    resolveRenderTarget: (id: number) => id,
+  };
+  expect(renderer.scheduleShadowPass(builder as any, slot.canvas)).toHaveLength(
+    2,
+  );
+});
+
+it('executes a scheduled shadow pass after mesh component reads expire', () => {
+  const {
+    renderer,
+    queries,
+    slots: [slot],
+    entity,
+  } = fixture();
+  slot.transform.translation = [20, 0, 0];
+  queries.lights3D.current = [
+    entity(
+      new Map([
+        [Light3D, new Light3D({ type: 'directional', castShadow: true })],
+      ]),
+      90,
+    ),
+  ];
+  let setup!: (pass: any) => void;
+  const builder = {
+    createRenderTargetID: () => 1,
+    pushPass: (callback: (pass: any) => void) => {
+      setup = callback;
+    },
+    resolveRenderTarget: () => 1,
+  };
+  expect(renderer.scheduleShadowPass(builder as any, slot.canvas)).toHaveLength(
+    1,
+  );
+  // Render-graph execution happens after the ECS scheduling phase. A reused
+  // component view must never be read by the deferred callback.
+  (slot.target as any).read = () => {
+    throw new Error('expired mesh component view');
+  };
+  let execute!: (pass: any) => void;
+  setup({
+    setDebugName: jest.fn(),
+    attachRenderTargetID: jest.fn(),
+    exec: (callback: (pass: any) => void) => {
+      execute = callback;
+    },
+  });
+  expect(() => execute(slot.gpu.pass)).not.toThrow();
+  expect(slot.gpu.pass.drawIndexed).toHaveBeenCalledTimes(1);
+});
+
+it('draws every mesh in the color pass but only casters in the shadow pass', () => {
+  const {
+    renderer,
+    queries,
+    slots: [slot],
+    entity,
+    draw,
+  } = fixture();
+  const receiver = entity(
+    new Map<any, any>([
+      [Canvas3DScope, { canvas: slot.canvas }],
+      [Mesh3D, new Mesh3D(createGeometry({ type: 'cube' }))],
+      [Material3D, new Material3D({ castShadow: false })],
+      [Transform3D, new Transform3D({ translation: [40, 0, 0] })],
+    ]),
+    99,
+  );
+  queries.meshes3D.current.push(receiver);
+  queries.lights3D.current = [
+    entity(
+      new Map([
+        [Canvas3DScope, { canvas: slot.canvas }],
+        [Light3D, new Light3D({ type: 'directional', castShadow: true })],
+      ]),
+      90,
+    ),
+  ];
+  let setup: ((pass: any) => void) | undefined;
+  const builder = {
+    createRenderTargetID: () => 1,
+    pushPass: (callback: (pass: any) => void) => {
+      setup = callback;
+    },
+    resolveRenderTarget: () => 1,
+  };
+  expect(renderer.scheduleShadowPass(builder as any, slot.canvas)).toHaveLength(
+    1,
+  );
+  let execute!: (pass: any) => void;
+  setup!({
+    setDebugName: jest.fn(),
+    attachRenderTargetID: jest.fn(),
+    exec: (callback: (pass: any) => void) => {
+      execute = callback;
+    },
+  });
+  execute(slot.gpu.pass);
+  expect(slot.gpu.pass.drawIndexed).toHaveBeenCalledTimes(1);
+  draw();
+  expect(slot.gpu.pass.drawIndexed).toHaveBeenCalledTimes(3);
+});
+
+it('schedules two independent shadow maps and ignores later casters', () => {
+  const {
+    renderer,
+    queries,
+    slots: [slot],
+    entity,
+  } = fixture();
+  const lights = [
+    new Light3D({ type: 'ambient' }),
+    new Light3D({ type: 'directional', castShadow: true }),
+    new Light3D({ type: 'point', castShadow: true, position: [0, 0, -100] }),
+    new Light3D({ type: 'directional', castShadow: true }),
+  ];
+  queries.lights3D.current = lights.map((light, index) =>
+    entity(
+      new Map([
+        [Canvas3DScope, { canvas: slot.canvas }],
+        [Light3D, light],
+      ]),
+      90 + index,
+    ),
+  );
+  const targets: { width: number }[] = [];
+  const passes: ((pass: any) => void)[] = [];
+  const builder = {
+    createRenderTargetID: (desc: any) => {
+      targets.push(desc);
+      return targets.length;
+    },
+    pushPass: (callback: (pass: any) => void) => {
+      passes.push(callback);
+    },
+    resolveRenderTarget: (id: number) => id + 10,
+  };
+  const frames = renderer.scheduleShadowPass(builder as any, slot.canvas);
+  expect(frames).toMatchObject([
+    { lightIndex: 0, resolveID: 11 },
+    { lightIndex: 1, resolveID: 13, faces: expect.any(Array) },
+  ]);
+  expect(targets.map((target) => target.width)).toEqual([
+    1024, 1024, 1536, 1536,
+  ]);
+  expect(passes).toHaveLength(2);
+  for (const setup of passes) {
+    let execute!: (pass: any) => void;
+    setup({
+      setDebugName: jest.fn(),
+      attachRenderTargetID: jest.fn(),
+      exec: (callback: (pass: any) => void) => {
+        execute = callback;
+      },
+    });
+    execute(slot.gpu.pass);
+  }
+  // The cube is visible to the directional light and only one point face.
+  expect(slot.gpu.pass.drawIndexed).toHaveBeenCalledTimes(2);
+  const sceneBuffers = (renderer as any).states.get(
+    slot.canvas.read(Canvas).api,
+  ).shadowSceneBuffers;
+  expect(sceneBuffers[0]).not.toBe(sceneBuffers[6]);
+  expect(sceneBuffers[0].setSubData).toHaveBeenCalledTimes(1);
+  expect(sceneBuffers[6].setSubData).toHaveBeenCalledTimes(1);
+  lights[2].shadowStrength = 0;
+  expect(
+    renderer.scheduleShadowPass(builder as any, slot.canvas),
+  ).toMatchObject([{ lightIndex: 0 }, { lightIndex: 2 }]);
+});
+
 it('remembers geometry changes across skipped frames and uploads once on the next draw', () => {
   const {
     renderer,
@@ -390,14 +968,17 @@ it('refreshes scoped lights and camera viewport without reallocating bindings or
   light.color[1] = 0.5;
   draw(0);
   draw(1);
-  expect(data[0][53]).toBe(0.5);
+  const halfSrgbInLinear = ((0.5 + 0.055) / 1.055) ** 2.4;
+  expect(data[0][53]).toBeCloseTo(halfSrgbInLinear);
   expect(scenes[0].setSubData).toHaveBeenCalledTimes(2);
   expect(scenes[1].setSubData).toHaveBeenCalledTimes(1);
   scope.canvas = slots[1].canvas;
   draw(0);
   draw(1);
   expect([...data[0].slice(52, 55)]).toEqual([1, 1, 1]);
-  expect([...data[1].slice(52, 55)]).toEqual([1, 0.5, 0]);
+  expect(data[1][52]).toBe(1);
+  expect(data[1][53]).toBeCloseTo(halfSrgbInLinear);
+  expect(data[1][54]).toBe(0);
   const oldProjection = data[0][0];
   renderer.drawMeshes(slots[0].gpu.pass, slots[0].canvas, 800, 400);
   expect(data[0][0]).toBeCloseTo(oldProjection / 2);

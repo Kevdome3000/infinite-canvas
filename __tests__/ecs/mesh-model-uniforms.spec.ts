@@ -2,11 +2,20 @@ import { mat4 } from 'gl-matrix';
 import type { Buffer } from '../../packages/device-api/src';
 import { Material3D } from '../../packages/ecs/src/components/geometry3d/Material3D';
 import { Transform3D } from '../../packages/ecs/src/components/geometry3d/Transform3D';
-import { MeshModelUniforms } from '../../packages/ecs/src/systems/mesh3d/mesh-model-uniforms';
+import {
+  MESH_MODEL_UNIFORM_FLOATS,
+  MeshModelUniforms,
+} from '../../packages/ecs/src/systems/mesh3d/mesh-model-uniforms';
 
-const ready = { mapReady: false, specularMapReady: false, bumpMapReady: false };
+const ready = {
+  mapReady: false,
+  specularMapReady: false,
+  bumpMapReady: false,
+  environmentMapReady: false,
+  environmentIrradiance: null,
+};
 function setup() {
-  const bytes = new Uint8Array(60 * 4);
+  const bytes = new Uint8Array(MESH_MODEL_UNIFORM_FLOATS * 4);
   const setSubData = jest.fn((offset: number, data: Uint8Array) =>
     bytes.set(data, offset),
   );
@@ -82,19 +91,26 @@ it('updates all material inputs and late texture readiness without rebuilding ma
     mapReady: true,
     specularMapReady: true,
     bumpMapReady: true,
+    environmentMapReady: true,
+    environmentIrradiance: Float32Array.from({ length: 36 }, (_, i) =>
+      i === 0 ? 0.7 : 0,
+    ),
   };
   const legacy = uniforms.update(transform, material, textures);
   expect([...data.slice(32, 40)]).toEqual(
     [0.25, 1, 1, 1, 0.2, 0.4, 0.6, 4].map(Math.fround),
   );
   expect([...data.slice(48, 56)]).toEqual(
-    [1, 1, 1, 2, 0.3, 0.8, 0, 0].map(Math.fround),
+    [1, 1, 1, 2, 0.3, 0.8, 0, 1].map(Math.fround),
   );
+  expect(data[60]).toBeCloseTo(0.7);
   expect(legacy.u_MaterialFlags).toEqual(data.slice(48, 52));
   uniforms.update(transform, material, textures);
   expect(setSubData).toHaveBeenCalledTimes(2);
   uniforms.update(transform, material, ready);
   expect([...data.slice(48, 51)]).toEqual([0, 0, 0]);
+  expect(data[55]).toBe(0);
+  expect(data[60]).toBe(0);
   expect(setSubData).toHaveBeenCalledTimes(3);
   expect(invert).toHaveBeenCalledTimes(1);
 });
@@ -116,6 +132,46 @@ it('uploads an optional side-wall color without rebuilding geometry or pose', ()
   uniforms.update(transform, material, ready);
   expect(data[54]).toBe(0);
   expect(setSubData).toHaveBeenCalledTimes(3);
+});
+
+it('updates the receiver flag when shadow reception changes', () => {
+  const { uniforms, transform, material, data, setSubData } = setup();
+  const receiveOffset = MESH_MODEL_UNIFORM_FLOATS - 4;
+  uniforms.update(transform, material, ready);
+  expect(data[receiveOffset]).toBe(1);
+  material.receiveShadow = false;
+  const legacy = uniforms.update(transform, material, ready);
+  expect(data[receiveOffset]).toBe(0);
+  expect(legacy.u_ShadowReceive).toEqual(
+    data.slice(receiveOffset, receiveOffset + 4),
+  );
+  uniforms.update(transform, material, ready);
+  expect(setSubData).toHaveBeenCalledTimes(2);
+});
+
+it('keeps alpha mode, cutoff and map readiness current before the shadow pass', () => {
+  const { uniforms, transform, material, data } = setup();
+  const offset = MESH_MODEL_UNIFORM_FLOATS - 4;
+  material.alphaMode = 'mask';
+  material.alphaCutoff = 0.35;
+  material.baseColor = [1, 1, 1, 0.8];
+  uniforms.updateShadowMaterial(transform, material, true);
+  expect(data[35]).toBeCloseTo(0.8);
+  expect(data[48]).toBe(1);
+  expect([...data.slice(offset + 1, offset + 3)]).toEqual([
+    1,
+    Math.fround(0.35),
+  ]);
+  material.alphaMode = 'blend';
+  uniforms.update(transform, material, ready);
+  expect(data[offset + 1]).toBe(2);
+  material.alphaMode = 'opaque';
+  uniforms.updateShadowMaterial(transform, material, false);
+  expect(data[offset + 1]).toBe(0);
+  expect(data[48]).toBe(0);
+  material.alphaCutoff = Number.NaN;
+  uniforms.updateShadowMaterial(transform, material, false);
+  expect(data[offset + 2]).toBe(0.5);
 });
 
 it('retries failed uploads without rebuilding unchanged matrices', () => {

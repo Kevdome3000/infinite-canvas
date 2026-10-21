@@ -3,14 +3,17 @@ import type { Entity } from '../../packages/ecs/src';
 import { Camera, Camera3D, Light3D } from '../../packages/ecs/src/components';
 import { Mat3 } from '../../packages/ecs/src/components/math/Mat3';
 import { Mat4 } from '../../packages/ecs/src/components/math/Mat4';
-import { MeshSceneUniforms } from '../../packages/ecs/src/systems/mesh3d/mesh-scene-uniforms';
+import {
+  MeshSceneUniforms,
+  MESH_SCENE_UNIFORM_FLOATS,
+} from '../../packages/ecs/src/systems/mesh3d/mesh-scene-uniforms';
 import {
   buildCamera3DSceneUniforms,
   packSceneUniformBuffer,
 } from '../../packages/ecs/src/utils/mesh3d-scene';
 
 function setup() {
-  const bytes = new Uint8Array(188 * 4);
+  const bytes = new Uint8Array(MESH_SCENE_UNIFORM_FLOATS * 4);
   const upload = jest.fn((offset: number, value: Uint8Array) =>
     bytes.set(value, offset),
   );
@@ -25,12 +28,21 @@ function setup() {
         aspect: number,
         cam2d: Entity | undefined,
         lights: Light3D[],
+        shadows?: {
+          viewProjection: Float32Array;
+          lightIndex: number;
+          texelSize: number;
+          faces?: Float32Array[];
+          strength?: number;
+          softness?: number;
+        }[],
       ) =>
         uniforms.update(
           camera,
           aspect,
           cam2d,
           lights.map((light) => ({ read: () => light } as unknown as Entity)),
+          shadows,
         ),
     },
     camera,
@@ -66,7 +78,196 @@ it('keeps camera matrices, typed views and uploads stable for equivalent inputs'
     expect(uniforms.update(new Camera3D(), 2, undefined, [])).toBe(legacy);
   expect(upload).toHaveBeenCalledTimes(1);
   expect(projection).toHaveBeenCalledTimes(1);
-  expect(legacy.u_LightParams3D).toEqual(data.slice(156));
+  expect(legacy.u_LightParams3D).toEqual(data.slice(156, 188));
+});
+
+it('uploads two shadow matrices and clears them when disabled', () => {
+  const { uniforms, camera, data, upload } = setup();
+  const light = new Light3D({ type: 'directional' });
+  const matrix = new Float32Array(16);
+  matrix[0] = 2;
+  matrix[5] = 3;
+  matrix[10] = 4;
+  matrix[15] = 1;
+  const second = new Float32Array(16);
+  second[0] = 9;
+  uniforms.update(
+    camera,
+    1,
+    undefined,
+    [light],
+    [
+      {
+        viewProjection: matrix,
+        lightIndex: 1,
+        texelSize: 1 / 1024,
+      },
+      {
+        viewProjection: second,
+        lightIndex: 0,
+        texelSize: 1 / 512,
+      },
+    ],
+  );
+  expect([...data.slice(188, 204)]).toEqual([...matrix]);
+  expect([...data.slice(204, 220)]).toEqual([...second]);
+  expect([...data.slice(220, 228)]).toEqual([
+    2,
+    1 / 1024,
+    0,
+    0,
+    1,
+    1 / 512,
+    0,
+    0,
+  ]);
+  expect([...data.slice(420, 428)]).toEqual([1, 1, 1, 0, 1, 1, 1, 0]);
+  const calls = upload.mock.calls.length;
+  light.intensity = 2;
+  uniforms.update(
+    camera,
+    1,
+    undefined,
+    [light],
+    [
+      {
+        viewProjection: matrix,
+        lightIndex: 1,
+        texelSize: 1 / 1024,
+      },
+      {
+        viewProjection: second,
+        lightIndex: 0,
+        texelSize: 1 / 512,
+      },
+    ],
+  );
+  expect(upload).toHaveBeenCalledTimes(calls + 1);
+  expect([...data.slice(188, 204)]).toEqual([...matrix]);
+  uniforms.update(
+    camera,
+    1,
+    undefined,
+    [light],
+    [
+      {
+        viewProjection: matrix,
+        lightIndex: 1,
+        texelSize: 1 / 1024,
+      },
+      {
+        viewProjection: second,
+        lightIndex: 0,
+        texelSize: 1 / 512,
+      },
+    ],
+  );
+  expect(upload).toHaveBeenCalledTimes(calls + 1);
+  uniforms.update(camera, 1, undefined, []);
+  expect([...data.slice(188, 228)]).toEqual(Array(40).fill(0));
+  expect([...data.slice(420, 428)]).toEqual(Array(8).fill(0));
+});
+
+it('uploads shadow strength, softness and bias without changing matrices', () => {
+  const { uniforms, camera, data, upload } = setup();
+  const matrix = new Float32Array(16);
+  const shadow = { viewProjection: matrix, lightIndex: 0, texelSize: 1 / 1024 };
+  uniforms.update(camera, 1, undefined, [], [shadow]);
+  expect([...data.slice(420, 428)]).toEqual([1, 1, 1, 0, 0, 0, 0, 0]);
+  const calls = upload.mock.calls.length;
+  uniforms.update(
+    camera,
+    1,
+    undefined,
+    [],
+    [{ ...shadow, strength: 0.5, softness: 2, biasScale: 0.5, normalBias: 2 }],
+  );
+  expect(upload).toHaveBeenCalledTimes(calls + 1);
+  expect([...data.slice(420, 424)]).toEqual([0.5, 2, 0.5, 2]);
+  expect([...data.slice(188, 204)]).toEqual([...matrix]);
+  uniforms.update(
+    camera,
+    1,
+    undefined,
+    [],
+    [{ ...shadow, strength: -1, softness: 9, biasScale: -1, normalBias: 20 }],
+  );
+  expect([...data.slice(420, 424)]).toEqual([0, 4, 0, 10]);
+  uniforms.update(
+    camera,
+    1,
+    undefined,
+    [],
+    [{ ...shadow, biasScale: NaN, normalBias: Infinity }],
+  );
+  expect([...data.slice(420, 424)]).toEqual([1, 1, 1, 0]);
+});
+
+it('uploads all six point shadow matrices and clears the atlas mode', () => {
+  const { uniforms, camera, data } = setup();
+  const faces = Array.from({ length: 6 }, (_, index) => {
+    const face = new Float32Array(16);
+    face[0] = index + 1;
+    return face;
+  });
+  uniforms.update(
+    camera,
+    1,
+    undefined,
+    [new Light3D({ type: 'point' })],
+    [
+      {
+        viewProjection: faces[0],
+        lightIndex: 0,
+        texelSize: 1 / 512,
+        faces,
+      },
+    ],
+  );
+  expect([...data.slice(220, 224)]).toEqual([1, 1 / 512, 1, 0]);
+  faces.forEach((face, index) =>
+    expect([...data.slice(228 + index * 16, 244 + index * 16)]).toEqual([
+      ...face,
+    ]),
+  );
+  uniforms.update(camera, 1, undefined, []);
+  expect([...data.slice(220, MESH_SCENE_UNIFORM_FLOATS)]).toEqual(
+    Array(MESH_SCENE_UNIFORM_FLOATS - 220).fill(0),
+  );
+});
+
+it('clears the second light and its point faces when that caster is disabled', () => {
+  const { uniforms, camera, data } = setup();
+  const first = new Float32Array(16);
+  const faces = Array.from({ length: 6 }, (_, index) => {
+    const face = new Float32Array(16);
+    face[0] = index + 1;
+    return face;
+  });
+  const lights = [
+    new Light3D({ type: 'directional' }),
+    new Light3D({ type: 'point' }),
+  ];
+  const directional = {
+    viewProjection: first,
+    lightIndex: 0,
+    texelSize: 1 / 1024,
+  };
+  uniforms.update(camera, 1, undefined, lights, [
+    directional,
+    {
+      viewProjection: faces[0],
+      lightIndex: 1,
+      texelSize: 1 / 512,
+      faces,
+    },
+  ]);
+  expect([...data.slice(224, 228)]).toEqual([2, 1 / 512, 1, 0]);
+  expect([...data.slice(324, 340)]).toEqual([...faces[0]]);
+  uniforms.update(camera, 1, undefined, lights, [directional]);
+  expect([...data.slice(224, 228)]).toEqual([0, 0, 0, 0]);
+  expect([...data.slice(324, 420)]).toEqual(Array(96).fill(0));
+  expect([...data.slice(420, 428)]).toEqual([1, 1, 1, 0, 0, 0, 0, 0]);
 });
 
 it.each([
@@ -117,6 +318,7 @@ it.each([
   camera.projection = 'perspective';
   let entity: Entity | undefined = linked.entity;
   uniforms.update(camera, 2, entity, []);
+  expect(data[51]).toBeLessThan(0);
   if (input === 'vp') linked.computed.viewProjectionMatrix.m20 = 0.5;
   else if (input === 'view') linked.computed.viewMatrix.m20 = 2;
   else if (input === 'x' || input === 'y' || input === 'zoom')
@@ -150,7 +352,18 @@ it('updates linked orthographic VP and depth, ignoring perspective-only paramete
   uniforms.update(camera, 3, entity, []);
   expect(data[12]).toBe(0.25);
   expect(data[10]).toBe(0);
-  expect([...data.slice(48, 52)]).toEqual([0, 0, 0, 0]);
+  expect([...data.slice(48, 52)]).toEqual([0, 0, -1, -1]);
+});
+
+it('packs the actual eye for perspective and a constant direction for orthographic lighting', () => {
+  const { uniforms, camera, data } = setup();
+  camera.eye = [30, 20, 80];
+  camera.center = [10, 5, 0];
+  uniforms.update(camera, 2, undefined, []);
+  expect([...data.slice(48, 52)]).toEqual([30, 20, 0, 80]);
+  camera.projection = 'orthographic';
+  uniforms.update(camera, 2, undefined, []);
+  expect([...data.slice(48, 52)]).toEqual([20, 15, -1, 80]);
 });
 
 it('packs custom lights, clamps spot cones and clears removed slots without rebuilding matrices', () => {
@@ -177,14 +390,22 @@ it('packs custom lights, clamps spot cones and clears removed slots without rebu
     spot,
   ];
   const legacy = uniforms.update(camera, 2, undefined, lights);
-  expect([...data.slice(52, 56)]).toEqual(
-    [0.23, 0.26, 0.29, 1].map(Math.fround),
-  );
-  expect(data[56]).toBe(2); // spot + directional fill
+  const linear = (color: number) =>
+    color <= 0.04045 ? color / 12.92 : ((color + 0.055) / 1.055) ** 2.4;
+  expect(data[52]).toBeCloseTo(linear(0.1) * 0.3 + 0.2);
+  expect(data[53]).toBeCloseTo(linear(0.2) * 0.3 + 0.2);
+  expect(data[54]).toBeCloseTo(linear(0.3) * 0.3 + 0.2);
+  expect(data[56]).toBe(1); // explicit spot, with no injected directional light
   expect([...data.slice(60, 64)]).toEqual([2, 3, 4, 0]);
-  expect([...data.slice(92, 96)]).toEqual([0, -1, 0, 1]);
-  expect([...data.slice(124, 128)]).toEqual([1, 0.5, 0.25, 0]);
-  expect([...data.slice(156, 164)]).toEqual([3, 2, 40, 1, 1, 0.75, 0, 0]);
+  expect(data[92]).toBe(0);
+  expect(data[93]).toBe(-1);
+  expect(data[95]).toBeCloseTo(Math.cos(0.01), 6);
+  expect(data[159] - data[95]).toBeGreaterThan(1e-5);
+  expect(data[124]).toBe(1);
+  expect(data[125]).toBeCloseTo(linear(0.5));
+  expect(data[126]).toBeCloseTo(linear(0.25));
+  expect([...data.slice(156, 159)]).toEqual([3, 2, 40]);
+  expect(data[159]).toBe(1);
   spot.innerConeAngle = 0.5;
   spot.outerConeAngle = 0.25;
   spot.color[0] = 0.2;
@@ -193,11 +414,11 @@ it('packs custom lights, clamps spot cones and clears removed slots without rebu
   spot.intensity = 3;
   spot.range = 20;
   uniforms.update(camera, 2, undefined, lights);
-  expect(data[95]).toBeCloseTo(Math.cos(0.5));
+  expect(data[95]).toBeCloseTo(Math.cos(0.51), 6);
   expect(data[159]).toBeCloseTo(Math.cos(0.5));
   expect(data[60]).toBe(5);
   expect(data[92]).toBeCloseTo(0.4);
-  expect(data[124]).toBeCloseTo(0.2);
+  expect(data[124]).toBeCloseTo(linear(0.2));
   expect([...data.slice(156, 159)]).toEqual([3, 3, 20]);
   expect(legacy.u_LightPositions).toEqual(data.slice(60, 92));
   uniforms.update(camera, 2, undefined, lights);
@@ -211,6 +432,50 @@ it('packs custom lights, clamps spot cones and clears removed slots without rebu
   uniforms.update(camera, 2, undefined, []);
   expect([...data.slice(52, 56)]).toEqual([1, 1, 1, 1]);
   expect(projection).toHaveBeenCalledTimes(1);
+});
+
+it('sanitizes invalid light values before uploading them to the shader', () => {
+  const { uniforms, camera, data } = setup();
+  const light = new Light3D({
+    type: 'spot',
+    color: [NaN, 2, -1],
+    intensity: -4,
+    position: [NaN, 2, Infinity],
+    direction: [0, 0, 0],
+    range: Infinity,
+    innerConeAngle: NaN,
+    outerConeAngle: NaN,
+  });
+  uniforms.update(camera, 1, undefined, [light]);
+  expect([...data.slice(60, 63)]).toEqual([0, 2, 0]);
+  expect([...data.slice(92, 95)]).toEqual([-0.5, -0.7, -0.5].map(Math.fround));
+  expect([...data.slice(124, 127)]).toEqual([0, 1, 0]);
+  expect([...data.slice(156, 159)]).toEqual([3, 0, 0]);
+  expect(data[95]).toBeCloseTo(Math.cos(Math.PI / 4));
+  expect(data[159]).toBeCloseTo(Math.cos(Math.PI / 8));
+  light.intensity = NaN;
+  uniforms.update(camera, 1, undefined, [light]);
+  expect(data[157]).toBe(0);
+});
+
+it('packs inverse-square reference distance and invalidates cached light uniforms', () => {
+  const { uniforms, camera, data, upload } = setup();
+  const point = new Light3D({ type: 'point', range: 500 });
+  uniforms.update(camera, 1, undefined, [point]);
+  expect(data[63]).toBe(0);
+  point.attenuation = 'inverse-square';
+  point.referenceDistance = 80;
+  uniforms.update(camera, 1, undefined, [point]);
+  expect(data[63]).toBe(80);
+  expect(upload).toHaveBeenCalledTimes(2);
+  uniforms.update(camera, 1, undefined, [point]);
+  expect(upload).toHaveBeenCalledTimes(2);
+  point.referenceDistance = NaN;
+  uniforms.update(camera, 1, undefined, [point]);
+  expect(data[63]).toBe(100);
+  point.attenuation = 'range';
+  uniforms.update(camera, 1, undefined, [point]);
+  expect(data[63]).toBe(0);
 });
 
 it('caps punctual lights at eight while accumulating all ambient lights', () => {

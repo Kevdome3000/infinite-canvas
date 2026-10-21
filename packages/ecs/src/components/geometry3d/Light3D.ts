@@ -1,6 +1,7 @@
 import { field } from '@lastolivegames/becsy';
 
 export type Light3DType = 'ambient' | 'directional' | 'point' | 'spot';
+export type Light3DAttenuation = 'range' | 'inverse-square';
 
 export const LIGHT_3D_TYPE = {
   directional: 1,
@@ -19,7 +20,8 @@ export class Light3D {
   @field.object declare type: Light3DType;
 
   /**
-   * Light color [r, g, b], each in 0..1 range.
+   * Authored sRGB light color [r, g, b], each in 0..1 range. The renderer
+   * converts it to linear space before accumulating radiance.
    */
   @field.object declare color: [number, number, number];
 
@@ -46,6 +48,12 @@ export class Light3D {
    */
   @field.float32 declare range: number;
 
+  /** Distance falloff for point and spot lights. `range` preserves legacy scenes. */
+  @field.object declare attenuation: Light3DAttenuation;
+
+  /** Intensity reference distance in canvas world units for inverse-square falloff. */
+  @field.float32 declare referenceDistance: number;
+
   /**
    * Full-intensity cone angle in radians for spot lights.
    */
@@ -55,6 +63,21 @@ export class Light3D {
    * Zero-intensity cone angle in radians for spot lights.
    */
   @field.float32 declare outerConeAngle: number;
+
+  /** Render a shadow map for this directional, point, or spot light. */
+  @field.boolean declare castShadow: boolean;
+
+  /** Shadow darkness from 0 (none) to 1 (fully occluded). */
+  @field.float32 declare shadowStrength: number;
+
+  /** PCF sampling radius in shadow texels; 1 preserves the legacy filter. */
+  @field.float32 declare shadowSoftness: number;
+
+  /** Multiplier for the receiver depth bias; 1 preserves the default bias. */
+  @field.float32 declare shadowBiasScale: number;
+
+  /** Shift shadow receivers along their surface normal in canvas world units. */
+  @field.float32 declare shadowNormalBias: number;
 
   constructor(light?: Partial<Light3D>) {
     if (light) {
@@ -66,7 +89,14 @@ export class Light3D {
     this.position ??= [0, 0, 0];
     this.direction ??= [-0.5, -0.7, -0.5];
     this.range ??= 0;
+    this.attenuation ??= 'range';
+    this.referenceDistance ??= 100;
     this.innerConeAngle ??= Math.PI / 8;
     this.outerConeAngle ??= Math.PI / 4;
+    this.castShadow ??= false;
+    this.shadowStrength ??= 1;
+    this.shadowSoftness ??= 1;
+    this.shadowBiasScale ??= 1;
+    this.shadowNormalBias ??= 0;
   }
 }

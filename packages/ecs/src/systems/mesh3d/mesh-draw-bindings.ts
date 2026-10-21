@@ -25,9 +25,28 @@ export class MeshDrawBindings {
     baseColor: Texture,
     specular: Texture,
     bump: Texture,
+    environment: Texture,
+    shadow0: Texture,
+    shadow1: Texture,
+    shadowSampler: Sampler,
+    environmentBrdf: Texture,
+    brdfSampler: Sampler,
   ): Bindings {
     if (this.disposed) throw new Error('Mesh draw bindings have been disposed');
-    const inputs = [pipeline, sceneBuffer, sampler, baseColor, specular, bump];
+    const inputs = [
+      pipeline,
+      sceneBuffer,
+      sampler,
+      baseColor,
+      specular,
+      bump,
+      environment,
+      shadow0,
+      shadow1,
+      shadowSampler,
+      environmentBrdf,
+      brdfSampler,
+    ];
     if (this.bindings && inputs.every((value, i) => value === this.inputs[i]))
       return this.bindings;
 
@@ -42,6 +61,10 @@ export class MeshDrawBindings {
         { texture: baseColor, sampler },
         { texture: specular, sampler },
         { texture: bump, sampler },
+        { texture: environment, sampler },
+        { texture: shadow0, sampler: shadowSampler },
+        { texture: shadow1, sampler: shadowSampler },
+        { texture: environmentBrdf, sampler: brdfSampler },
       ],
     });
     const previous = this.bindings;

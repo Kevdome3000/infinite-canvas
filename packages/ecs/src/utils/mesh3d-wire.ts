@@ -32,7 +32,14 @@ export function light3DFromWire(node: Light3DNodeSerializedNode): Light3D {
     direction: node.direction && [...node.direction],
     position: [node.x ?? 0, node.y ?? 0, node.z ?? 0],
     range: node.range,
+    attenuation: node.attenuation,
+    referenceDistance: node.referenceDistance,
     innerConeAngle: node.innerConeAngle,
     outerConeAngle: node.outerConeAngle,
+    castShadow: node.castShadow,
+    shadowStrength: node.shadowStrength,
+    shadowSoftness: node.shadowSoftness,
+    shadowBiasScale: node.shadowBiasScale,
+    shadowNormalBias: node.shadowNormalBias,
   });
 }

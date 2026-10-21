@@ -295,12 +295,12 @@ export interface ConstraintAttributes {
 export interface BindedAttributes {
   constraints: ConstraintAttributes[];
   /**
-	 * Variable: STYLE_PORT_CONSTRAINT
-	 *
-	 * Defines the direction(s) that edges are allowed to connect to cells in.
-	 * Possible values are "DIRECTION_NORTH, DIRECTION_SOUTH,
-	 * DIRECTION_EAST" and "DIRECTION_WEST". Value is
-	 * "portConstraint".
+   * Variable: STYLE_PORT_CONSTRAINT
+   *
+   * Defines the direction(s) that edges are allowed to connect to cells in.
+   * Possible values are "DIRECTION_NORTH, DIRECTION_SOUTH,
+   * DIRECTION_EAST" and "DIRECTION_WEST". Value is
+   * "portConstraint".
    *
    * e.g. "north,south"
    */
@@ -457,9 +457,19 @@ export type Material3DWire = {
   roughness?: number;
   /** Base-color texture (image URL or data URL). */
   map?: string;
+  /** Opaque (default), alpha-tested cutout, or sorted alpha blending. */
+  alphaMode?: 'opaque' | 'mask' | 'blend';
+  /** Alpha-test threshold in mask mode; defaults to 0.5. */
+  alphaCutoff?: number;
   specularMap?: string;
   bumpMap?: string;
+  /** Equirectangular environment image used for diffuse and reflected light. */
+  environmentMap?: string | null;
   bumpScale?: number;
+  /** Draw this mesh into shadow maps (default true). */
+  castShadow?: boolean;
+  /** Apply shadow-map occlusion to this mesh (default true). */
+  receiveShadow?: boolean;
 };
 
 /** Declarative 3D mesh node (canvas-local coordinates). */
@@ -488,8 +498,22 @@ export interface Light3DNodeSerializedNode
   direction?: [number, number, number];
   z?: number;
   range?: number;
+  /** Point/spot falloff. Legacy scenes default to `range`. */
+  attenuation?: 'range' | 'inverse-square';
+  /** World-unit distance where inverse-square intensity is 1×, default 100. */
+  referenceDistance?: number;
   innerConeAngle?: number;
   outerConeAngle?: number;
+  /** Enable a shadow map for a directional, point, or spot light. */
+  castShadow?: boolean;
+  /** Shadow darkness, clamped to 0..1; default 1. */
+  shadowStrength?: number;
+  /** PCF radius in texels, clamped to 0..4; default 1. */
+  shadowSoftness?: number;
+  /** Receiver depth-bias multiplier, clamped to 0..4; default 1. */
+  shadowBiasScale?: number;
+  /** Receiver normal offset in world units, clamped to 0..10; default 0. */
+  shadowNormalBias?: number;
 }
 
 export interface GSerializedNode
