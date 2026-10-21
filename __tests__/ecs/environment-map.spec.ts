@@ -43,3 +43,66 @@ it('prefilters constant HDR radiance into all roughness levels without dimming i
   }
   expect(atlas.irradiance[0]).toBeGreaterThan(0);
 });
+
+function hdrFixture(resolution: string, body: number[] = []) {
+  const header = new TextEncoder().encode(
+    `#?RADIANCE\nFORMAT=32-bit_rle_rgbe\n\n${resolution}\n`,
+  );
+  return new Uint8Array([...header, ...body]);
+}
+
+it.each([
+  ['not Radiance\n', 'Invalid Radiance header'],
+  ['#?RADIANCE', 'Truncated Radiance header'],
+  ['#?RADIANCE\nFORMAT=32-bit_rle_rgbe', 'Truncated Radiance header'],
+  ['#?RADIANCE\nFORMAT=32-bit_rle_xyze\n\n-Y 1 +X 1\n', 'Unsupported Radiance pixel format'],
+  ['#?RADIANCE\n\n-Y 1 +X 1\n', 'Unsupported Radiance pixel format'],
+  ['#?RADIANCE\nFORMAT=32-bit_rle_rgbe\n\n+X 1 -Y 1\n', 'Unsupported Radiance image orientation'],
+])('rejects malformed header %p before decoding pixels', (header, message) => {
+  expect(() => decodeRadianceHDR(new TextEncoder().encode(header))).toThrow(message);
+});
+
+it.each(['-Y 0 +X 8', '-Y 1 +X 0', '-Y 4097 +X 4096', '-Y 9999999999999999999999 +X 8'])(
+  'rejects invalid dimensions %s before allocating image storage',
+  (resolution) => {
+    expect(() => decodeRadianceHDR(hdrFixture(resolution))).toThrow('Invalid Radiance image size');
+  },
+);
+
+it.each<[number[], string]>([
+  [[0], 'Invalid Radiance RLE literal'],
+  [[9], 'Invalid Radiance RLE literal'],
+  [[137, 128], 'Invalid Radiance RLE run'],
+  [[135, 128, 130, 128], 'Invalid Radiance RLE run'],
+  [[135, 128, 2], 'Invalid Radiance RLE literal'],
+  [[136], 'Truncated Radiance pixels'],
+  [[8, 1, 2], 'Truncated Radiance pixels'],
+])('rejects malformed scanline channel %p without accepting partial pixels', (channel, message) => {
+  expect(() => decodeRadianceHDR(hdrFixture('-Y 1 +X 8', [2, 2, 0, 8, ...channel]))).toThrow(message);
+});
+
+it('decodes literal RLE channels and zero-exponent black without cross-channel contamination', () => {
+  const environment = decodeRadianceHDR(hdrFixture('-Y 1 +X 8', [
+    2, 2, 0, 8,
+    8, 0, 1, 2, 3, 4, 5, 6, 7,
+    136, 64, 136, 32,
+    1, 0, 135, 129,
+  ]));
+  expect([...environment.pixels.slice(0, 4)]).toEqual([0, 0, 0, 1]);
+  expect([...environment.pixels.slice(-4)]).toEqual([7.5 / 128, 64.5 / 128, 32.5 / 128, 1]);
+});
+
+it.each<[string, number[]]>([
+  ['-Y 2 +X 2', [10, 20, 30, 40]],
+  ['-Y 2 -X 2', [20, 10, 40, 30]],
+  ['+Y 2 +X 2', [30, 40, 10, 20]],
+  ['+Y 2 -X 2', [40, 30, 20, 10]],
+])('normalizes raw pixel orientation %s to north-first rows', (resolution, expected) => {
+  const body = [10, 20, 30, 40].flatMap((red) => [red, 0, 0, 129]);
+  const environment = decodeRadianceHDR(hdrFixture(resolution, body));
+  expect([environment.width, environment.height]).toEqual([2, 2]);
+  expect([0, 1, 2, 3].map((pixel) => environment.pixels[pixel * 4])).toEqual(
+    expected.map((red) => (red + 0.5) / 128),
+  );
+  expect(() => decodeRadianceHDR(hdrFixture(resolution, body.slice(0, -1)))).toThrow('Truncated Radiance pixels');
+});

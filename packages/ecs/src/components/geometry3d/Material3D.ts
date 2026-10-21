@@ -2,6 +2,16 @@ import { field } from '@lastolivegames/becsy';
 
 export type Material3DAlphaMode = 'opaque' | 'mask' | 'blend';
 
+/** Preserve translucent legacy colors when no alpha mode was authored. */
+export function inferMaterial3DAlphaMode(
+  baseColor: readonly number[],
+  sideColor?: readonly number[] | null,
+): Material3DAlphaMode {
+  return baseColor[3] < 1 || (sideColor != null && sideColor[3] < 1)
+    ? 'blend'
+    : 'opaque';
+}
+
 /**
  * A 3D material component defining surface appearance.
  * @see https://docs.rs/bevy/latest/bevy/pbr/struct.StandardMaterial.html
@@ -100,7 +110,7 @@ export class Material3D {
     this.metallic ??= 0;
     this.roughness ??= 1;
     this.map ??= null;
-    this.alphaMode ??= 'opaque';
+    this.alphaMode ??= inferMaterial3DAlphaMode(this.baseColor, this.sideColor);
     this.alphaCutoff ??= 0.5;
     this.specularMap ??= null;
     this.bumpMap ??= null;

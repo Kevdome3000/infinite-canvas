@@ -1,3 +1,4 @@
+import { inferMaterial3DAlphaMode } from '../components/geometry3d/Material3D';
 import { System } from '@lastolivegames/becsy';
 import {
   Camera,
@@ -118,9 +119,12 @@ export class SyncExtrude3D extends System {
       if (canvas)
         ensureCompanionGizmoWhenSourceSelected(entity, meshEntity, canvas);
 
+      const baseColor = extrudeMaterialBaseColorFromEntity(entity);
+      const sideColor = extrudeMaterialSideColorFromEntity(entity);
       syncMaterial3D(meshEntity, {
-        baseColor: extrudeMaterialBaseColorFromEntity(entity),
-        sideColor: extrudeMaterialSideColorFromEntity(entity),
+        baseColor,
+        sideColor,
+        alphaMode: inferMaterial3DAlphaMode(baseColor, sideColor),
       });
     }
   }

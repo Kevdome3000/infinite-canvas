@@ -78,6 +78,9 @@ const materialKeys = [
   'metallic',
   'roughness',
   'map',
+  'alphaMode',
+  'alphaCutoff',
+  'environmentMap',
   'specularMap',
   'bumpMap',
   'bumpScale',
@@ -192,6 +195,9 @@ it.each([
   ['metallic', 0.8],
   ['roughness', 0.2],
   ['bumpScale', 0],
+  ['alphaMode', 'mask'],
+  ['alphaCutoff', 0.3],
+  ['environmentMap', '/local-studio.hdr'],
   ['castShadow', false],
   ['receiveShadow', false],
   ['map', 'data:image/png;base64,base'],
@@ -290,4 +296,81 @@ it('updates companion placement after canvas-space movement and resize', async (
   ).toEqual([70, 90, 15]);
   await expectReload();
   await expectHistory(before, after);
+});
+
+
+it('retains opaque card metadata with authored material and light history across reload', async () => {
+  const metadata = { cardType: 'note', future: { revision: 7, tags: ['private'] } };
+  const card = {
+    id: 'card', type: 'html', zIndex: 2, x: 0, y: 0, width: 20, height: 20,
+    innerHTML: '', metadata, unknownExtension: { keep: true },
+  } as unknown as SerializedNode;
+  await world.reset(api, [mesh(), light({ id: 'lamp', castShadow: true }), card]);
+  await settle();
+  const before = state();
+  const lightState = (editor: API) => pick(
+    editor.getEntity(editor.getNodeById('lamp')).read(Light3D),
+    ['castShadow', 'shadowStrength', 'attenuation', 'referenceDistance'],
+  );
+  const beforeLight = lightState(api);
+  const assertCard = (editor: API) => expect(editor.getNodeById('card')).toMatchObject({
+    metadata, unknownExtension: { keep: true },
+  });
+  await world.edit(api, (editor) => {
+    editor.updateNode(editor.getNodeById('node'), { material3d: {
+      baseColor: [0.2, 0.4, 0.6, 0.3], alphaMode: 'blend', alphaCutoff: 0.25,
+      environmentMap: '/local-studio.hdr', receiveShadow: false,
+    } });
+    editor.updateNode(editor.getNodeById('lamp'), {
+      shadowStrength: 0.4, attenuation: 'inverse-square', referenceDistance: 80,
+    });
+  });
+  await settle();
+  const after = state();
+  const afterLight = lightState(api);
+  expect(after).not.toEqual(before);
+  expect(afterLight).not.toEqual(beforeLight);
+  assertCard(api);
+  await world.history(api, 'undo');
+  await settle();
+  expect(state()).toEqual(before);
+  expect(lightState(api)).toEqual(beforeLight);
+  assertCard(api);
+  await world.history(api, 'redo');
+  await settle();
+  expect(state()).toEqual(after);
+  expect(lightState(api)).toEqual(afterLight);
+  assertCard(api);
+  await world.reset(reloaded, JSON.parse(JSON.stringify(api.getNodes())));
+  await settle();
+  expect(state(reloaded)).toEqual(after);
+  expect(lightState(reloaded)).toEqual(afterLight);
+  assertCard(reloaded);
+});
+
+
+it('undoes deletion of a newly authored light without skipping its earlier edit', async () => {
+  await load(light({ lightType: 'ambient', intensity: 1 }));
+  await world.edit(api, (editor) => {
+    editor.updateNode(editor.getNodeById('node'), { intensity: 0.2 });
+    editor.updateNode(light({ id: 'second-light', lightType: 'spot', castShadow: true }));
+  });
+  await settle();
+  const before = structuredClone(api.getNodes());
+  expect(api.getNodeById('second-light').isDeleted).toBeUndefined();
+  await world.edit(api, (editor) => editor.deleteNodesById(['second-light']));
+  await settle();
+  expect(api.getNodes().some((node) => node.id === 'second-light' && !node.isDeleted)).toBe(false);
+  await world.history(api, 'undo');
+  await settle();
+  const visible = (nodes: SerializedNode[]) => nodes.filter((node) => !node.isDeleted).map((node) => ({
+    id: node.id,
+    intensity: node.type === 'light3d' ? node.intensity : null,
+    castShadow: node.type === 'light3d' ? node.castShadow : null,
+  })).sort((a, b) => a.id.localeCompare(b.id));
+  expect(visible(api.getNodes())).toEqual(visible(before));
+  await world.history(api, 'redo');
+  await settle();
+  expect(api.getNodes().some((node) => node.id === 'second-light' && !node.isDeleted)).toBe(false);
+  expect((api.getNodeById('node') as Light3DNodeSerializedNode).intensity).toBe(0.2);
 });

@@ -789,7 +789,12 @@ export class ElementsChange implements Change<SceneElementsMap> {
         ...Object.keys(delta.inserted),
       ]),
     ].filter((key) => delta.inserted[key] === undefined);
-    if (!element.isDeleted && removedKeys.some((key) => key in element)) {
+    // Removing an optional deletion flag restores a visible node just like
+    // setting it to false. Do not skip this history entry for older wire data.
+    if (
+      removedKeys.some((key) => key in element) &&
+      (!element.isDeleted || removedKeys.includes('isDeleted'))
+    ) {
       flags.containsVisibleDifference = true;
     }
     const next = newElementWith(

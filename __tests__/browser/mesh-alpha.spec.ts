@@ -7,16 +7,23 @@ const pixel = (png: PNG, x: number, y: number) => [
   ...png.data.subarray((y * png.width + x) * 4, (y * png.width + x) * 4 + 3),
 ];
 
-test('mesh alpha cutout and camera-depth blend order render in WebGL', async ({
+test('mesh alpha cutout and camera-depth blend order render in selected backend', async ({
   page,
-}) => {
+}, testInfo) => {
   const errors: string[] = [];
   page.on('pageerror', (error) => errors.push(error.message));
-  await page.goto('/gizmo.html?alpha');
+  page.on('console', (message) => { if (message.type() === 'error') errors.push(message.text()); });
+  const diagnostics: string[] = [];
+  page.on('console', (message) => { if (['error', 'warning'].includes(message.type())) diagnostics.push(message.text()); });
+  const renderer = testInfo.project.metadata.renderer ?? 'webgl';
+  await page.goto(`/gizmo.html?alpha&renderer=${renderer}`);
   await expect(page.locator('#status')).toHaveText('Ready');
+  const backend = await page.evaluate(() => window.gizmoTest.backend());
+  expect(backend).toMatch(renderer === 'webgpu' ? /^WebGPU$/ : /^WebGL/);
   await page.evaluate(() => window.gizmoTest.settle());
   const canvas = page.locator('#canvas');
-  const masked = PNG.sync.read(await canvas.screenshot());
+  const masked = PNG.sync.read(await canvas.screenshot({ scale: 'css' }));
+  expect(errors, diagnostics.join('\n')).toEqual([]);
   const left = pixel(masked, 35, 40);
   const right = pixel(masked, 75, 40);
   const glass = pixel(masked, 140, 90);
@@ -40,7 +47,7 @@ test('mesh alpha cutout and camera-depth blend order render in WebGL', async ({
     );
     await window.gizmoTest.settle();
   });
-  const opaque = PNG.sync.read(await canvas.screenshot());
+  const opaque = PNG.sync.read(await canvas.screenshot({ scale: 'css' }));
   const opaqueLeft = pixel(opaque, 35, 40);
   expect(opaqueLeft[0]).toBeLessThan(left[0] - 100);
 
@@ -50,7 +57,7 @@ test('mesh alpha cutout and camera-depth blend order render in WebGL', async ({
     api.updateNode(api.getNodeById('alpha-far'), { z: 0 }, false);
     await window.gizmoTest.settle();
   });
-  const swapped = PNG.sync.read(await canvas.screenshot());
+  const swapped = PNG.sync.read(await canvas.screenshot({ scale: 'css' }));
   const glassSwapped = pixel(swapped, 140, 90);
   expect(glassSwapped[2]).toBeGreaterThan(glassSwapped[0]);
   expect(errors).toEqual([]);

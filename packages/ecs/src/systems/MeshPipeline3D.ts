@@ -1117,10 +1117,10 @@ export class MeshPipeline3D extends System {
         }
         let loaded: Texture;
         if (environment) {
+          // Only the HDR decoder returns linear pixels. Ordinary adapter
+          // images also need readback when ImageBitmap is absent or cross-realm.
           const linear =
-            typeof ImageBitmap !== 'undefined' && source instanceof ImageBitmap
-              ? environmentFromBitmap(source)
-              : source;
+            'pixels' in source ? source : environmentFromBitmap(source);
           const filtered = prefilterEnvironment(linear);
           const canvas = DOMAdapter.get().createCanvas(
             ENV_ATLAS_WIDTH,

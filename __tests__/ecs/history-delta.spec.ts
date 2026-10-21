@@ -133,6 +133,18 @@ describe('document deltas', () => {
     expect(missingVisible).toBe(false);
   });
 
+  it('keeps optional attribute removal on a deleted tombstone invisible', () => {
+    const before = map(rect());
+    const after = map(rect({ name: 'temporary' }));
+    const change = ElementsChange.calculate(before, after, undefined);
+    const [result, visible] = change.inverse().applyTo(
+      map(rect({ name: 'temporary', isDeleted: true })), after,
+    );
+    expect(visible).toBe(false);
+    expect(result.get('a').isDeleted).toBe(true);
+    expect(result.get('a')).not.toHaveProperty('name');
+  });
+
   it('replays the latest value for changed keys while preserving unrelated remote edits', () => {
     const change = ElementsChange.calculate(
       map(rect()),

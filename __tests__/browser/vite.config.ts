@@ -27,6 +27,9 @@ export default defineConfig({
     }),
   ],
   optimizeDeps: {
+    // Match the active browser fixture graph. Playwright's retired-suite
+    // exclusions do not constrain Vite's default scan of every HTML entry.
+    entries: ['**/*.html', '!text-path.html', '!dash.html'],
     exclude: ['loro-crdt'],
     esbuildOptions: { target: 'esnext' },
   },

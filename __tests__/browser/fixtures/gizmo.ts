@@ -50,6 +50,7 @@ class Bootstrap extends System {
       width,
       height,
       devicePixelRatio: Number(params.get('dpr') || 1),
+      renderer: params.get('renderer') === 'webgpu' ? 'webgpu' : 'webgl',
     });
     api.createCamera({ zoom, x: 0, y: 0, rotation });
     api.setAppState({ penbarSelected: Pen.SELECT });
@@ -96,6 +97,8 @@ const resetDerivedUpdates = () => {
 };
 const harness = {
   api: () => api,
+  backend: () => api.getCanvas().read(GPUResource).device.queryVendorInfo().platformString,
+  dispose: () => app.exit(),
   importAndExportSvg: async (source: string) => {
     const nodes = importExtrudedSvg(source, 24, { x: 100, y: 100 });
     await api.edit((editor) => editor.replaceDocument(nodes, 'remote'));

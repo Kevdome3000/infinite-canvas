@@ -18,7 +18,11 @@ import { createDocumentWorld } from '../helpers/ecs-document';
 import { fakeMeshGPU } from './helpers/mesh-gpu';
 
 jest.mock('../../packages/ecs/src/utils/load-image-bitmap', () => ({
-  loadImageBitmapUniversal: jest.fn(async () => ({ width: 4, height: 2 })),
+  // Keep bitmap conversion real even though GPU resources and prefiltering
+  // are controlled here. A width/height-only object is not drawable.
+  loadImageBitmapUniversal: jest.fn(async () =>
+    jest.requireActual<typeof import('canvas')>('canvas').createCanvas(4, 2),
+  ),
 }));
 jest.mock('../../packages/ecs/src/utils/environment-map', () => ({
   ...jest.requireActual('../../packages/ecs/src/utils/environment-map'),

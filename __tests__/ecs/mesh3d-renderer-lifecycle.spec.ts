@@ -1073,3 +1073,46 @@ it('reuses the white binding through a failed load and replaces it when a textur
   expect(new Float32Array(slot.gpu.buffers[5].bytes.buffer)[48]).toBe(0);
   warn.mockRestore();
 });
+
+it('reassigns shadow slots after caster reorder/removal and releases each owner independently', () => {
+  const { renderer, queries, slots, entity, draw } = fixture(2);
+  const lights = [
+    new Light3D({ type: 'directional', castShadow: true }),
+    new Light3D({ type: 'point', castShadow: true, position: [0, 0, -100] }),
+  ];
+  const casters = lights.map((light, i) => entity(new Map([
+    [Canvas3DScope, { canvas: slots[0].canvas }], [Light3D, light],
+  ]), 100 + i));
+  const schedule = () => {
+    let target = 0;
+    return renderer.scheduleShadowPass({
+      createRenderTargetID: () => ++target,
+      pushPass: () => {},
+      resolveRenderTarget: (id: number) => id,
+    } as any, slots[0].canvas);
+  };
+  queries.lights3D.current = casters;
+  const initial = schedule();
+  expect(initial).toHaveLength(2);
+  expect(initial[0].faces).toBeUndefined();
+  expect(initial[1].faces).toHaveLength(6);
+  queries.lights3D.current = [...casters].reverse();
+  const reordered = schedule();
+  expect(reordered[0].faces).toHaveLength(6);
+  expect(reordered[1].faces).toBeUndefined();
+  queries.lights3D.current = [casters[0]];
+  expect(schedule()).toHaveLength(1);
+  queries.lights3D.current = [];
+  expect(schedule()).toHaveLength(0);
+  queries.lights3D.current = casters;
+  expect(schedule()).toHaveLength(2);
+  draw();
+  draw(1);
+  slots[0].gpu.scope.dispose();
+  for (const resource of [...slots[0].gpu.buffers, ...slots[0].gpu.textures])
+    expect(resource.destroy).toHaveBeenCalledTimes(1);
+  for (const resource of [...slots[1].gpu.buffers, ...slots[1].gpu.textures])
+    expect(resource.destroy).not.toHaveBeenCalled();
+  draw(1);
+  expect(slots[1].gpu.draws.length).toBeGreaterThan(1);
+});

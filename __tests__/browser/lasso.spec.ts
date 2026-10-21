@@ -27,6 +27,38 @@ async function expectPreview(page: Page, ids: string[]) {
   );
 }
 
+// These gestures exercise scene geometry, not interaction with the floating
+// penbar. Keep the complete lesson UI but give its bottom toolbar enough room.
+async function makeRoomForGesture(page: Page) {
+  await page.locator('ic-spectrum-canvas').evaluate((element) => {
+    element.style.height = '500px';
+  });
+  await settle(page);
+}
+
+async function expectCanvasGesture(page: Page, points: Point[]) {
+  const box = (await page.locator('canvas').first().boundingBox())!;
+  const targets = await page.evaluate(
+    ({ points, box }) =>
+      points.map(([x, y]) => {
+        const point = window.lassoTest.point(x, y);
+        const clientX = Math.round(box.x + point.x);
+        const clientY = Math.round(box.y + point.y);
+        let root: Document | ShadowRoot | null = document;
+        let target: Element | null = null;
+        const seen = new Set<Document | ShadowRoot>();
+        while (root && !seen.has(root) && seen.size < 20) {
+          seen.add(root);
+          target = root.elementFromPoint(clientX, clientY);
+          root = target?.shadowRoot ?? null;
+        }
+        return target?.tagName;
+      }),
+    { points, box },
+  );
+  expect(targets).toEqual(points.map(() => 'CANVAS'));
+}
+
 // Playwright has native WebKit taps but no native touch-drag command.
 // Use real mouse events on Chromium and Safari's touch PointerEvent path on WebKit.
 async function drag(
@@ -183,6 +215,7 @@ for (const zoomed of [false, true]) {
     zoomed ? 'zoomed, reverse drag' : 'forward drag'
   })`, async ({ page, browserName }) => {
     const touch = browserName === 'webkit';
+    await makeRoomForGesture(page);
     // Match a documentation embed with content above it and a scrolled page.
     await page.locator('#demo').evaluate((element) => {
       element.style.margin = '160px 0 0 20px';
@@ -223,6 +256,7 @@ for (const zoomed of [false, true]) {
           [80, 80],
           [230, 220],
         ];
+    await expectCanvasGesture(page, points);
     await drag(page, points, touch, async () => {
       const box = (await page.locator('canvas').first().boundingBox())!;
       const [start, end] = await page.evaluate(
@@ -429,6 +463,7 @@ test('open polylines have no phantom interior or closing edge', async ({
   page,
   browserName,
 }) => {
+  await makeRoomForGesture(page);
   await drag(
     page,
     [
@@ -442,16 +477,14 @@ test('open polylines have no phantom interior or closing edge', async ({
   expect(await selected(page)).toEqual([]);
   await page.evaluate(() => window.lassoTest.activate('select'));
   // Cross a segment with both of its endpoints outside the lasso.
-  await drag(
-    page,
-    [
-      [342, 140],
-      [358, 140],
-      [358, 160],
-      [342, 160],
-    ],
-    browserName === 'webkit',
-  );
+  const crossing: Point[] = [
+    [342, 140],
+    [358, 140],
+    [358, 160],
+    [342, 160],
+  ];
+  await expectCanvasGesture(page, crossing);
+  await drag(page, crossing, browserName === 'webkit');
   expect(await selected(page)).toEqual(['lasso-polyline']);
 });
 

@@ -298,6 +298,20 @@ vec3 pointShadowUp(int face) {
   return vec3(0.0);
 }
 
+// Shadow maps contain one mip. Explicit level sampling remains valid after
+// receiver/frustum early exits on WebGPU; GLSL ES 1.00 keeps its base-level path.
+float sampleShadowDepth(int slot, vec2 uv) {
+#ifdef CLIPSPACE_NEAR_ZERO
+  return slot == 0
+    ? unpackShadowDepth(textureLod(SAMPLER_2D(u_ShadowMap0), uv, 0.0))
+    : unpackShadowDepth(textureLod(SAMPLER_2D(u_ShadowMap1), uv, 0.0));
+#else
+  return slot == 0
+    ? unpackShadowDepth(texture(SAMPLER_2D(u_ShadowMap0), uv))
+    : unpackShadowDepth(texture(SAMPLER_2D(u_ShadowMap1), uv));
+#endif
+}
+
 float shadowVisibility(vec3 position, vec3 normal, vec3 lightDir,
   bool spot, int slot, int lightIndex) {
   vec4 shadowParams = u_ShadowParams[slot];
@@ -335,9 +349,7 @@ float shadowVisibility(vec3 position, vec3 normal, vec3 lightDir,
     vec2 sampleUv = point
       ? (sampleLocal + pointShadowTile(face)) / vec2(3.0, 2.0)
       : sampleLocal;
-    float stored = slot == 0
-      ? unpackShadowDepth(texture(SAMPLER_2D(u_ShadowMap0), sampleUv))
-      : unpackShadowDepth(texture(SAMPLER_2D(u_ShadowMap1), sampleUv));
+    float stored = sampleShadowDepth(slot, sampleUv);
     float visible = depth - bias <= stored ? 1.0 : 0.0;
     return mix(1.0, visible, shadowOptions.x);
   }
@@ -374,9 +386,7 @@ float shadowVisibility(vec3 position, vec3 normal, vec3 lightDir,
       vec2 sampleUv = point
         ? (sampleLocal + pointShadowTile(sampleFace)) / vec2(3.0, 2.0)
         : sampleLocal;
-      float stored = slot == 0
-        ? unpackShadowDepth(texture(SAMPLER_2D(u_ShadowMap0), sampleUv))
-        : unpackShadowDepth(texture(SAMPLER_2D(u_ShadowMap1), sampleUv));
+      float stored = sampleShadowDepth(slot, sampleUv);
       visibility += sampleDepth - bias <= stored ? 1.0 : 0.0;
     }
   }
@@ -467,6 +477,11 @@ vec3 perturbNormalFromBumpMap(vec3 normal, vec2 uv, float bumpScale) {
   vec3 dp1perp = cross(normal, dp1);
   vec3 tangent = dp1perp * duv2.x + dp2perp * duv1.x;
   vec3 bitangent = dp1perp * duv2.y + dp2perp * duv1.y;
+  // Derivative-based texture filtering must precede the varying-dependent
+  // degenerate-UV return, including when this GLSL is compiled to WGSL.
+  float height = texture(SAMPLER_2D(u_BumpMap), uv).r;
+  float heightDx = texture(SAMPLER_2D(u_BumpMap), uv + duv1).r - height;
+  float heightDy = texture(SAMPLER_2D(u_BumpMap), uv + duv2).r - height;
   float maxLen = max(dot(tangent, tangent), dot(bitangent, bitangent));
   // glTF meshes without UVs use zero coordinates; their tangent basis cannot
   // be normalized. Keep the geometric normal instead of producing NaNs.
@@ -474,9 +489,6 @@ vec3 perturbNormalFromBumpMap(vec3 normal, vec2 uv, float bumpScale) {
   float invmax = inversesqrt(maxLen);
   tangent *= invmax;
   bitangent *= invmax;
-  float height = texture(SAMPLER_2D(u_BumpMap), uv).r;
-  float heightDx = texture(SAMPLER_2D(u_BumpMap), uv + duv1).r - height;
-  float heightDy = texture(SAMPLER_2D(u_BumpMap), uv + duv2).r - height;
   return normalize(
     tangent * (-heightDx * bumpScale) +
     bitangent * (-heightDy * bumpScale) +
@@ -505,8 +517,8 @@ void main() {
     albedo *= srgbToLinear(texel.rgb);
     baseColor.a *= texel.a;
   }
-  if (u_ShadowReceive.y > 0.5 && u_ShadowReceive.y < 1.5 &&
-      baseColor.a < u_ShadowReceive.z) discard;
+  bool alphaDiscard = u_ShadowReceive.y > 0.5 && u_ShadowReceive.y < 1.5 &&
+      baseColor.a < u_ShadowReceive.z;
   if (u_ShadowReceive.y < 1.5) baseColor.a = 1.0;
 
   float metallic = clamp(u_PbrParams.x, 0.0, 1.0);
@@ -563,6 +575,9 @@ void main() {
     ambient += env * (F0 * brdf.x + brdf.y) * specularScale * u_LightParams.x;
   }
 
+  // Keep implicit derivatives in specular/environment sampling in uniform
+  // control flow; discarded fragments still never write color or depth.
+  if (alphaDiscard) discard;
   vec3 result = ambient + Lo;
   outputColor = vec4(linearToSrgb(toneMapACES(result)), baseColor.a);
 }

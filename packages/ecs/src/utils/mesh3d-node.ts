@@ -1,3 +1,4 @@
+import { inferMaterial3DAlphaMode } from '../components/geometry3d/Material3D';
 import type { Entity } from '@lastolivegames/becsy';
 import {
   ComputedBounds,
@@ -199,12 +200,11 @@ export function syncMesh3DNodeCompanionMaterial(
       ? loaded.material
       : undefined;
   const hasCustomColor = node.baseColor.some((value) => value !== 1);
+  const baseColor = [...(hasCustomColor
+    ? node.baseColor
+    : imported?.baseColor ?? node.baseColor)] as [number, number, number, number];
   syncMaterial3D(meshEntity, {
-    baseColor: [
-      ...(hasCustomColor
-        ? node.baseColor
-        : imported?.baseColor ?? node.baseColor),
-    ],
+    baseColor,
     ambient: node.ambient,
     diffuse: node.diffuse,
     specular: node.specular,
@@ -212,7 +212,7 @@ export function syncMesh3DNodeCompanionMaterial(
     metallic: node.metallic,
     roughness: node.roughness,
     map: node.map ?? imported?.map ?? null,
-    alphaMode: node.alphaMode ?? imported?.alphaMode ?? 'opaque',
+    alphaMode: node.alphaMode ?? imported?.alphaMode ?? inferMaterial3DAlphaMode(baseColor),
     alphaCutoff: node.alphaCutoff ?? imported?.alphaCutoff ?? 0.5,
     specularMap: node.specularMap ?? null,
     bumpMap: node.bumpMap ?? null,
