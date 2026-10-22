@@ -98,7 +98,7 @@ test('real shadow inputs retain text shortcuts and queued selection/deletion use
   });
   const input = page.locator('#shortcut-input input');
   await input.focus();
-  await page.keyboard.press('Control+a');
+  await page.keyboard.press('ControlOrMeta+a');
   await page.keyboard.press('Backspace');
   await expect(input).toHaveValue('');
   await expect(page.getByTestId('left-count')).toHaveText('1');
