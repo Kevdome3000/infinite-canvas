@@ -39,7 +39,7 @@ export function camera3DPlanePoint(
     viewport[1],
     width,
     height,
-    inverse,
+    Array.from(inverse),
     reverseDepth,
   );
   if (Math.abs(ray.direction[2]) < 1e-6) return null;

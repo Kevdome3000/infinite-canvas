@@ -1,3 +1,4 @@
+import { glMatrix, mat4 } from 'gl-matrix';
 import { Camera3D } from '../../packages/ecs/src/components';
 import { resolveMesh3DCameraConfig } from '../../packages/ecs/src/utils/mesh3d-companion';
 import {
@@ -77,3 +78,24 @@ it('only enables navigation for a free orthographic camera with explicit height'
     isNavigableCamera3D(new Camera3D({ projection: 'orthographic' })),
   ).toBe(false);
 });
+
+it.each([Array, Float32Array])(
+  'keeps plane picking and anchored navigation with %p matrices',
+  (arrayType) => {
+    const previousType = glMatrix.ARRAY_TYPE;
+    const pointer: [number, number] = [320, 170];
+    const expected = camera3DPlanePoint(createCamera(), pointer, 800, 400);
+    try {
+      glMatrix.setMatrixArrayType(arrayType);
+      expect(mat4.create()).toBeInstanceOf(arrayType);
+      const camera = createCamera();
+      expectSamePoint(expected, camera3DPlanePoint(camera, pointer, 800, 400));
+      expect(panCamera3D(camera, pointer, [355, 205], 800, 400)).toBe(true);
+      expectSamePoint(expected, camera3DPlanePoint(camera, [355, 205], 800, 400));
+      expect(zoomCamera3D(camera, [355, 205], -100, 800, 400, 0.003)).toBe(true);
+      expectSamePoint(expected, camera3DPlanePoint(camera, [355, 205], 800, 400));
+    } finally {
+      glMatrix.setMatrixArrayType(previousType);
+    }
+  },
+);
