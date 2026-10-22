@@ -256,9 +256,11 @@ test('empty and unchanged icon patches do not consume unrelated pending edits', 
   await expect(page.getByTestId('left-undo')).toBeDisabled();
   await page.evaluate(() => window.apis.left.record());
   await page.getByTestId('left-undo').click();
-  expect(
-    await page.evaluate(() => window.apis.left.getNodeById('left')!.width),
-  ).toBe(100);
+  await expect
+    .poll(() =>
+      page.evaluate(() => window.apis.left.getNodeById('left')!.width),
+    )
+    .toBe(100);
   await expect(page.getByTestId('left-undo')).toBeDisabled();
   expect(errors).toEqual([]);
 });
