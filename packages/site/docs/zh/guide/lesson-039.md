@@ -415,23 +415,22 @@ SVG 根节点上最近的 `color`；没有指定时使用黑色。通过 `style`
 控件可用于比较两种效果。
 
 示例中的 **Download GLB** 按钮会将已生成的三维网格导出为独立的 glTF 二进制文件。
-使用 `api.export` 可下载画布中所有已就绪的挤出图形；指定 `nodes` 可只导出选区，
+使用 `api.exportGlb` 可下载画布中所有已就绪的挤出图形；指定 `nodes` 可只导出选区，
 包括选中分组的子图形：
 
 ```ts
-import { ExportFormat } from '@infinite-canvas-tutorial/ecs';
-
-api.export({ format: ExportFormat.GLB });
-const glb = api.export({
-    format: ExportFormat.GLB,
+await api.exportGlb();
+const glb = await api.exportGlb({
     nodes: [api.getNodeById('extruded-vector')!],
     download: false,
 }); // Uint8Array
 ```
 
 导出会把画布向下的 Y 轴转换为 glTF 向上的 Y 轴，并保留当前三维姿态、纯色填充及
-可选的侧壁颜色。只有已就绪的伴生网格会写入文件；不支持的二维 SVG 元素和纹理不会导出。
-如需直接导出网格组件，可以使用底层的 `exportMeshesToGlb`。
+可选的侧壁颜色。只有已就绪的伴生网格会写入文件；不支持的二维 SVG 元素不会导出。
+基础颜色贴图会嵌入为 PNG 或 JPEG（其他可解码格式转换为 PNG），贴图 URL 需要允许 CORS 获取。
+同步的 `api.export({ format: ExportFormat.GLB })` 仍可用于无贴图导出。
+如需直接导出网格组件，可以调用底层的 `exportMeshesToGlb(sources, await loadGlbImages(sources))`。
 
 点击 **ViewBox + shear sample** 可以查看变换后的轮廓与偶奇填充孔洞，再关闭挤出对比 2D 轮廓。
 点击 **Slice clipping sample** 可以查看视口对孔洞、分离区域和曲线边缘的裁切。
@@ -444,13 +443,32 @@ const glb = api.export({
 
 最多两盏设置 `castShadow: true` 的平行光、点光或聚光灯可同时投射阴影，并通过 3 × 3 PCF 过滤。每盏灯可设置 `shadowStrength`（0–1）、`shadowSoftness`（0–4 个纹素）、`shadowBiasScale`（0–4）和 `shadowNormalBias`（0–10 个画布单位）；默认值保持原有画面。每个 Mesh 可以用 `material3d.castShadow` 与 `material3d.receiveShadow` 分别关闭投影和接影（两者默认 `true`）。平行光阴影图按当前 Mesh 范围拟合；聚光灯外锥半角小于 85° 时使用一张透视阴影图，更宽的光锥和点光使用六面图集。PCF 采样跨越图集面接缝时改采样相邻面，不再重复边缘纹素。控件、阴影图尺寸与 API 说明见[光照示例](/zh/example/lighting)。
 
+自发光表面可设置 `material3d.emissiveFactor` 与 `emissiveStrength`，无需增加场景光源。glTF 的 `KHR_materials_emissive_strength` 会随材质导入导出；可在[光照示例](/zh/example/lighting)中拖动立方体自发光强度滑块查看效果。
+
+需要保持纯色、不受光照影响时，可设置 `material3d.unlit`，它会跳过场景光照与色调映射，同时保留基础颜色贴图与 Alpha。导入、导出 GLB 时会保留 glTF 的 `KHR_materials_unlit`；可在[光照示例](/zh/example/lighting)中通过立方体开关与自发光对比。
+
 贴图镂空和半透明表面可分别使用 `material3d.alphaMode` 的 `mask` 与 `blend`；阴影效果和排序限制见 [3D Mesh 透明度示例](/zh/example/mesh3d-alpha)。
 
 <Lighting locale="zh" />
 
+WebGL1 片元着色器读取 uniform 数组时需要使用常量索引。渲染器会为灯光数据和阴影矩阵
+生成有界的读取分支；WebGL2 和 WebGPU 保留原生索引。材质计算通过辅助函数把颜色返回
+`main()`，确保无光照材质也会执行 WebGL1 的最终颜色输出转换。浏览器回归会强制使用
+WebGL1，检查顶点色、切线空间法线贴图、多光源以及平行光和点光源阴影。
+
 ## glTF 模型 {#gltf}
 
 通过声明式 `mesh3d` 的 `geometry: { type: 'gltf', url: '…' }` 加载外部 glTF/GLB。Khronos **Duck** 示例使用 `/data/` 下的 `.gltf` + `.bin`；网格会归一化到单位包围盒，再用 `scale3d` 缩放到画布尺寸。
+
+glTF 基础颜色系数使用线性 RGB，ECS 材质基础颜色则存储为 sRGB。导入时进行转换，导出 GLB 时转回线性 RGB，让材质颜色在往返后保持一致。
+
+导入还会保留 glTF 的 `doubleSided`、`normalTexture`、`occlusionTexture` 和 `TANGENT` 属性，包括独立的 UV 集、变换与强度参数。法线贴图影响光照法线；遮蔽贴图只影响间接光。[PBR 材质交互示例](/zh/example/gltf-duck#pbr-material)说明何时使用原始切线或从 UV 推导切线空间。
+
+glTF `COLOR_0` 顶点颜色（浮点数或归一化无符号字节/短整数，RGB 或 RGBA）在线性空间与材质基础色相乘。[顶点颜色交互示例](/zh/example/gltf-duck#vertex-colors)可对比有无场景光照的结果。导出时保留为浮点 RGBA。
+
+导入器支持三角形列表、三角带（`mode: 5`）和三角扇（`mode: 6`），无论是否提供索引，都会转换为三角形列表用于渲染和 GLB 导出。节点发生镜像变换时也会修正三角面朝向，避免单面材质被背面剔除。
+
+稀疏 glTF accessor 可用于位置、法线、UV、颜色、切线和三角形索引。未提供基础数据时先填零，再只替换稀疏索引指定的元素。导出 GLB 时会写入普通的完整缓冲区。
 
 <GltfDuck />
 

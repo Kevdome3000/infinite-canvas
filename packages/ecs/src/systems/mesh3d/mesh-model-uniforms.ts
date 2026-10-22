@@ -1,10 +1,13 @@
 import type { Buffer } from '@infinite-canvas-tutorial/device-api';
 import { mat4 } from 'gl-matrix';
-import type { Material3D } from '../../components/geometry3d/Material3D';
+import type {
+  Material3D,
+  Material3DTextureTransform,
+} from '../../components/geometry3d/Material3D';
 import type { Transform3D } from '../../components/geometry3d/Transform3D';
 import { ENVIRONMENT_IRRADIANCE_FLOATS } from '../../utils/environment-irradiance';
 
-export const MESH_MODEL_UNIFORM_FLOATS = 64 + ENVIRONMENT_IRRADIANCE_FLOATS;
+export const MESH_MODEL_UNIFORM_FLOATS = 108 + ENVIRONMENT_IRRADIANCE_FLOATS;
 
 /** One cache per model UBO; never retain mutable ECS component views. */
 export class MeshModelUniforms {
@@ -30,7 +33,54 @@ export class MeshModelUniforms {
       60,
       60 + ENVIRONMENT_IRRADIANCE_FLOATS,
     ),
-    u_ShadowReceive: this.data.subarray(60 + ENVIRONMENT_IRRADIANCE_FLOATS),
+    u_ShadowReceive: this.data.subarray(
+      60 + ENVIRONMENT_IRRADIANCE_FLOATS,
+      64 + ENVIRONMENT_IRRADIANCE_FLOATS,
+    ),
+    u_TextureCoords: this.data.subarray(
+      64 + ENVIRONMENT_IRRADIANCE_FLOATS,
+      68 + ENVIRONMENT_IRRADIANCE_FLOATS,
+    ),
+    u_MapUvTransform: this.data.subarray(
+      68 + ENVIRONMENT_IRRADIANCE_FLOATS,
+      72 + ENVIRONMENT_IRRADIANCE_FLOATS,
+    ),
+    u_PbrUvTransform: this.data.subarray(
+      72 + ENVIRONMENT_IRRADIANCE_FLOATS,
+      76 + ENVIRONMENT_IRRADIANCE_FLOATS,
+    ),
+    u_UvRotations: this.data.subarray(
+      76 + ENVIRONMENT_IRRADIANCE_FLOATS,
+      80 + ENVIRONMENT_IRRADIANCE_FLOATS,
+    ),
+    u_EmissiveFactor: this.data.subarray(
+      80 + ENVIRONMENT_IRRADIANCE_FLOATS,
+      84 + ENVIRONMENT_IRRADIANCE_FLOATS,
+    ),
+    u_EmissiveUvTransform: this.data.subarray(
+      84 + ENVIRONMENT_IRRADIANCE_FLOATS,
+      88 + ENVIRONMENT_IRRADIANCE_FLOATS,
+    ),
+    u_EmissiveParams: this.data.subarray(
+      88 + ENVIRONMENT_IRRADIANCE_FLOATS,
+      92 + ENVIRONMENT_IRRADIANCE_FLOATS,
+    ),
+    u_NormalUvTransform: this.data.subarray(
+      92 + ENVIRONMENT_IRRADIANCE_FLOATS,
+      96 + ENVIRONMENT_IRRADIANCE_FLOATS,
+    ),
+    u_OcclusionUvTransform: this.data.subarray(
+      96 + ENVIRONMENT_IRRADIANCE_FLOATS,
+      100 + ENVIRONMENT_IRRADIANCE_FLOATS,
+    ),
+    u_NormalParams: this.data.subarray(
+      100 + ENVIRONMENT_IRRADIANCE_FLOATS,
+      104 + ENVIRONMENT_IRRADIANCE_FLOATS,
+    ),
+    u_OcclusionParams: this.data.subarray(
+      104 + ENVIRONMENT_IRRADIANCE_FLOATS,
+      108 + ENVIRONMENT_IRRADIANCE_FLOATS,
+    ),
   };
 
   constructor(private readonly buffer: Buffer) {
@@ -44,6 +94,10 @@ export class MeshModelUniforms {
       mapReady: boolean;
       specularMapReady: boolean;
       bumpMapReady: boolean;
+      emissiveMapReady: boolean;
+      metallicRoughnessMapReady: boolean;
+      normalMapReady: boolean;
+      occlusionMapReady: boolean;
       environmentMapReady: boolean;
       environmentIrradiance: Float32Array | null;
     },
@@ -61,6 +115,65 @@ export class MeshModelUniforms {
     this.set(53, material.roughness);
     this.set(54, Number(material.sideColor !== null));
     this.set(55, Number(textureReady.environmentMapReady));
+    this.set(64 + ENVIRONMENT_IRRADIANCE_FLOATS, material.mapTexCoord);
+    this.set(
+      65 + ENVIRONMENT_IRRADIANCE_FLOATS,
+      material.metallicRoughnessTexCoord,
+    );
+    this.setTextureTransform(
+      68 + ENVIRONMENT_IRRADIANCE_FLOATS,
+      76 + ENVIRONMENT_IRRADIANCE_FLOATS,
+      material.mapTextureTransform,
+    );
+    this.setTextureTransform(
+      72 + ENVIRONMENT_IRRADIANCE_FLOATS,
+      77 + ENVIRONMENT_IRRADIANCE_FLOATS,
+      material.metallicRoughnessTextureTransform,
+    );
+    for (let i = 0; i < 3; i++)
+      this.set(
+        80 + ENVIRONMENT_IRRADIANCE_FLOATS + i,
+        material.emissiveFactor[i],
+      );
+    this.set(
+      83 + ENVIRONMENT_IRRADIANCE_FLOATS,
+      Number(textureReady.emissiveMapReady),
+    );
+    this.setTextureTransform(
+      84 + ENVIRONMENT_IRRADIANCE_FLOATS,
+      89 + ENVIRONMENT_IRRADIANCE_FLOATS,
+      material.emissiveTextureTransform,
+    );
+    this.set(88 + ENVIRONMENT_IRRADIANCE_FLOATS, material.emissiveTexCoord);
+    this.set(90 + ENVIRONMENT_IRRADIANCE_FLOATS, material.emissiveStrength);
+    this.set(91 + ENVIRONMENT_IRRADIANCE_FLOATS, Number(material.unlit));
+    this.set(66 + ENVIRONMENT_IRRADIANCE_FLOATS, Number(material.doubleSided));
+    this.setTextureTransform(
+      92 + ENVIRONMENT_IRRADIANCE_FLOATS,
+      102 + ENVIRONMENT_IRRADIANCE_FLOATS,
+      material.normalTextureTransform,
+    );
+    this.setTextureTransform(
+      96 + ENVIRONMENT_IRRADIANCE_FLOATS,
+      106 + ENVIRONMENT_IRRADIANCE_FLOATS,
+      material.occlusionTextureTransform,
+    );
+    this.set(
+      100 + ENVIRONMENT_IRRADIANCE_FLOATS,
+      Number(textureReady.normalMapReady),
+    );
+    this.set(101 + ENVIRONMENT_IRRADIANCE_FLOATS, material.normalTexCoord);
+    this.set(103 + ENVIRONMENT_IRRADIANCE_FLOATS, material.normalScale);
+    this.set(
+      104 + ENVIRONMENT_IRRADIANCE_FLOATS,
+      Number(textureReady.occlusionMapReady),
+    );
+    this.set(105 + ENVIRONMENT_IRRADIANCE_FLOATS, material.occlusionTexCoord);
+    this.set(107 + ENVIRONMENT_IRRADIANCE_FLOATS, material.occlusionStrength);
+    this.set(
+      63 + ENVIRONMENT_IRRADIANCE_FLOATS,
+      Number(textureReady.metallicRoughnessMapReady),
+    );
     for (let i = 0; i < 4; i++) this.set(56 + i, material.sideColor?.[i] ?? 0);
     for (let i = 0; i < ENVIRONMENT_IRRADIANCE_FLOATS; i++)
       this.set(60 + i, textureReady.environmentIrradiance?.[i] ?? 0);
@@ -82,6 +195,12 @@ export class MeshModelUniforms {
     this.updatePose(transform);
     this.set(32 + 3, material.baseColor[3]);
     this.set(54, Number(material.sideColor !== null));
+    this.set(64 + ENVIRONMENT_IRRADIANCE_FLOATS, material.mapTexCoord);
+    this.setTextureTransform(
+      68 + ENVIRONMENT_IRRADIANCE_FLOATS,
+      76 + ENVIRONMENT_IRRADIANCE_FLOATS,
+      material.mapTextureTransform,
+    );
     for (let i = 0; i < 4; i++) this.set(56 + i, material.sideColor?.[i] ?? 0);
     this.setAlpha(material, mapReady);
     this.upload();
@@ -105,6 +224,10 @@ export class MeshModelUniforms {
       u_PbrParams: this.legacy.u_PbrParams,
       u_SideColor: this.legacy.u_SideColor,
       u_ShadowReceive: this.legacy.u_ShadowReceive,
+      u_TextureCoords: this.legacy.u_TextureCoords,
+      u_MapUvTransform: this.legacy.u_MapUvTransform,
+      u_PbrUvTransform: this.legacy.u_PbrUvTransform,
+      u_UvRotations: this.legacy.u_UvRotations,
     };
   }
 
@@ -152,11 +275,29 @@ export class MeshModelUniforms {
     this.dirty = true;
   }
 
+  private setTextureTransform(
+    offset: number,
+    rotationOffset: number,
+    transform: Material3DTextureTransform | null,
+  ): void {
+    const [u, v] = transform?.offset ?? [0, 0];
+    const [su, sv] = transform?.scale ?? [1, 1];
+    this.set(offset, u);
+    this.set(offset + 1, v);
+    this.set(offset + 2, su);
+    this.set(offset + 3, sv);
+    this.set(rotationOffset, transform?.rotation ?? 0);
+  }
+
   private setAlpha(material: Material3D, mapReady: boolean): void {
     this.set(48, Number(mapReady));
     this.set(
       61 + ENVIRONMENT_IRRADIANCE_FLOATS,
-      material.alphaMode === 'mask' ? 1 : material.alphaMode === 'blend' ? 2 : 0,
+      material.alphaMode === 'mask'
+        ? 1
+        : material.alphaMode === 'blend'
+        ? 2
+        : 0,
     );
     this.set(
       62 + ENVIRONMENT_IRRADIANCE_FLOATS,

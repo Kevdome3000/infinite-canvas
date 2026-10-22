@@ -2,6 +2,7 @@ import { inferMaterial3DAlphaMode } from '../components/geometry3d/Material3D';
 import type { Entity } from '@lastolivegames/becsy';
 import {
   ComputedBounds,
+  Material3D,
   Mesh3D,
   Mesh3DNode,
   Extrude3D,
@@ -26,18 +27,112 @@ import {
 import { resolveCanvasSourceOrigin } from './canvas-source-origin';
 import { sameNumbers, syncMaterial3D, syncTransform3D } from './sync3d';
 import { set3DMeshGizmoSelectedForCanvas } from './pick3d-bridge';
-import type { GltfMeshBakeResult } from './gltf/bake-gltf-mesh';
+import { isEntityAlive } from '../systems/Transform';
+import type { GltfMeshBakeResult, GltfMeshPart } from './gltf/bake-gltf-mesh';
 
 const proceduralGeometry = new WeakMap<Float32Array, string>();
 
 type ImportedMaterial = Pick<
   GltfMeshBakeResult,
-  'baseColor' | 'map' | 'alphaMode' | 'alphaCutoff'
+  | 'baseColor'
+  | 'map'
+  | 'metallic'
+  | 'roughness'
+  | 'metallicRoughnessMap'
+  | 'metallicRoughnessTexCoord'
+  | 'mapTexCoord'
+  | 'metallicRoughnessTextureTransform'
+  | 'mapTextureTransform'
+  | 'emissiveFactor'
+  | 'emissiveStrength'
+  | 'unlit'
+  | 'emissiveMap'
+  | 'emissiveTexCoord'
+  | 'emissiveTextureTransform'
+  | 'doubleSided'
+  | 'normalMap'
+  | 'normalTexCoord'
+  | 'normalTextureTransform'
+  | 'normalScale'
+  | 'occlusionMap'
+  | 'occlusionTexCoord'
+  | 'occlusionTextureTransform'
+  | 'occlusionStrength'
+  | 'alphaMode'
+  | 'alphaCutoff'
 >;
 const companionGeometry = new WeakMap<
   Entity,
   { key: string; material?: ImportedMaterial }
 >();
+const importedParts = new WeakMap<
+  Entity,
+  { primary: Entity; parts: { entity: Entity; material: ImportedMaterial }[] }
+>();
+const pendingParts = new WeakMap<Entity, GltfMeshPart[]>();
+
+export function stageMesh3DNodeParts(
+  source: Entity,
+  parts: GltfMeshPart[],
+): void {
+  pendingParts.set(source, parts);
+}
+
+export function takeMesh3DNodeParts(
+  source: Entity,
+): GltfMeshPart[] | undefined {
+  const parts = pendingParts.get(source);
+  pendingParts.delete(source);
+  return parts;
+}
+
+export function getMesh3DNodeParts(source: Entity): readonly Entity[] {
+  const entry = importedParts.get(source);
+  if (
+    !entry ||
+    !source.has(Mesh3DNode) ||
+    !source.read(Mesh3DNode).meshEntity?.isSame(entry.primary)
+  )
+    return [];
+  return entry.parts
+    .map(({ entity }) => entity)
+    .filter((entity) => isEntityAlive(entity) && !entity.has(ToBeDeleted));
+}
+
+export function syncMesh3DNodeParts(source: Entity): void {
+  const entry = importedParts.get(source);
+  if (!entry || !source.read(Mesh3DNode).meshEntity?.isSame(entry.primary))
+    return;
+  for (const { entity, material } of entry.parts) {
+    if (
+      isEntityAlive(entity) &&
+      entity.has(Transform3D) &&
+      entity.has(Material3D) &&
+      !entity.has(ToBeDeleted)
+    ) {
+      syncMesh3DNodeCompanionFromSource(source, entity, material);
+    }
+  }
+}
+
+export function setMesh3DNodeParts(
+  source: Entity,
+  parts: { entity: Entity; material: ImportedMaterial }[],
+): void {
+  clearMesh3DNodeParts(source);
+  const primary = source.read(Mesh3DNode).meshEntity;
+  if (parts.length && primary)
+    importedParts.set(source, { primary: primary.hold(), parts });
+}
+
+export function clearMesh3DNodeParts(source: Entity): void {
+  pendingParts.delete(source);
+  for (const { entity } of importedParts.get(source)?.parts ?? []) {
+    if (isEntityAlive(entity) && !entity.has(ToBeDeleted))
+      entity.add(ToBeDeleted);
+  }
+  importedParts.delete(source);
+}
 
 export function resolveMesh3DNodeGeometry(
   geometry: Mesh3DNodeGeometry = 'cube',
@@ -64,10 +159,14 @@ export function rebuildMesh3DNodeCompanionGeometry(
       return false;
     }
     companionGeometry.delete(source);
+    clearMesh3DNodeParts(source);
     Object.assign(meshEntity.write(Mesh3D), emptyMesh3DGeometry());
+    meshEntity.write(Mesh3D).tangents = null;
+    meshEntity.write(Mesh3D).colors = null;
     return true;
   }
 
+  clearMesh3DNodeParts(source);
   const mesh = meshEntity.read(Mesh3D);
   if (proceduralGeometry.get(mesh.positions) === key) return false;
   const data = createGeometry(spec);
@@ -80,11 +179,15 @@ export function rebuildMesh3DNodeCompanionGeometry(
   companionGeometry.set(source, { key });
   Object.assign(meshEntity.write(Mesh3D), data);
   meshEntity.write(Mesh3D).uvs = data.uvs ?? null;
+  meshEntity.write(Mesh3D).uvs1 = data.uvs1 ?? null;
+  meshEntity.write(Mesh3D).tangents = data.tangents ?? null;
+  meshEntity.write(Mesh3D).colors = data.colors ?? null;
   return true;
 }
 
 export function clearMesh3DNodeCompanionGeometryKey(source: Entity): void {
   companionGeometry.delete(source);
+  clearMesh3DNodeParts(source);
 }
 
 export function seedMesh3DNodeCompanionGeometryKey(
@@ -167,6 +270,7 @@ export function resolveMesh3DNodeCompanionTransform(
 export function syncMesh3DNodeCompanionFromSource(
   source: Entity,
   meshEntity: Entity,
+  importedMaterial?: ImportedMaterial,
 ): boolean {
   if (!source.has(Mesh3DNode)) {
     return false;
@@ -183,7 +287,7 @@ export function syncMesh3DNodeCompanionFromSource(
     scale: resolveMesh3DNodeScale(node.scale3d),
   });
 
-  syncMesh3DNodeCompanionMaterial(source, meshEntity);
+  syncMesh3DNodeCompanionMaterial(source, meshEntity, importedMaterial);
   return true;
 }
 
@@ -191,27 +295,114 @@ export function syncMesh3DNodeCompanionFromSource(
 export function syncMesh3DNodeCompanionMaterial(
   source: Entity,
   meshEntity: Entity,
+  importedMaterial?: ImportedMaterial,
 ): void {
   const node = source.read(Mesh3DNode);
   const loaded = companionGeometry.get(source);
   const spec = normalizeGeometry(node.geometry);
   const imported =
-    isGltfGeometrySpec(spec) && loaded?.key === geometrySpecKey(spec)
+    importedMaterial ??
+    (isGltfGeometrySpec(spec) && loaded?.key === geometrySpecKey(spec)
       ? loaded.material
-      : undefined;
-  const hasCustomColor = node.baseColor.some((value) => value !== 1);
-  const baseColor = [...(hasCustomColor
+      : undefined);
+  const hasCustomColor =
+    node.baseColorOverridden || node.baseColor.some((value) => value !== 1);
+  const baseColor: [number, number, number, number] = [...(hasCustomColor
     ? node.baseColor
-    : imported?.baseColor ?? node.baseColor)] as [number, number, number, number];
+    : imported?.baseColor ?? node.baseColor)];
   syncMaterial3D(meshEntity, {
     baseColor,
     ambient: node.ambient,
     diffuse: node.diffuse,
     specular: node.specular,
     shininess: node.shininess,
-    metallic: node.metallic,
-    roughness: node.roughness,
-    map: node.map ?? imported?.map ?? null,
+    metallic:
+      node.metallicOverridden || node.metallic !== 0
+        ? node.metallic
+        : imported?.metallic ?? node.metallic,
+    roughness:
+      node.roughnessOverridden || node.roughness !== 1
+        ? node.roughness
+        : imported?.roughness ?? node.roughness,
+    metallicRoughnessMap: node.metallicRoughnessMapOverridden
+      ? node.metallicRoughnessMap
+      : node.metallicRoughnessMap ?? imported?.metallicRoughnessMap ?? null,
+    metallicRoughnessTexCoord:
+      node.metallicRoughnessTexCoord ??
+      (node.metallicRoughnessMapOverridden || node.metallicRoughnessMap
+        ? 0
+        : imported?.metallicRoughnessTexCoord ?? 0),
+    metallicRoughnessTextureTransform:
+      node.metallicRoughnessTextureTransformOverridden
+        ? node.metallicRoughnessTextureTransform
+        : node.metallicRoughnessMapOverridden || node.metallicRoughnessMap
+        ? null
+        : imported?.metallicRoughnessTextureTransform ?? null,
+    map: node.mapOverridden ? node.map : node.map ?? imported?.map ?? null,
+    mapTexCoord:
+      node.mapTexCoord ??
+      (node.mapOverridden || node.map ? 0 : imported?.mapTexCoord ?? 0),
+    mapTextureTransform: node.mapTextureTransformOverridden
+      ? node.mapTextureTransform
+      : node.mapOverridden || node.map
+      ? null
+      : imported?.mapTextureTransform ?? null,
+    emissiveFactor:
+      node.emissiveFactorOverridden ||
+      node.emissiveFactor.some((value) => value !== 0)
+        ? node.emissiveFactor
+        : imported?.emissiveFactor ?? node.emissiveFactor,
+    emissiveStrength:
+      node.emissiveStrengthOverridden || node.emissiveStrength !== 1
+        ? node.emissiveStrength
+        : imported?.emissiveStrength ?? node.emissiveStrength,
+    unlit:
+      node.unlitOverridden || node.unlit
+        ? node.unlit
+        : imported?.unlit ?? false,
+    emissiveMap: node.emissiveMapOverridden
+      ? node.emissiveMap
+      : node.emissiveMap ?? imported?.emissiveMap ?? null,
+    emissiveTexCoord:
+      node.emissiveTexCoord ??
+      (node.emissiveMapOverridden || node.emissiveMap
+        ? 0
+        : imported?.emissiveTexCoord ?? 0),
+    emissiveTextureTransform: node.emissiveTextureTransformOverridden
+      ? node.emissiveTextureTransform
+      : node.emissiveMapOverridden || node.emissiveMap
+      ? null
+      : imported?.emissiveTextureTransform ?? null,
+    doubleSided: node.doubleSided ?? imported?.doubleSided ?? false,
+    normalMap: node.normalMapOverridden
+      ? node.normalMap
+      : node.normalMap ?? imported?.normalMap ?? null,
+    normalTexCoord:
+      node.normalTexCoord ??
+      (node.normalMapOverridden || node.normalMap
+        ? 0
+        : imported?.normalTexCoord ?? 0),
+    normalTextureTransform: node.normalTextureTransformOverridden
+      ? node.normalTextureTransform
+      : node.normalMapOverridden || node.normalMap
+      ? null
+      : imported?.normalTextureTransform ?? null,
+    normalScale: node.normalScale ?? imported?.normalScale ?? 1,
+    occlusionMap: node.occlusionMapOverridden
+      ? node.occlusionMap
+      : node.occlusionMap ?? imported?.occlusionMap ?? null,
+    occlusionTexCoord:
+      node.occlusionTexCoord ??
+      (node.occlusionMapOverridden || node.occlusionMap
+        ? 0
+        : imported?.occlusionTexCoord ?? 0),
+    occlusionTextureTransform: node.occlusionTextureTransformOverridden
+      ? node.occlusionTextureTransform
+      : node.occlusionMapOverridden || node.occlusionMap
+      ? null
+      : imported?.occlusionTextureTransform ?? null,
+    occlusionStrength:
+      node.occlusionStrength ?? imported?.occlusionStrength ?? 1,
     alphaMode: node.alphaMode ?? imported?.alphaMode ?? inferMaterial3DAlphaMode(baseColor),
     alphaCutoff: node.alphaCutoff ?? imported?.alphaCutoff ?? 0.5,
     specularMap: node.specularMap ?? null,

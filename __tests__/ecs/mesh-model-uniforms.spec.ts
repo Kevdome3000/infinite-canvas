@@ -6,14 +6,21 @@ import {
   MESH_MODEL_UNIFORM_FLOATS,
   MeshModelUniforms,
 } from '../../packages/ecs/src/systems/mesh3d/mesh-model-uniforms';
+import { ENVIRONMENT_IRRADIANCE_FLOATS } from '../../packages/ecs/src/utils/environment-irradiance';
 
 const ready = {
   mapReady: false,
+  metallicRoughnessMapReady: false,
+  emissiveMapReady: false,
+  normalMapReady: false,
+  occlusionMapReady: false,
   specularMapReady: false,
   bumpMapReady: false,
   environmentMapReady: false,
   environmentIrradiance: null,
 };
+const shadowOffset = 60 + ENVIRONMENT_IRRADIANCE_FLOATS;
+const textureCoordOffset = shadowOffset + 4;
 function setup() {
   const bytes = new Uint8Array(MESH_MODEL_UNIFORM_FLOATS * 4);
   const setSubData = jest.fn((offset: number, data: Uint8Array) =>
@@ -89,6 +96,10 @@ it('updates all material inputs and late texture readiness without rebuilding ma
   });
   const textures = {
     mapReady: true,
+    metallicRoughnessMapReady: true,
+    emissiveMapReady: true,
+    normalMapReady: false,
+    occlusionMapReady: false,
     specularMapReady: true,
     bumpMapReady: true,
     environmentMapReady: true,
@@ -104,6 +115,7 @@ it('updates all material inputs and late texture readiness without rebuilding ma
     [1, 1, 1, 2, 0.3, 0.8, 0, 1].map(Math.fround),
   );
   expect(data[60]).toBeCloseTo(0.7);
+  expect(data[shadowOffset + 3]).toBe(1);
   expect(legacy.u_MaterialFlags).toEqual(data.slice(48, 52));
   uniforms.update(transform, material, textures);
   expect(setSubData).toHaveBeenCalledTimes(2);
@@ -111,6 +123,7 @@ it('updates all material inputs and late texture readiness without rebuilding ma
   expect([...data.slice(48, 51)]).toEqual([0, 0, 0]);
   expect(data[55]).toBe(0);
   expect(data[60]).toBe(0);
+  expect(data[shadowOffset + 3]).toBe(0);
   expect(setSubData).toHaveBeenCalledTimes(3);
   expect(invert).toHaveBeenCalledTimes(1);
 });
@@ -136,7 +149,7 @@ it('uploads an optional side-wall color without rebuilding geometry or pose', ()
 
 it('updates the receiver flag when shadow reception changes', () => {
   const { uniforms, transform, material, data, setSubData } = setup();
-  const receiveOffset = MESH_MODEL_UNIFORM_FLOATS - 4;
+  const receiveOffset = shadowOffset;
   uniforms.update(transform, material, ready);
   expect(data[receiveOffset]).toBe(1);
   material.receiveShadow = false;
@@ -151,13 +164,15 @@ it('updates the receiver flag when shadow reception changes', () => {
 
 it('keeps alpha mode, cutoff and map readiness current before the shadow pass', () => {
   const { uniforms, transform, material, data } = setup();
-  const offset = MESH_MODEL_UNIFORM_FLOATS - 4;
+  const offset = shadowOffset;
   material.alphaMode = 'mask';
+  material.mapTexCoord = 1;
   material.alphaCutoff = 0.35;
   material.baseColor = [1, 1, 1, 0.8];
   uniforms.updateShadowMaterial(transform, material, true);
   expect(data[35]).toBeCloseTo(0.8);
   expect(data[48]).toBe(1);
+  expect(data[textureCoordOffset]).toBe(1);
   expect([...data.slice(offset + 1, offset + 3)]).toEqual([
     1,
     Math.fround(0.35),
@@ -172,6 +187,101 @@ it('keeps alpha mode, cutoff and map readiness current before the shadow pass', 
   material.alphaCutoff = Number.NaN;
   uniforms.updateShadowMaterial(transform, material, false);
   expect(data[offset + 2]).toBe(0.5);
+});
+
+it('tracks independent base-color and PBR UV selectors', () => {
+  const { uniforms, transform, material, data } = setup();
+  material.mapTexCoord = 1;
+  material.metallicRoughnessTexCoord = 0;
+  const legacy = uniforms.update(transform, material, ready);
+  expect([...data.slice(textureCoordOffset, textureCoordOffset + 4)]).toEqual([
+    1, 0, 0, 0,
+  ]);
+  expect(legacy.u_TextureCoords).toEqual(
+    data.slice(textureCoordOffset, textureCoordOffset + 4),
+  );
+  material.metallicRoughnessTexCoord = 1;
+  uniforms.update(transform, material, ready);
+  expect(data[textureCoordOffset + 1]).toBe(1);
+});
+
+it('uploads distinct texture transforms and refreshes mask UVs before the shadow pass', () => {
+  const { uniforms, transform, material, data } = setup();
+  material.mapTextureTransform = {
+    offset: [0.25, 0.5],
+    scale: [2, 3],
+    rotation: Math.PI / 2,
+  };
+  material.metallicRoughnessTextureTransform = {
+    offset: [0.75, 0],
+    scale: [0.5, 1],
+    rotation: -0.5,
+  };
+  const legacy = uniforms.update(transform, material, ready);
+  expect(legacy.u_MapUvTransform).toEqual(Float32Array.of(0.25, 0.5, 2, 3));
+  expect(legacy.u_PbrUvTransform).toEqual(Float32Array.of(0.75, 0, 0.5, 1));
+  expect(legacy.u_UvRotations).toEqual(
+    Float32Array.of(Math.fround(Math.PI / 2), -0.5, 0, 0),
+  );
+  material.mapTextureTransform = { offset: [0.5, 0.25] };
+  uniforms.updateShadowMaterial(transform, material, true);
+  expect([
+    ...data.slice(textureCoordOffset + 4, textureCoordOffset + 8),
+  ]).toEqual([0.5, 0.25, 1, 1]);
+  expect(data[textureCoordOffset + 12]).toBe(0);
+});
+
+it('uploads emissive color, texture readiness and its independent UV transform', () => {
+  const { uniforms, transform, material, data, setSubData } = setup();
+  material.emissiveFactor = [0.2, 0.4, 0.6];
+  material.emissiveStrength = 3;
+  material.unlit = true;
+  material.emissiveTexCoord = 1;
+  material.emissiveTextureTransform = {
+    offset: [0.25, 0.5],
+    scale: [2, 0.5],
+    rotation: 0.3,
+  };
+  const legacy = uniforms.update(transform, material, {
+    ...ready,
+    emissiveMapReady: true,
+  });
+  expect(legacy.u_EmissiveFactor).toEqual(Float32Array.of(0.2, 0.4, 0.6, 1));
+  expect(legacy.u_EmissiveUvTransform).toEqual(
+    Float32Array.of(0.25, 0.5, 2, 0.5),
+  );
+  expect(legacy.u_EmissiveParams).toEqual(Float32Array.of(1, 0.3, 3, 1));
+  uniforms.update(transform, material, { ...ready, emissiveMapReady: true });
+  expect(setSubData).toHaveBeenCalledTimes(1);
+  uniforms.update(transform, material, ready);
+  expect(data[83 + ENVIRONMENT_IRRADIANCE_FLOATS]).toBe(0);
+});
+
+it('uploads double-sided, normal and occlusion settings without rebuilding geometry', () => {
+  const { uniforms, transform, material, setSubData } = setup();
+  material.doubleSided = true;
+  material.normalTexCoord = 1;
+  material.normalScale = 0.5;
+  material.normalTextureTransform = { offset: [0.25, 0.5], rotation: 0.3 };
+  material.occlusionTexCoord = 0;
+  material.occlusionStrength = 0.7;
+  material.occlusionTextureTransform = { scale: [2, 0.5], rotation: -0.2 };
+  const legacy = uniforms.update(transform, material, {
+    ...ready,
+    normalMapReady: true,
+    occlusionMapReady: true,
+  });
+  expect(legacy.u_TextureCoords).toEqual(Float32Array.of(0, 0, 1, 0));
+  expect(legacy.u_NormalUvTransform).toEqual(Float32Array.of(0.25, 0.5, 1, 1));
+  expect(legacy.u_OcclusionUvTransform).toEqual(Float32Array.of(0, 0, 2, 0.5));
+  expect(legacy.u_NormalParams).toEqual(Float32Array.of(1, 1, 0.3, 0.5));
+  expect(legacy.u_OcclusionParams).toEqual(Float32Array.of(1, 0, -0.2, 0.7));
+  uniforms.update(transform, material, {
+    ...ready,
+    normalMapReady: true,
+    occlusionMapReady: true,
+  });
+  expect(setSubData).toHaveBeenCalledTimes(1);
 });
 
 it('retries failed uploads without rebuilding unchanged matrices', () => {

@@ -443,6 +443,17 @@ export type Camera3DNodeConfig = {
   linked?: boolean;
   projection?: 'perspective' | 'orthographic';
   clearColor?: boolean;
+  /** Free orthographic camera preset; uses a Z-up world. */
+  preset?: 'isometric' | 'dimetric-2-1';
+  /** Look-at target in 3D world coordinates. */
+  center?: [number, number, number];
+  /** Optional manual pose; overrides the preset eye. */
+  eye?: [number, number, number];
+  up?: [number, number, number];
+  /** Eye distance from the target; does not affect orthographic zoom. */
+  distance?: number;
+  /** Visible world height. Zero or absent retains legacy distance-based sizing. */
+  orthographicHeight?: number;
 };
 
 export type Material3DWire = {
@@ -455,8 +466,58 @@ export type Material3DWire = {
   metallic?: number;
   /** Perceptual roughness 0..1 (PBR metallic-roughness workflow). */
   roughness?: number;
+  /** glTF metallic-roughness texture (green = roughness, blue = metallic). */
+  metallicRoughnessMap?: string | null;
+  /** UV set used by the metallic-roughness texture. */
+  metallicRoughnessTexCoord?: 0 | 1;
+  /** glTF KHR_texture_transform for the metallic-roughness texture. */
+  metallicRoughnessTextureTransform?: {
+    offset?: [number, number];
+    scale?: [number, number];
+    rotation?: number;
+  } | null;
   /** Base-color texture (image URL or data URL). */
-  map?: string;
+  map?: string | null;
+  /** UV set used by the base-color texture. */
+  mapTexCoord?: 0 | 1;
+  /** glTF KHR_texture_transform for the base-color texture. */
+  mapTextureTransform?: {
+    offset?: [number, number];
+    scale?: [number, number];
+    rotation?: number;
+  } | null;
+  /** Linear RGB emitted by the surface, default [0, 0, 0]. */
+  emissiveFactor?: [number, number, number];
+  /** KHR_materials_emissive_strength multiplier; default 1. */
+  emissiveStrength?: number;
+  /** Ignore scene lights and display base color directly. */
+  unlit?: boolean;
+  /** sRGB emissive texture multiplied by emissiveFactor. */
+  emissiveMap?: string | null;
+  emissiveTexCoord?: 0 | 1;
+  emissiveTextureTransform?: {
+    offset?: [number, number];
+    scale?: [number, number];
+    rotation?: number;
+  } | null;
+  /** Render front and back faces (glTF doubleSided). */
+  doubleSided?: boolean;
+  normalMap?: string | null;
+  normalTexCoord?: 0 | 1;
+  normalTextureTransform?: {
+    offset?: [number, number];
+    scale?: [number, number];
+    rotation?: number;
+  } | null;
+  normalScale?: number;
+  occlusionMap?: string | null;
+  occlusionTexCoord?: 0 | 1;
+  occlusionTextureTransform?: {
+    offset?: [number, number];
+    scale?: [number, number];
+    rotation?: number;
+  } | null;
+  occlusionStrength?: number;
   /** Opaque (default), alpha-tested cutout, or sorted alpha blending. */
   alphaMode?: 'opaque' | 'mask' | 'blend';
   /** Alpha-test threshold in mask mode; defaults to 0.5. */

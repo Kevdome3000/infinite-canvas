@@ -22,7 +22,24 @@ const pointShadowAxes = (axis: 'right' | 'up') =>
         .join(', ')});`,
   ).join('\n  ');
 
+// GLSL ES 1.00 fragment shaders require constant uniform-array indices.
+// Keep native indexing on WebGL2/WebGPU and emit bounded lookups on WebGL1.
+const uniformLookup = (name: string, type: 'vec4' | 'mat4', count: number) => `
+${type} read${name.slice(2)}(int index) {
+#if __VERSION__ >= 300
+  return ${name}[index];
+#else
+  ${Array.from(
+    { length: count - 1 },
+    (_, i) => `if (index == ${i}) return ${name}[${i}];`,
+  ).join('\n  ')}
+  return ${name}[${count - 1}];
+#endif
+}
+`;
+
 export const vert = /* glsl */ `
+precision highp float;
 #define MAX_3D_LIGHTS 8
 
 layout(std140) uniform SceneUniforms3D {
@@ -57,24 +74,47 @@ layout(std140) uniform ModelUniforms3D {
   vec4 u_PbrParams;
   vec4 u_SideColor;
   vec4 u_EnvironmentIrradiance[9];
-  vec4 u_ShadowReceive; // x: receives shadows, y: alpha mode, z: cutoff
+  vec4 u_ShadowReceive; // x: shadows, y: alpha mode, z: cutoff, w: PBR map ready
+  vec4 u_TextureCoords; // x: base-color UV set, y: PBR UV set
+  vec4 u_MapUvTransform; // xy: offset, zw: scale
+  vec4 u_PbrUvTransform;
+  vec4 u_UvRotations; // x: base-color, y: PBR
+  vec4 u_EmissiveFactor; // rgb: linear emission, w: emissive map ready
+  vec4 u_EmissiveUvTransform;
+  vec4 u_EmissiveParams; // x: UV set, y: rotation, z: strength, w: unlit
+  vec4 u_NormalUvTransform;
+  vec4 u_OcclusionUvTransform;
+  vec4 u_NormalParams; // x: ready, y: UV set, z: rotation, w: scale
+  vec4 u_OcclusionParams; // x: ready, y: UV set, z: rotation, w: strength
 };
 
 layout(location = 0) in vec3 a_Position3D;
 layout(location = 1) in vec3 a_Normal3D;
 layout(location = 2) in vec2 a_Uv3D;
+layout(location = 3) in vec2 a_Uv1_3D;
+layout(location = 4) in vec4 a_Tangent3D;
+layout(location = 5) in vec4 a_Color3D;
 
 out vec3 v_Normal;
 out vec3 v_FragPos;
 out vec2 v_Uv;
+out vec2 v_Uv1;
 out float v_LocalNormalZ;
+out vec4 v_Tangent;
+out vec4 v_Color;
 
 void main() {
   vec4 worldPos = u_ModelMatrix3D * vec4(a_Position3D, 1.0);
   v_FragPos = worldPos.xyz;
   v_Normal = (u_NormalMatrix3D * vec4(a_Normal3D, 0.0)).xyz;
   v_Uv = a_Uv3D;
+  v_Uv1 = a_Uv1_3D;
   v_LocalNormalZ = a_Normal3D.z;
+  v_Color = a_Color3D;
+  v_Tangent = vec4(
+    (u_ModelMatrix3D * vec4(a_Tangent3D.xyz, 0.0)).xyz,
+    a_Tangent3D.w * sign(dot(cross(u_ModelMatrix3D[0].xyz, u_ModelMatrix3D[1].xyz), u_ModelMatrix3D[2].xyz))
+  );
 
   if (u_SceneParams.z > 0.5) {
     // 2D VP: pan / zoom / Y-flip; perspective scales offsets from placement anchor.
@@ -102,6 +142,9 @@ void main() {
 `;
 
 export const frag = /* glsl */ `
+// World-space lighting squares camera-to-fragment distances. Fragment mediump
+// overflows on mobile/WebKit GPUs and can zero the normalized view direction.
+precision highp float;
 #define MAX_3D_LIGHTS 8
 #define LIGHT_TYPE_DIRECTIONAL 1
 #define LIGHT_TYPE_POINT 2
@@ -139,23 +182,50 @@ layout(std140) uniform ModelUniforms3D {
   vec4 u_PbrParams;
   vec4 u_SideColor;
   vec4 u_EnvironmentIrradiance[9];
-  vec4 u_ShadowReceive; // x: receives shadows, y: alpha mode, z: cutoff
+  vec4 u_ShadowReceive; // x: shadows, y: alpha mode, z: cutoff, w: PBR map ready
+  vec4 u_TextureCoords; // x: base-color UV set, y: PBR UV set
+  vec4 u_MapUvTransform;
+  vec4 u_PbrUvTransform;
+  vec4 u_UvRotations;
+  vec4 u_EmissiveFactor;
+  vec4 u_EmissiveUvTransform;
+  vec4 u_EmissiveParams;
+  vec4 u_NormalUvTransform;
+  vec4 u_OcclusionUvTransform;
+  vec4 u_NormalParams;
+  vec4 u_OcclusionParams;
 };
 
 uniform sampler2D u_Map;
+uniform sampler2D u_MetallicRoughnessMap;
 uniform sampler2D u_SpecularMap;
 uniform sampler2D u_BumpMap;
 uniform sampler2D u_EnvironmentMap;
 uniform sampler2D u_ShadowMap0;
 uniform sampler2D u_ShadowMap1;
 uniform sampler2D u_EnvironmentBrdf;
+uniform sampler2D u_EmissiveMap;
+uniform sampler2D u_NormalMap;
+uniform sampler2D u_OcclusionMap;
 
 in vec3 v_Normal;
 in vec3 v_FragPos;
 in vec2 v_Uv;
+in vec2 v_Uv1;
 in float v_LocalNormalZ;
+in vec4 v_Tangent;
+in vec4 v_Color;
 
 out vec4 outputColor;
+
+${uniformLookup('u_LightPositions', 'vec4', 8)}
+${uniformLookup('u_LightDirections', 'vec4', 8)}
+${uniformLookup('u_LightColors', 'vec4', 8)}
+${uniformLookup('u_LightParams3D', 'vec4', 8)}
+${uniformLookup('u_ShadowParams', 'vec4', 2)}
+${uniformLookup('u_ShadowOptions', 'vec4', 2)}
+${uniformLookup('u_ShadowViewProjection', 'mat4', 2)}
+${uniformLookup('u_ShadowFaces', 'mat4', 12)}
 
 #define PI 3.141592653589793
 
@@ -314,21 +384,22 @@ float sampleShadowDepth(int slot, vec2 uv) {
 
 float shadowVisibility(vec3 position, vec3 normal, vec3 lightDir,
   bool spot, int slot, int lightIndex) {
-  vec4 shadowParams = u_ShadowParams[slot];
-  vec4 shadowOptions = u_ShadowOptions[slot];
+  vec4 shadowParams = readShadowParams(slot);
+  vec4 shadowOptions = readShadowOptions(slot);
+  vec3 lightPosition = readLightPositions(lightIndex).xyz;
   vec3 receiver = position + normal * shadowOptions.w;
   bool point = shadowParams.z > 0.5;
   int face = 0;
   vec3 ray = vec3(0.0);
   float faceDistance = 0.0;
   if (point) {
-    ray = receiver - u_LightPositions[lightIndex].xyz;
+    ray = receiver - lightPosition;
     faceDistance = max(max(abs(ray.x), abs(ray.y)), abs(ray.z));
     if (faceDistance < 1e-6) return 1.0;
     face = pointShadowFace(ray);
   }
-  vec4 clip = (point ? u_ShadowFaces[slot * 6 + face] :
-    u_ShadowViewProjection[slot]) * vec4(receiver, 1.0);
+  vec4 clip = (point ? readShadowFaces(slot * 6 + face) :
+    readShadowViewProjection(slot)) * vec4(receiver, 1.0);
   vec3 projected = clip.xyz / clip.w;
   vec2 localUv = projected.xy * 0.5 + 0.5;
   float depth = projected.z * 0.5 + 0.5;
@@ -367,8 +438,8 @@ float shadowVisibility(vec3 position, vec3 normal, vec3 lightDir,
         // a cube seam into the adjacent atlas tile instead of repeating an edge.
         vec3 sampleReceiver = receiver + 2.0 * faceDistance *
           (offset.x * pointShadowRight(face) + offset.y * pointShadowUp(face));
-        sampleFace = pointShadowFace(sampleReceiver - u_LightPositions[lightIndex].xyz);
-        vec4 sampleClip = u_ShadowFaces[slot * 6 + sampleFace] *
+        sampleFace = pointShadowFace(sampleReceiver - lightPosition);
+        vec4 sampleClip = readShadowFaces(slot * 6 + sampleFace) *
           vec4(sampleReceiver, 1.0);
         vec3 sampleProjected = sampleClip.xyz / sampleClip.w;
         sampleLocal = sampleProjected.xy * 0.5 + 0.5;
@@ -405,30 +476,32 @@ vec3 shadeLight(
   float roughness,
   float specularScale
 ) {
-  vec4 params = u_LightParams3D[index];
+  vec4 params = readLightParams3D(index);
   int lightType = int(params.x);
   float intensity = params.y;
   if (intensity <= 0.0) return vec3(0.0);
   float range = params.z;
   float cosInner = params.w;
-  float cosOuter = u_LightDirections[index].w;
-  vec3 lightColor = u_LightColors[index].rgb * intensity;
+  vec4 direction = readLightDirections(index);
+  vec4 position = readLightPositions(index);
+  float cosOuter = direction.w;
+  vec3 lightColor = readLightColors(index).rgb * intensity;
   vec3 lightDir = vec3(0.0, 0.0, 1.0);
   float attenuation = 1.0;
 
   if (lightType == LIGHT_TYPE_DIRECTIONAL) {
-    lightDir = normalize(-u_LightDirections[index].xyz);
+    lightDir = normalize(-direction.xyz);
   } else {
-    vec3 toLight = u_LightPositions[index].xyz - v_FragPos;
+    vec3 toLight = position.xyz - v_FragPos;
     float distanceToLight = length(toLight);
     if (distanceToLight > 1e-6) {
       lightDir = toLight / distanceToLight;
     }
     attenuation *= distanceAttenuation(distanceToLight, range,
-      u_LightPositions[index].w);
+      position.w);
 
     if (lightType == LIGHT_TYPE_SPOT) {
-      vec3 spotDirection = normalize(u_LightDirections[index].xyz);
+      vec3 spotDirection = normalize(direction.xyz);
       float spotCos = dot(-lightDir, spotDirection);
       float cone = smoothstep(cosOuter, cosInner, spotCos);
       attenuation *= cone;
@@ -496,10 +569,90 @@ vec3 perturbNormalFromBumpMap(vec3 normal, vec2 uv, float bumpScale) {
   );
 }
 
-void main() {
+vec3 perturbNormalFromNormalMap(vec3 normal, vec2 uv, float scale) {
+  if (abs(scale) < 1e-6) return normal;
+  vec3 sampled = texture(SAMPLER_2D(u_NormalMap), uv).xyz * 2.0 - 1.0;
+  sampled.xy *= scale;
+  // Authored tangent validity varies per fragment. Compute the fallback
+  // derivatives before either authored-frame return, including on WebGPU.
+  vec3 dp1 = dFdx(v_FragPos);
+  vec3 dp2 = dFdy(v_FragPos);
+  vec2 duv1 = dFdx(uv);
+  vec2 duv2 = dFdy(uv);
+  // glTF TANGENT is authored for TEXCOORD_0. A second UV set or a scale/rotation
+  // changes that basis, so derive it from the transformed UVs in those cases.
+  bool authored = abs(v_Tangent.w) > 0.5 && u_NormalParams.y < 0.5 &&
+    abs(u_NormalUvTransform.z - 1.0) < 1e-6 &&
+    abs(u_NormalUvTransform.w - 1.0) < 1e-6 &&
+    abs(u_NormalParams.z) < 1e-6;
+  if (authored) {
+    // Match the derivative fallback's whole-frame reversal on double-sided backs.
+    float face = u_TextureCoords.z > 0.5 && !gl_FrontFacing ? -1.0 : 1.0;
+    vec3 authoredTangent = v_Tangent.xyz * face;
+    vec3 tangent = authoredTangent - normal * dot(normal, authoredTangent);
+    float tangentLength = dot(tangent, tangent);
+    if (tangentLength > 1e-12) {
+      tangent *= inversesqrt(tangentLength);
+      vec3 bitangent = cross(normal, tangent) * sign(v_Tangent.w * face);
+      return normalize(tangent * sampled.x + bitangent * sampled.y +
+        normal * sampled.z);
+    }
+  }
+  vec3 dp2perp = cross(dp2, normal);
+  vec3 dp1perp = cross(normal, dp1);
+  vec3 tangent = dp1perp * duv2.x + dp2perp * duv1.x;
+  vec3 bitangent = dp1perp * duv2.y + dp2perp * duv1.y;
+  float maxLen = max(dot(tangent, tangent), dot(bitangent, bitangent));
+  if (!(maxLen > 1e-12)) return normal;
+  float invmax = inversesqrt(maxLen);
+  return normalize(tangent * invmax * sampled.x +
+    bitangent * invmax * sampled.y + normal * sampled.z);
+}
+
+vec2 transformUv(vec2 uv, vec4 transform, float rotation) {
+  vec2 scaled = uv * transform.zw;
+  float c = cos(rotation);
+  float s = sin(rotation);
+  return transform.xy + vec2(c * scaled.x - s * scaled.y,
+                             s * scaled.x + c * scaled.y);
+}
+
+vec4 shadeMaterial(out bool alphaDiscard) {
+  vec4 baseColor = u_BaseColor;
+  if (u_PbrParams.z > 0.5 && abs(v_LocalNormalZ) < 1.0) {
+    baseColor = u_SideColor;
+  }
+  // glTF COLOR_0 is linear; the authored ECS base color is sRGB.
+  vec3 albedo = srgbToLinear(baseColor.rgb) * v_Color.rgb;
+  baseColor.a *= v_Color.a;
+  if (u_MaterialFlags.x > 0.5) {
+    vec2 mapUv = transformUv(u_TextureCoords.x > 0.5 ? v_Uv1 : v_Uv,
+                             u_MapUvTransform, u_UvRotations.x);
+    vec4 texel = texture(SAMPLER_2D(u_Map), mapUv);
+    albedo *= srgbToLinear(texel.rgb);
+    baseColor.a *= texel.a;
+  }
+  alphaDiscard = u_ShadowReceive.y > 0.5 && u_ShadowReceive.y < 1.5 &&
+      baseColor.a < u_ShadowReceive.z;
+  if (u_ShadowReceive.y < 1.5) baseColor.a = 1.0;
+
+  // glTF unlit keeps the linear base-color texture product and alpha, then
+  // encodes it directly for display without scene lighting or tone mapping.
+  if (u_EmissiveParams.w > 0.5) {
+    return vec4(linearToSrgb(albedo), baseColor.a);
+  }
+
   vec3 shadowNormal = normalize(v_Normal);
+  if (u_TextureCoords.z > 0.5 && !gl_FrontFacing) shadowNormal = -shadowNormal;
   vec3 normal = shadowNormal;
-  if (u_MaterialFlags.z > 0.5) {
+  if (u_NormalParams.x > 0.5) {
+    vec2 normalUv = transformUv(
+      u_NormalParams.y > 0.5 ? v_Uv1 : v_Uv,
+      u_NormalUvTransform,
+      u_NormalParams.z
+    );
+    normal = perturbNormalFromNormalMap(normal, normalUv, u_NormalParams.w);
+  } else if (u_MaterialFlags.z > 0.5) {
     normal = perturbNormalFromBumpMap(normal, v_Uv, u_MaterialFlags.w);
   }
   vec3 cameraVector = vec3(u_SceneParams.x, u_SceneParams.y, u_SceneParams.w);
@@ -507,25 +660,19 @@ void main() {
     ? normalize(cameraVector)
     : normalize(cameraVector - v_FragPos);
 
-  vec4 baseColor = u_BaseColor;
-  if (u_PbrParams.z > 0.5 && abs(v_LocalNormalZ) < 1.0) {
-    baseColor = u_SideColor;
-  }
-  vec3 albedo = srgbToLinear(baseColor.rgb);
-  if (u_MaterialFlags.x > 0.5) {
-    vec4 texel = texture(SAMPLER_2D(u_Map), v_Uv);
-    albedo *= srgbToLinear(texel.rgb);
-    baseColor.a *= texel.a;
-  }
-  bool alphaDiscard = u_ShadowReceive.y > 0.5 && u_ShadowReceive.y < 1.5 &&
-      baseColor.a < u_ShadowReceive.z;
-  if (u_ShadowReceive.y < 1.5) baseColor.a = 1.0;
-
   float metallic = clamp(u_PbrParams.x, 0.0, 1.0);
+  float roughnessFactor = u_PbrParams.y;
+  if (u_ShadowReceive.w > 0.5) {
+    vec2 pbrUv = transformUv(u_TextureCoords.y > 0.5 ? v_Uv1 : v_Uv,
+                             u_PbrUvTransform, u_UvRotations.y);
+    vec4 pbrTexel = texture(SAMPLER_2D(u_MetallicRoughnessMap), pbrUv);
+    metallic *= pbrTexel.b;
+    roughnessFactor *= pbrTexel.g;
+  }
   // Clamp roughness to a small minimum (0.04): at roughness 0 the GGX lobe
   // collapses to a delta, producing fireflies / division instabilities in the
   // analytic specular term, so we keep a tiny floor as is common in PBR shaders.
-  float roughness = clamp(u_PbrParams.y, 0.04, 1.0);
+  float roughness = clamp(roughnessFactor, 0.04, 1.0);
 
   // Optional specular map modulates the microfacet specular response.
   float specularScale = 1.0;
@@ -574,11 +721,36 @@ void main() {
       vec2(nDotV, roughness)).rg;
     ambient += env * (F0 * brdf.x + brdf.y) * specularScale * u_LightParams.x;
   }
+  if (u_OcclusionParams.x > 0.5) {
+    vec2 occlusionUv = transformUv(
+      u_OcclusionParams.y > 0.5 ? v_Uv1 : v_Uv,
+      u_OcclusionUvTransform,
+      u_OcclusionParams.z
+    );
+    float occlusion = texture(SAMPLER_2D(u_OcclusionMap), occlusionUv).r;
+    ambient *= mix(1.0, occlusion, clamp(u_OcclusionParams.w, 0.0, 1.0));
+  }
 
-  // Keep implicit derivatives in specular/environment sampling in uniform
-  // control flow; discarded fragments still never write color or depth.
+  vec3 emission = u_EmissiveFactor.rgb;
+  if (u_EmissiveFactor.w > 0.5) {
+    vec2 emissiveUv = transformUv(
+      u_EmissiveParams.x > 0.5 ? v_Uv1 : v_Uv,
+      u_EmissiveUvTransform,
+      u_EmissiveParams.y
+    );
+    emission *= srgbToLinear(texture(SAMPLER_2D(u_EmissiveMap), emissiveUv).rgb);
+  }
+  vec3 result = ambient + Lo + emission * u_EmissiveParams.z;
+  return vec4(linearToSrgb(toneMapACES(result)), baseColor.a);
+}
+
+void main() {
+  // The WebGL1 bridge copies outputColor to gl_FragColor at main's end.
+  // Keep material early returns in the helper so that copy always runs.
+  bool alphaDiscard;
+  vec4 shaded = shadeMaterial(alphaDiscard);
+  // Both lit and unlit masks discard after all derivative-dependent work.
   if (alphaDiscard) discard;
-  vec3 result = ambient + Lo;
-  outputColor = vec4(linearToSrgb(toneMapACES(result)), baseColor.a);
+  outputColor = shaded;
 }
 `;

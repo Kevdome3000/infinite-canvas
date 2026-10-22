@@ -21,9 +21,13 @@ function setup() {
     Texture,
     Texture,
     Texture,
+    Texture,
     Sampler,
     Texture,
     Sampler,
+    Texture,
+    Texture,
+    Texture,
   ] = [
     {} as RenderPipeline,
     {} as Buffer,
@@ -34,9 +38,13 @@ function setup() {
     {} as Texture,
     {} as Texture,
     {} as Texture,
+    {} as Texture,
     {} as Sampler,
     {} as Texture,
     {} as Sampler,
+    {} as Texture,
+    {} as Texture,
+    {} as Texture,
   ];
   return { gpu, model, cache, args };
 }
@@ -46,6 +54,7 @@ it.each([
   'scene UBO',
   'sampler',
   'base color',
+  'metallic roughness',
   'specular',
   'bump',
   'environment',
@@ -54,6 +63,9 @@ it.each([
   'shadow sampler',
   'environment BRDF',
   'BRDF sampler',
+  'emissive',
+  'normal',
+  'occlusion',
 ])('reuses bindings until the %s resource changes', (kind) => {
   const { gpu, model, cache, args } = setup();
   const first = cache.get(...args);
@@ -64,6 +76,7 @@ it.each([
     'scene UBO',
     'sampler',
     'base color',
+    'metallic roughness',
     'specular',
     'bump',
     'environment',
@@ -72,6 +85,9 @@ it.each([
     'shadow sampler',
     'environment BRDF',
     'BRDF sampler',
+    'emissive',
+    'normal',
+    'occlusion',
   ].indexOf(kind);
   args[index] = {} as Texture & Sampler & Buffer & RenderPipeline;
   const second = cache.get(...args);
@@ -81,10 +97,13 @@ it.each([
     pipeline: args[0],
     uniformBufferBindings: [{ buffer: args[1] }, { buffer: model }],
     samplerBindings: [
-      ...args.slice(3, 7).map((texture) => ({ texture, sampler: args[2] })),
-      { texture: args[7], sampler: args[9] },
-      { texture: args[8], sampler: args[9] },
-      { texture: args[10], sampler: args[11] },
+      ...args.slice(3, 8).map((texture) => ({ texture, sampler: args[2] })),
+      { texture: args[8], sampler: args[10] },
+      { texture: args[9], sampler: args[10] },
+      { texture: args[11], sampler: args[12] },
+      { texture: args[13], sampler: args[2] },
+      { texture: args[14], sampler: args[2] },
+      { texture: args[15], sampler: args[2] },
     ],
   });
   expect(first.destroy).toHaveBeenCalledTimes(1);

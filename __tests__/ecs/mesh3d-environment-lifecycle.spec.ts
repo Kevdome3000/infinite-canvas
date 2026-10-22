@@ -45,6 +45,10 @@ const load = loadImageBitmapUniversal as jest.MockedFunction<
   typeof loadImageBitmapUniversal
 >;
 const cleanups: (() => void)[] = [];
+// Material sampler layout includes metallic-roughness after base color.
+// Keep these assertions on the environment/BRDF slots, not adjacent fallbacks.
+const ENVIRONMENT_SAMPLER = 4;
+const ENVIRONMENT_BRDF_SAMPLER = 7;
 
 beforeEach(() => {
   const adapter = DOMAdapter.get();
@@ -136,7 +140,7 @@ function fixture(count = 1) {
   const state = (index = 0) =>
     queries.states.get(slots[index].canvas.read(Canvas).api);
   const boundEnvironment = (index = 0) =>
-    slots[index].gpu.draws.at(-1)!.samplerBindings[3].texture;
+    slots[index].gpu.draws.at(-1)!.samplerBindings[ENVIRONMENT_SAMPLER].texture;
   return { slots, draw, state, boundEnvironment };
 }
 
@@ -161,7 +165,7 @@ it('allocates BRDF only for ready HDR, reuses it and releases all owner textures
   expect(boundEnvironment()).toBe(entry.texture);
   const brdf = state().brdfTexture;
   expect(brdf).toBeDefined();
-  expect(slot.gpu.draws.at(-1)!.samplerBindings[6].texture).toBe(brdf);
+  expect(slot.gpu.draws.at(-1)!.samplerBindings[ENVIRONMENT_BRDF_SAMPLER].texture).toBe(brdf);
   expect(slot.gpu.createTexture).toHaveBeenCalledWith(expect.objectContaining({
     width: ENV_ATLAS_WIDTH, height: ENV_ATLAS_HEIGHT,
   }));
@@ -313,7 +317,7 @@ it('never binds an old pending environment after replacement or clearing', async
   slot.material.environmentMap = null;
   draw();
   expect(boundEnvironment()).toBe(state().whiteTexture);
-  expect(slot.gpu.draws.at(-1)!.samplerBindings[6].texture).toBe(state().whiteTexture);
+  expect(slot.gpu.draws.at(-1)!.samplerBindings[ENVIRONMENT_BRDF_SAMPLER].texture).toBe(state().whiteTexture);
   slot.gpu.scope.dispose();
   for (const texture of slot.gpu.textures) expect(texture.destroy).toHaveBeenCalledTimes(1);
 });

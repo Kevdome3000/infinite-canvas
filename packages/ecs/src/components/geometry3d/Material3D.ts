@@ -12,6 +12,13 @@ export function inferMaterial3DAlphaMode(
     : 'opaque';
 }
 
+/** glTF KHR_texture_transform coordinates, applied after UV-set selection. */
+export type Material3DTextureTransform = {
+  offset?: [number, number];
+  scale?: [number, number];
+  rotation?: number;
+};
+
 /**
  * A 3D material component defining surface appearance.
  * @see https://docs.rs/bevy/latest/bevy/pbr/struct.StandardMaterial.html
@@ -67,11 +74,59 @@ export class Material3D {
    */
   @field.float32 declare roughness: number;
 
+  /** glTF metallic-roughness texture: green scales roughness, blue scales metallic. */
+  @field.object declare metallicRoughnessMap: string | null;
+
+  /** UV set for the metallic-roughness texture: 0 or 1. */
+  @field.float32 declare metallicRoughnessTexCoord: number;
+
+  @field.object
+  declare metallicRoughnessTextureTransform: Material3DTextureTransform | null;
+
   /**
    * Optional base-color texture (image URL or data URL). Sampled with the
    * mesh UV coordinates and multiplied by {@link baseColor}.
    */
   @field.object declare map: string | null;
+
+  /** UV set for the base-color texture: 0 or 1. */
+  @field.float32 declare mapTexCoord: number;
+
+  @field.object declare mapTextureTransform: Material3DTextureTransform | null;
+
+  /** Linear RGB emitted by the surface, independent of scene lights. */
+  @field.object declare emissiveFactor: [number, number, number];
+
+  /** KHR_materials_emissive_strength multiplier; 1 preserves core glTF emission. */
+  @field.float32 declare emissiveStrength: number;
+
+  /** Draw base color without scene lighting or tone mapping (KHR_materials_unlit). */
+  @field.boolean declare unlit: boolean;
+
+  /** Optional glTF emissive texture, sampled as sRGB and multiplied by emissiveFactor. */
+  @field.object declare emissiveMap: string | null;
+
+  @field.float32 declare emissiveTexCoord: number;
+
+  @field.object
+  declare emissiveTextureTransform: Material3DTextureTransform | null;
+
+  /** Render both faces; back-face lighting reverses the geometric normal. */
+  @field.boolean declare doubleSided: boolean;
+
+  /** glTF tangent-space normal texture (linear RGB). */
+  @field.object declare normalMap: string | null;
+  @field.float32 declare normalTexCoord: number;
+  @field.object
+  declare normalTextureTransform: Material3DTextureTransform | null;
+  @field.float32 declare normalScale: number;
+
+  /** glTF ambient-occlusion texture; red channel attenuates indirect light. */
+  @field.object declare occlusionMap: string | null;
+  @field.float32 declare occlusionTexCoord: number;
+  @field.object
+  declare occlusionTextureTransform: Material3DTextureTransform | null;
+  @field.float32 declare occlusionStrength: number;
 
   /** Opaque, alpha-tested cutout, or sorted alpha blending. */
   @field.object declare alphaMode: Material3DAlphaMode;
@@ -109,7 +164,27 @@ export class Material3D {
     this.shininess ??= 32;
     this.metallic ??= 0;
     this.roughness ??= 1;
+    this.metallicRoughnessMap ??= null;
+    this.metallicRoughnessTexCoord ??= 0;
+    this.metallicRoughnessTextureTransform ??= null;
     this.map ??= null;
+    this.mapTexCoord ??= 0;
+    this.mapTextureTransform ??= null;
+    this.emissiveFactor ??= [0, 0, 0];
+    this.emissiveStrength ??= 1;
+    this.unlit ??= false;
+    this.emissiveMap ??= null;
+    this.emissiveTexCoord ??= 0;
+    this.emissiveTextureTransform ??= null;
+    this.doubleSided ??= false;
+    this.normalMap ??= null;
+    this.normalTexCoord ??= 0;
+    this.normalTextureTransform ??= null;
+    this.normalScale ??= 1;
+    this.occlusionMap ??= null;
+    this.occlusionTexCoord ??= 0;
+    this.occlusionTextureTransform ??= null;
+    this.occlusionStrength ??= 1;
     this.alphaMode ??= inferMaterial3DAlphaMode(this.baseColor, this.sideColor);
     this.alphaCutoff ??= 0.5;
     this.specularMap ??= null;

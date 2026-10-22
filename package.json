@@ -84,7 +84,7 @@
     "rimraf": "^4.4.1",
     "ts-jest": "^29.4.6",
     "typescript": "^5.9.3",
-    "vite": "^6.4.3",
+    "vite": "^6.4.4",
     "vue-eslint-parser": "^9.4.3"
   },
   "optionalDependencies": {
@@ -105,8 +105,8 @@
       "tar": "^7.5.21",
       "canvas": "^3.2.1",
       "serialize-javascript": ">=7.0.5",
-      "markdown-it": "^14.3.1",
-      "hono": "^4.13.5",
+      "markdown-it": "^14.3.3",
+      "hono": "^4.13.11",
       "express-rate-limit": ">=8.2.2",
       "undici": "^6.28.0",
       "flatted": ">=3.4.0",
@@ -138,7 +138,7 @@
       "shell-quote@<1.11.0": "^1.11.0",
       "linkify-it@<5.0.2": "^5.0.2",
       "body-parser@>=2 <2.3.0": "^2.3.0",
-      "vite": "^6.4.3",
+      "vite": "^6.4.4",
       "@babel/core@<7.29.6": "^7.29.6",
       "ws@>=8 <8.21.0": "^8.21.0",
       "form-data@>=2 <3": "^2.5.6",

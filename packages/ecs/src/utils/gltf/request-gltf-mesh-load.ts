@@ -16,6 +16,7 @@ import {
 import {
   clearMesh3DNodeCompanionGeometryKey,
   seedMesh3DNodeCompanionGeometryKey,
+  stageMesh3DNodeParts,
   syncMesh3DNodeCompanionMaterial,
 } from '../mesh3d-node';
 import { loadGltfMeshFromSpec } from './load-gltf-mesh';
@@ -83,24 +84,52 @@ export function requestGltfMeshLoad(source: Entity): void {
         if (!companion || !isEntityAlive(companion) || !companion.has(Mesh3D)) {
           return;
         }
+        const primary = baked.parts.length > 1 ? baked.parts[0] : baked;
         const meshWrite = companion.write(Mesh3D);
         Object.assign(meshWrite, {
-          positions: baked.positions,
-          normals: baked.normals,
-          indices: baked.indices,
+          positions: primary.positions,
+          normals: primary.normals,
+          indices: primary.indices,
         });
-        meshWrite.uvs = baked.uvs ?? null;
+        meshWrite.uvs = primary.uvs ?? null;
+        meshWrite.uvs1 = primary.uvs1 ?? null;
+        meshWrite.tangents = primary.tangents ?? null;
+        meshWrite.colors = primary.colors ?? null;
 
         retryBySource.delete(source);
         seedMesh3DNodeCompanionGeometryKey(source, {
-          baseColor: baked.baseColor,
-          map: baked.map,
-          alphaMode: baked.alphaMode,
-          alphaCutoff: baked.alphaCutoff,
+          baseColor: primary.baseColor,
+          map: primary.map,
+          mapTexCoord: primary.mapTexCoord,
+          mapTextureTransform: primary.mapTextureTransform,
+          metallic: primary.metallic,
+          roughness: primary.roughness,
+          metallicRoughnessMap: primary.metallicRoughnessMap,
+          metallicRoughnessTexCoord: primary.metallicRoughnessTexCoord,
+          metallicRoughnessTextureTransform:
+            primary.metallicRoughnessTextureTransform,
+          emissiveFactor: primary.emissiveFactor,
+          emissiveStrength: primary.emissiveStrength,
+          unlit: primary.unlit,
+          emissiveMap: primary.emissiveMap,
+          emissiveTexCoord: primary.emissiveTexCoord,
+          emissiveTextureTransform: primary.emissiveTextureTransform,
+          doubleSided: primary.doubleSided,
+          normalMap: primary.normalMap,
+          normalTexCoord: primary.normalTexCoord,
+          normalTextureTransform: primary.normalTextureTransform,
+          normalScale: primary.normalScale,
+          occlusionMap: primary.occlusionMap,
+          occlusionTexCoord: primary.occlusionTexCoord,
+          occlusionTextureTransform: primary.occlusionTextureTransform,
+          occlusionStrength: primary.occlusionStrength,
+          alphaMode: primary.alphaMode,
+          alphaCutoff: primary.alphaCutoff,
         });
         if (companion.has(Material3D)) {
           syncMesh3DNodeCompanionMaterial(source, companion);
         }
+        stageMesh3DNodeParts(source, baked.parts.slice(1));
       });
     })
     .catch((err) => {

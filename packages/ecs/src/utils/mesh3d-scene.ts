@@ -14,6 +14,8 @@ import type { Mesh3DPickScene } from './ray-casting';
 /** Scene matrices uploaded to mesh3d / gizmo shaders (std140 52 floats). */
 export interface Camera3DSceneUniforms {
   mode: 'linkedPerspective' | 'linkedOrthographic' | 'standard';
+  /** Free orthographic views use GREATER depth and put the near plane at clip Z=1. */
+  reverseDepth?: boolean;
   projMatrix: Mat4;
   viewMatrix: Mat4;
   canvasViewProjection: Mat4;
@@ -77,7 +79,11 @@ export function buildCamera3DSceneUniforms(
   let viewMatrix: Mat4;
   if (camera.projection === 'orthographic') {
     const distance = Math.abs(camera.eye[2] - camera.center[2]);
-    const halfH = distance;
+    const halfH =
+      camera.orthographicHeight > 0 &&
+      Number.isFinite(camera.orthographicHeight)
+        ? camera.orthographicHeight / 2
+        : distance;
     const halfW = halfH * aspect;
     projMatrix = Mat4.ortho(
       -halfW,
@@ -87,21 +93,35 @@ export function buildCamera3DSceneUniforms(
       camera.near,
       camera.far,
     );
+    if (
+      camera.orthographicHeight > 0 &&
+      Number.isFinite(camera.orthographicHeight)
+    ) {
+      // The shared mesh pass uses GREATER depth testing over a 2D depth layer.
+      // Reverse Z into [0.75, 1] so nearby meshes cover the floor without
+      // clipping the camera's near half or changing the shared 2D depth pass.
+      projMatrix.m22 = -projMatrix.m22 / 4;
+      projMatrix.m32 = (3 - projMatrix.m32) / 4;
+    }
   } else {
     projMatrix = Mat4.perspective(camera.fovy, aspect, camera.near, camera.far);
   }
   viewMatrix = Mat4.lookAt(camera.eye, camera.center, camera.up);
 
-  const view = camera.projection === 'orthographic'
-    ? camera.eye.map((value, index) => value - camera.center[index])
-    : camera.eye;
+  const view =
+    camera.projection === 'orthographic'
+      ? camera.eye.map((value, index) => value - camera.center[index])
+      : camera.eye;
   const length = Math.hypot(...view);
-  const viewVector = length > 1e-8 && Number.isFinite(length)
-    ? view
-    : [0, 0, 1];
+  const viewVector =
+    length > 1e-8 && Number.isFinite(length) ? view : [0, 0, 1];
 
   return {
     mode: 'standard',
+    reverseDepth:
+      camera.projection === 'orthographic' &&
+      camera.orthographicHeight > 0 &&
+      Number.isFinite(camera.orthographicHeight),
     projMatrix,
     viewMatrix,
     canvasViewProjection: Mat4.IDENTITY,
@@ -134,6 +154,7 @@ export function sceneUniformsToPickScene(
   }
   return {
     mode: 'standard',
+    reverseDepth: uniforms.reverseDepth,
     projMatrix: uniforms.projMatrix.toFloat32Array(),
     viewMatrix: uniforms.viewMatrix.toFloat32Array(),
   };

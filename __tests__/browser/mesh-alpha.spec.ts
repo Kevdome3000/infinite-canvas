@@ -62,3 +62,344 @@ test('mesh alpha cutout and camera-depth blend order render in selected backend'
   expect(glassSwapped[2]).toBeGreaterThan(glassSwapped[0]);
   expect(errors).toEqual([]);
 });
+
+test('GLB export rasterizes an SVG cutout texture and keeps its alpha', async ({
+  page,
+}, testInfo) => {
+  const errors: string[] = [];
+  const diagnostics: string[] = [];
+  page.on('pageerror', (error) => errors.push(error.message));
+  page.on('console', (message) => {
+    if (message.type() === 'error') errors.push(message.text());
+    if (['error', 'warning'].includes(message.type())) diagnostics.push(message.text());
+  });
+  const renderer = testInfo.project.metadata.renderer ?? 'webgl';
+  await page.goto(`/gizmo.html?alpha&renderer=${renderer}`);
+  await expect(page.locator('#status')).toHaveText('Ready');
+  expect(await page.evaluate(() => window.gizmoTest.backend())).toMatch(
+    renderer === 'webgpu' ? /^WebGPU$/ : /^WebGL/,
+  );
+  const bytes = Uint8Array.from(
+    await page.evaluate(async () => {
+      const api = window.gizmoTest.api();
+      await window.gizmoTest.settle();
+      return Array.from(
+        await api.exportGlb({
+          nodes: [api.getNodeById('alpha-mask')],
+          download: false,
+        }),
+      );
+    }),
+  );
+  const view = new DataView(bytes.buffer);
+  const jsonLength = view.getUint32(12, true);
+  const json = JSON.parse(
+    new TextDecoder().decode(bytes.subarray(20, 20 + jsonLength)),
+  );
+  expect(json.images).toHaveLength(1);
+  expect(json.images[0].mimeType).toBe('image/png');
+  expect(json.materials[0].alphaMode).toBe('MASK');
+  const imageView = json.bufferViews[json.images[0].bufferView];
+  const imageOffset = 20 + jsonLength + 8 + imageView.byteOffset;
+  const image = PNG.sync.read(
+    Buffer.from(
+      bytes.subarray(imageOffset, imageOffset + imageView.byteLength),
+    ),
+  );
+  expect(image.width).toBe(2);
+  expect(image.height).toBe(2);
+  expect(image.data[3]).toBe(255);
+  expect(image.data[7]).toBe(0);
+  expect(errors, diagnostics.join('\n')).toEqual([]);
+});
+
+test('metallic-roughness texture blue channel changes lit mesh pixels', async ({
+  page,
+}, testInfo) => {
+  const errors: string[] = [];
+  const diagnostics: string[] = [];
+  page.on('pageerror', (error) => errors.push(error.message));
+  page.on('console', (message) => {
+    if (message.type() === 'error') errors.push(message.text());
+    if (['error', 'warning'].includes(message.type())) diagnostics.push(message.text());
+  });
+  const renderer = testInfo.project.metadata.renderer ?? 'webgl';
+  const pbrMap = (metallic: number) => {
+    const image = new PNG({ width: 1, height: 1 });
+    image.data.set([0, 255, metallic, 255]);
+    return `data:image/png;base64,${PNG.sync.write(image).toString('base64')}`;
+  };
+  const metal = pbrMap(255);
+  const dielectric = pbrMap(0);
+  await page.goto(`/gizmo.html?alpha&renderer=${renderer}`);
+  await expect(page.locator('#status')).toHaveText('Ready');
+  expect(await page.evaluate(() => window.gizmoTest.backend())).toMatch(
+    renderer === 'webgpu' ? /^WebGPU$/ : /^WebGL/,
+  );
+  const setMap = async (metallicRoughnessMap: string) => {
+    await page.evaluate(async (url) => {
+      const api = window.gizmoTest.api();
+      const mesh = api.getNodeById('alpha-mask');
+      if (mesh.type !== 'mesh3d') throw new Error('Missing test mesh');
+      api.updateNode(
+        mesh,
+        {
+          material3d: {
+            ...mesh.material3d,
+            metallic: 1,
+            roughness: 0.5,
+            metallicRoughnessMap: url,
+          },
+        },
+        false,
+      );
+      await window.gizmoTest.settle();
+    }, metallicRoughnessMap);
+  };
+  const redPixel = async () =>
+    pixel(PNG.sync.read(await page.locator('#canvas').screenshot({ scale: 'css' })), 75, 40);
+  await setMap(metal);
+  const before = await redPixel();
+  await setMap(dielectric);
+  await expect
+    .poll(async () => (await redPixel())[0] - before[0])
+    .toBeGreaterThan(8);
+  expect(errors, diagnostics.join('\n')).toEqual([]);
+});
+
+test('base-color texture selects the second UV set for rendered mesh', async ({
+  page,
+}, testInfo) => {
+  const errors: string[] = [];
+  const diagnostics: string[] = [];
+  page.on('pageerror', (error) => errors.push(error.message));
+  page.on('console', (message) => {
+    if (message.type() === 'error') errors.push(message.text());
+    if (['error', 'warning'].includes(message.type())) diagnostics.push(message.text());
+  });
+  const renderer = testInfo.project.metadata.renderer ?? 'webgl';
+  await page.goto(`/gizmo.html?alpha&renderer=${renderer}`);
+  await expect(page.locator('#status')).toHaveText('Ready');
+  expect(await page.evaluate(() => window.gizmoTest.backend())).toMatch(
+    renderer === 'webgpu' ? /^WebGPU$/ : /^WebGL/,
+  );
+  await page.evaluate(() => window.gizmoTest.settle());
+  const redAtLeft = async () => {
+    const image = PNG.sync.read(await page.locator('#canvas').screenshot({ scale: 'css' }));
+    const [red, , blue] = pixel(image, 35, 40);
+    return red - blue;
+  };
+  expect(await redAtLeft()).toBeLessThan(10);
+  await page.evaluate(async () => {
+    const api = window.gizmoTest.api();
+    const mesh = api.getNodeById('alpha-mask');
+    if (mesh.type !== 'mesh3d') throw new Error('Missing test mesh');
+    api.updateNode(
+      mesh,
+      { material3d: { ...mesh.material3d, mapTexCoord: 1 } },
+      false,
+    );
+    await window.gizmoTest.settle();
+  });
+  // The fixture plane has no TEXCOORD_1, so its fallback UV is (0, 0), the
+  // opaque red texel. This probes the selector without altering the fixture.
+  await expect.poll(redAtLeft).toBeGreaterThan(100);
+  await page.evaluate(async () => {
+    const api = window.gizmoTest.api();
+    const mesh = api.getNodeById('alpha-mask');
+    if (mesh.type !== 'mesh3d') throw new Error('Missing test mesh');
+    api.updateNode(
+      mesh,
+      {
+        material3d: {
+          ...mesh.material3d,
+          mapTextureTransform: { offset: [0.75, 0] },
+        },
+      },
+      false,
+    );
+    await window.gizmoTest.settle();
+  });
+  await expect.poll(redAtLeft).toBeLessThan(10);
+  expect(errors, diagnostics.join('\n')).toEqual([]);
+});
+
+test('emissive color and texture light an otherwise black mesh', async ({
+  page,
+}, testInfo) => {
+  const errors: string[] = [];
+  const diagnostics: string[] = [];
+  page.on('pageerror', (error) => errors.push(error.message));
+  page.on('console', (message) => {
+    if (message.type() === 'error') errors.push(message.text());
+    if (['error', 'warning'].includes(message.type())) diagnostics.push(message.text());
+  });
+  const renderer = testInfo.project.metadata.renderer ?? 'webgl';
+  const red = new PNG({ width: 1, height: 1 });
+  red.data.set([255, 0, 0, 255]);
+  const redUrl = `data:image/png;base64,${PNG.sync
+    .write(red)
+    .toString('base64')}`;
+  await page.goto(`/gizmo.html?alpha&renderer=${renderer}`);
+  await expect(page.locator('#status')).toHaveText('Ready');
+  expect(await page.evaluate(() => window.gizmoTest.backend())).toMatch(
+    renderer === 'webgpu' ? /^WebGPU$/ : /^WebGL/,
+  );
+  const sample = async () =>
+    pixel(PNG.sync.read(await page.locator('#canvas').screenshot({ scale: 'css' })), 75, 40);
+  const update = async (
+    emissiveMap: string | null,
+    emissiveStrength: number,
+  ) => {
+    await page.evaluate(
+      async ({ url, strength }) => {
+        const api = window.gizmoTest.api();
+        const mesh = api.getNodeById('alpha-mask');
+        if (mesh.type !== 'mesh3d') throw new Error('Missing test mesh');
+        api.updateNode(
+          mesh,
+          {
+            material3d: {
+              ...mesh.material3d,
+              baseColor: '#000000',
+              map: null,
+              alphaMode: 'opaque',
+              ambient: 0,
+              emissiveFactor: [0, 0.2, 0],
+              emissiveStrength: strength,
+              emissiveMap: url,
+            },
+          },
+          false,
+        );
+        await window.gizmoTest.settle();
+      },
+      { url: emissiveMap, strength: emissiveStrength },
+    );
+  };
+  await update(null, 0);
+  await expect.poll(async () => (await sample())[1]).toBeLessThan(30);
+  await update(null, 1);
+  await expect.poll(async () => (await sample())[1]).toBeGreaterThan(100);
+  const normal = (await sample())[1];
+  await update(null, 4);
+  await expect
+    .poll(async () => (await sample())[1])
+    .toBeGreaterThan(normal + 20);
+  await update(redUrl, 4);
+  await expect.poll(async () => (await sample())[1]).toBeLessThan(30);
+  expect(errors, diagnostics.join('\n')).toEqual([]);
+});
+
+test('unlit mesh keeps its base color with all scene lights disabled', async ({
+  page,
+}, testInfo) => {
+  const errors: string[] = [];
+  const diagnostics: string[] = [];
+  page.on('pageerror', (error) => errors.push(error.message));
+  page.on('console', (message) => {
+    if (message.type() === 'error') errors.push(message.text());
+    if (['error', 'warning'].includes(message.type())) diagnostics.push(message.text());
+  });
+  const renderer = testInfo.project.metadata.renderer ?? 'webgl';
+  await page.goto(`/gizmo.html?alpha&renderer=${renderer}`);
+  await expect(page.locator('#status')).toHaveText('Ready');
+  expect(await page.evaluate(() => window.gizmoTest.backend())).toMatch(
+    renderer === 'webgpu' ? /^WebGPU$/ : /^WebGL/,
+  );
+  await page.evaluate(async () => {
+    const api = window.gizmoTest.api();
+    const mesh = api.getNodeById('alpha-mask');
+    if (mesh.type !== 'mesh3d') throw new Error('Missing test mesh');
+    api.updateNode(api.getNodeById('alpha-ambient'), { intensity: 0 }, false);
+    api.updateNode(api.getNodeById('alpha-sun'), { intensity: 0 }, false);
+    api.updateNode(
+      mesh,
+      {
+        material3d: {
+          baseColor: '#00ff00',
+          map: null,
+          ambient: 0,
+          unlit: false,
+        },
+      },
+      false,
+    );
+    await window.gizmoTest.settle();
+  });
+  const sample = async () =>
+    pixel(PNG.sync.read(await page.locator('#canvas').screenshot({ scale: 'css' })), 75, 40);
+  await expect.poll(async () => (await sample())[1]).toBeLessThan(30);
+  await page.evaluate(async () => {
+    const api = window.gizmoTest.api();
+    const mesh = api.getNodeById('alpha-mask');
+    if (mesh.type !== 'mesh3d') throw new Error('Missing test mesh');
+    api.updateNode(
+      mesh,
+      { material3d: { ...mesh.material3d, unlit: true } },
+      false,
+    );
+    await window.gizmoTest.settle();
+  });
+  await expect.poll(async () => (await sample())[1]).toBeGreaterThan(230);
+  expect(errors, diagnostics.join('\n')).toEqual([]);
+});
+
+test('unlit alpha mask still discards transparent fragments in selected backend', async ({
+  page,
+}, testInfo) => {
+  const errors: string[] = [];
+  page.on('pageerror', (error) => errors.push(error.message));
+  page.on('console', (message) => {
+    if (message.type() === 'error') errors.push(message.text());
+  });
+  const renderer = testInfo.project.metadata.renderer ?? 'webgl';
+  await page.goto(`/gizmo.html?alpha&renderer=${renderer}`);
+  await expect(page.locator('#status')).toHaveText('Ready');
+  expect(await page.evaluate(() => window.gizmoTest.backend())).toMatch(
+    renderer === 'webgpu' ? /^WebGPU$/ : /^WebGL/,
+  );
+  await page.evaluate(async () => {
+    const api = window.gizmoTest.api();
+    const mesh = api.getNodeById('alpha-mask');
+    if (mesh.type !== 'mesh3d') throw new Error('Missing mask mesh');
+    api.updateNode(mesh, {
+      material3d: { ...mesh.material3d, unlit: true, alphaMode: 'mask' },
+    }, false);
+    await window.gizmoTest.settle();
+  });
+  const masked = PNG.sync.read(await page.locator('#canvas').screenshot({ scale: 'css' }));
+  const transparent = pixel(masked, 35, 40);
+  const solid = pixel(masked, 75, 40);
+  expect(Math.abs(transparent[0] - transparent[2])).toBeLessThan(10);
+  expect(transparent[0]).toBeGreaterThan(150);
+  expect(solid[0]).toBeGreaterThan(solid[2] + 150);
+  expect(errors).toEqual([]);
+});
+
+test('normal-map tangent handedness renders without derivative errors in selected backend', async ({
+  page,
+}, testInfo) => {
+  const errors: string[] = [];
+  page.on('pageerror', (error) => errors.push(error.message));
+  page.on('console', (message) => {
+    if (message.type() === 'error') errors.push(message.text());
+  });
+  const renderer = testInfo.project.metadata.renderer ?? 'webgl';
+  await page.goto(`/gizmo.html?gltfTangent&width=300&height=190&renderer=${renderer}`);
+  await expect(page.locator('#status')).toHaveText('Ready', { timeout: 20000 });
+  expect(await page.evaluate(() => window.gizmoTest.backend())).toMatch(
+    renderer === 'webgpu' ? /^WebGPU$/ : /^WebGL/,
+  );
+  await expect.poll(() => page.evaluate(() => window.gizmoTest.tangentState()), {
+    timeout: 20000,
+  }).toMatchObject([
+    { vertices: 4, handedness: 1, normalTextureStatus: 'ready' },
+    { vertices: 4, handedness: -1, normalTextureStatus: 'ready' },
+  ]);
+  await page.evaluate(() => window.gizmoTest.settle());
+  const png = PNG.sync.read(await page.locator('#canvas').screenshot({ scale: 'css' }));
+  const luminance = (x: number, y: number) => pixel(png, x, y).reduce((sum, value) => sum + value, 0);
+  expect(errors).toEqual([]);
+  expect(luminance(85, 95)).toBeGreaterThan(luminance(215, 95) + 60);
+});

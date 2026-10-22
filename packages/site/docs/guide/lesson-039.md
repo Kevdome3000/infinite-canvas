@@ -468,16 +468,13 @@ smoother and add mesh triangles. The demo's **Bevel profile** control lets you
 compare straight and rounded profiles on imported SVG shapes.
 
 The example's **Download GLB** button exports the generated 3D meshes as a
-self-contained glTF binary file. Use `api.export` to download all ready extruded
+self-contained glTF binary file. Use `api.exportGlb` to download all ready extruded
 shapes, or pass nodes to export only a selection (including children of selected
 groups):
 
 ```ts
-import { ExportFormat } from '@infinite-canvas-tutorial/ecs';
-
-api.export({ format: ExportFormat.GLB });
-const glb = api.export({
-    format: ExportFormat.GLB,
+await api.exportGlb();
+const glb = await api.exportGlb({
     nodes: [api.getNodeById('extruded-vector')!],
     download: false,
 }); // Uint8Array
@@ -485,8 +482,11 @@ const glb = api.export({
 
 Export converts canvas Y-down coordinates to glTF Y-up coordinates and keeps
 the current 3D pose, solid fill and optional side color. It exports only ready
-mesh companions; unsupported 2D SVG shapes and textures are not included.
-For lower-level mesh exports, use `exportMeshesToGlb` directly.
+mesh companions; unsupported 2D SVG shapes are not included. Base-color textures
+are embedded as PNG or JPEG (other decodable formats are converted to PNG).
+Texture URLs must allow CORS fetches. The synchronous `api.export({ format:
+ExportFormat.GLB })` remains available for untextured exports.
+For lower-level mesh exports, call `exportMeshesToGlb(sources, await loadGlbImages(sources))`.
 
 Use **ViewBox + shear sample** to inspect the transformed outline and its
 evenodd hole, then turn extrusion off to compare the 2D footprint.
@@ -501,13 +501,34 @@ Compare ambient, directional, point, and spot lights on a stationary cube, spher
 
 Up to two directional, point, or spot lights with `castShadow: true` cast shadows at once, filtered with 3 × 3 PCF. Each light can set `shadowStrength` (0–1), `shadowSoftness` (0–4 texels), `shadowBiasScale` (0–4), and `shadowNormalBias` (0–10 canvas units); defaults preserve the original appearance. Each mesh can independently opt out of casting or receiving via `material3d.castShadow` and `material3d.receiveShadow` (both default to `true`). Directional maps fit the current meshes; spot cones below 85° half-angle use one perspective map, while wider cones and point lights use six atlas faces. PCF taps at atlas-face seams sample the neighboring face rather than repeating the border texel. See the [lighting example](/example/lighting) for controls, map sizes, and API details.
 
+For self-lit surfaces, `material3d.emissiveFactor` and `emissiveStrength` control emission without adding a scene light. glTF `KHR_materials_emissive_strength` imports and exports with the material; try the cube emission slider in the [lighting example](/example/lighting).
+
+For flat colors independent of illumination, `material3d.unlit` bypasses scene lights and tone mapping while retaining base-color texture and alpha. glTF `KHR_materials_unlit` is preserved on import and GLB export; compare it with emission using the cube toggle in the [lighting example](/example/lighting).
+
 For textured cutouts and translucent surfaces, `material3d.alphaMode` offers `mask` and `blend`; see the [3D mesh transparency example](/example/mesh3d-alpha) for their shadow behavior and ordering limits.
+
+WebGL1 fragment shaders require constant indices when reading uniform arrays.
+The renderer generates bounded lookups for light data and shadow matrices on
+WebGL1; WebGL2 and WebGPU retain native indexing. Material shading returns its
+color to `main()` so the WebGL1 output conversion also runs for unlit materials.
+Browser regressions force WebGL1 and check vertex colors, tangent-space normal
+maps, multiple lights, and directional/point shadows.
 
 <Lighting />
 
 ## glTF model {#gltf}
 
 Load an external glTF/GLB via declarative `mesh3d` geometry (`geometry: { type: 'gltf', url: '…' }`). The Khronos **Duck** sample uses a `.gltf` + `.bin` pair under `/data/`; meshes are centered and normalized to unit bounds, then scaled with `scale3d`.
+
+glTF base-color factors use linear RGB, while ECS stores material base colors as sRGB. Import converts between them; GLB export converts back to linear RGB so material colors remain stable across a round-trip.
+
+The importer also preserves glTF `doubleSided`, `normalTexture`, `occlusionTexture`, and authored `TANGENT` attributes. Normal maps alter the lighting normal; occlusion affects indirect light only. The [interactive PBR model](/example/gltf-duck#pbr-material) explains when normal mapping uses authored tangents or derives them from UVs.
+
+glTF `COLOR_0` vertex colors (float or normalized unsigned byte/short, RGB or RGBA) multiply the material base color in linear space. The [interactive vertex-color model](/example/gltf-duck#vertex-colors) shows the result with and without scene lighting. Export preserves the colors as float RGBA.
+
+The importer accepts triangle lists, triangle strips (`mode: 5`) and triangle fans (`mode: 6`), with or without indices. It converts them to triangle lists for rendering and GLB export. Mirrored node transforms also correct triangle winding so single-sided surfaces remain visible.
+
+Sparse glTF accessors are supported for positions, normals, UVs, colors, tangents, and triangle indices. Missing base data starts at zero; sparse values replace only the listed elements. The imported mesh is exported as ordinary dense GLB buffers.
 
 <GltfDuck />
 

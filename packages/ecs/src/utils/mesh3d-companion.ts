@@ -10,7 +10,8 @@ import {
   ToBeDeleted,
   Transform3D,
 } from '../components';
-import type { Projection3D } from '../components/geometry3d/Camera3D';
+import { axonometricCameraPose } from '../components/geometry3d/Camera3D';
+import type { Camera3DNodeConfig } from '../types/serialized-node';
 import {
   resolveMesh3DNodeCanvasCenter,
   resolveMesh3DNodeGeometry,
@@ -21,11 +22,31 @@ import {
 import { isGltfGeometrySpec, normalizeGeometry } from './geometry3d';
 import { isEntityAlive } from '../systems/Transform';
 
-export type Mesh3DCameraConfig = {
-  linked?: boolean;
-  projection?: Projection3D;
-  clearColor?: boolean;
-};
+export type Mesh3DCameraConfig = Camera3DNodeConfig;
+
+export function resolveMesh3DCameraConfig(
+  cam: Mesh3DCameraConfig,
+): Partial<Camera3D> {
+  const pose = cam.preset
+    ? axonometricCameraPose(
+        cam.preset,
+        cam.center ?? [0, 0, 0],
+        Number.isFinite(cam.distance) && (cam.distance ?? 0) > 0
+          ? cam.distance!
+          : 500,
+      )
+    : {};
+  return {
+    linked: cam.preset ? false : cam.linked ?? !cam.eye,
+    projection: cam.preset ? 'orthographic' : cam.projection ?? 'perspective',
+    clearColor: cam.clearColor ?? false,
+    orthographicHeight: cam.orthographicHeight ?? (cam.preset ? 500 : 0),
+    ...pose,
+    ...(cam.center ? { center: cam.center } : {}),
+    ...(cam.eye ? { eye: cam.eye } : {}),
+    ...(cam.up ? { up: cam.up } : {}),
+  };
+}
 
 /** Queue a companion {@link Mesh3D} for a declarative {@link Mesh3DNode} source. */
 export function queueMesh3DCompanion(
@@ -46,7 +67,28 @@ export function queueMesh3DCompanion(
   const shininess = node.shininess;
   const metallic = node.metallic;
   const roughness = node.roughness;
+  const metallicRoughnessMap = node.metallicRoughnessMap ?? null;
+  const metallicRoughnessTexCoord = node.metallicRoughnessTexCoord ?? 0;
+  const metallicRoughnessTextureTransform =
+    node.metallicRoughnessTextureTransform;
   const map = node.map ?? null;
+  const mapTexCoord = node.mapTexCoord ?? 0;
+  const mapTextureTransform = node.mapTextureTransform;
+  const emissiveFactor = [...node.emissiveFactor] as [number, number, number];
+  const emissiveStrength = node.emissiveStrength;
+  const unlit = node.unlit;
+  const emissiveMap = node.emissiveMap;
+  const emissiveTexCoord = node.emissiveTexCoord ?? 0;
+  const emissiveTextureTransform = node.emissiveTextureTransform;
+  const doubleSided = node.doubleSided ?? false;
+  const normalMap = node.normalMap;
+  const normalTexCoord = node.normalTexCoord ?? 0;
+  const normalTextureTransform = node.normalTextureTransform;
+  const normalScale = node.normalScale ?? 1;
+  const occlusionMap = node.occlusionMap;
+  const occlusionTexCoord = node.occlusionTexCoord ?? 0;
+  const occlusionTextureTransform = node.occlusionTextureTransform;
+  const occlusionStrength = node.occlusionStrength ?? 1;
   const alphaMode = node.alphaMode;
   const alphaCutoff = node.alphaCutoff;
   const specularMap = node.specularMap ?? null;
@@ -85,7 +127,27 @@ export function queueMesh3DCompanion(
         shininess,
         metallic,
         roughness,
+        metallicRoughnessMap,
+        metallicRoughnessTexCoord,
+        metallicRoughnessTextureTransform,
         map,
+        mapTexCoord,
+        mapTextureTransform,
+        emissiveFactor,
+        emissiveStrength,
+        unlit,
+        emissiveMap,
+        emissiveTexCoord,
+        emissiveTextureTransform,
+        doubleSided,
+        normalMap,
+        normalTexCoord,
+        normalTextureTransform,
+        normalScale,
+        occlusionMap,
+        occlusionTexCoord,
+        occlusionTextureTransform,
+        occlusionStrength,
         alphaMode,
         alphaCutoff,
         specularMap,
@@ -109,11 +171,7 @@ export function queueCamera3DFromMesh3DNode(
 ): void {
   const cam = camera3d ?? {};
   commands.spawn(
-    new Camera3D({
-      linked: cam.linked ?? true,
-      projection: cam.projection ?? 'perspective',
-      clearColor: cam.clearColor ?? false,
-    }),
+    new Camera3D(resolveMesh3DCameraConfig(cam)),
     new Canvas3DScope({ canvas }),
   );
 }

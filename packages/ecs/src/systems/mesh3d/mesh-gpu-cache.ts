@@ -16,7 +16,10 @@ import {
 export interface MeshGPUData {
   vertexBuffer: Buffer;
   normalBuffer: Buffer;
+  tangentBuffer: Buffer;
+  colorBuffer: Buffer;
   uvBuffer: Buffer;
+  uv1Buffer: Buffer;
   indexBuffer: Buffer | null;
   indexCount: number;
   vertexCount: number;
@@ -90,10 +93,28 @@ export class MeshGPUCache {
       const geometry = {
         vertexBuffer: buffer(mesh.positions, BufferUsage.VERTEX),
         normalBuffer: buffer(mesh.normals, BufferUsage.VERTEX),
+        tangentBuffer: buffer(
+          mesh.tangents?.length === mesh.vertexCount * 4
+            ? mesh.tangents
+            : new Float32Array(mesh.vertexCount * 4),
+          BufferUsage.VERTEX,
+        ),
+        colorBuffer: buffer(
+          mesh.colors?.length === mesh.vertexCount * 4
+            ? mesh.colors
+            : new Float32Array(mesh.vertexCount * 4).fill(1),
+          BufferUsage.VERTEX,
+        ),
         // Optional UVs must still satisfy the shared input layout.
         uvBuffer: buffer(
           mesh.uvs?.length === mesh.vertexCount * 2
             ? mesh.uvs
+            : new Float32Array(mesh.vertexCount * 2),
+          BufferUsage.VERTEX,
+        ),
+        uv1Buffer: buffer(
+          mesh.uvs1?.length === mesh.vertexCount * 2
+            ? mesh.uvs1
             : new Float32Array(mesh.vertexCount * 2),
           BufferUsage.VERTEX,
         ),
@@ -114,7 +135,10 @@ export class MeshGPUCache {
           this.device,
           geometry.modelUniformBuffer,
         ),
-        shadowBindings: new ShadowDrawBindings(this.device, geometry.modelUniformBuffer),
+        shadowBindings: new ShadowDrawBindings(
+          this.device,
+          geometry.modelUniformBuffer,
+        ),
         localBounds: meshBounds(mesh.positions),
       };
       scope.add(() => data.bindings.destroy());
