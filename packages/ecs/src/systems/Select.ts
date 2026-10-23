@@ -2444,6 +2444,28 @@ export class Select extends System {
         }
       }
 
+      // CameraControl has already removed input points on release. Consume the
+      // final MOVE position before finishing history, including move + up in
+      // one frame. The move gesture tracks applied displacement, so a release
+      // after earlier move frames applies only the remaining delta.
+      if (
+        input.pointerUpTrigger &&
+        inputPoints.length === 0 &&
+        selection.mode === SelectionMode.MOVE &&
+        !input.pointerCancelled &&
+        input.key !== 'Escape' &&
+        !is3DGizmoDragging(canvas) &&
+        layersCropping.length === 0
+      ) {
+        const [sx, sy] = input.pointerDownViewport;
+        const [ex, ey] = input.pointerViewport;
+        if (sx !== ex || sy !== ey || selection.moveGesture) {
+          const start = api.viewport2Canvas({ x: sx, y: sy });
+          const end = api.viewport2Canvas({ x: ex, y: ey });
+          this.handleSelectedMoving(api, start.x, start.y, end.x, end.y);
+        }
+      }
+
       // Dragging
       inputPoints.forEach((point) => {
         const inputPoint = point.write(InputPoint);
