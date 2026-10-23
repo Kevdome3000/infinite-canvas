@@ -59,3 +59,20 @@ test('React compatibility gates retain their names and require all matrix result
     }
   }
 });
+
+test('browser image matches the exact Playwright runner and preserves required execution', () => {
+  const manifest = JSON.parse(readFileSync('package.json', 'utf8'));
+  const version = manifest.devDependencies['@playwright/test'];
+  assert.match(version, /^\d+\.\d+\.\d+$/);
+  assert.equal(manifest.pnpm.overrides.playwright, version);
+  const job = workflow.jobs['browser-tests'];
+  assert.equal(job.container, `mcr.microsoft.com/playwright:v${version}-noble`);
+  assert.notEqual(job['continue-on-error'], true);
+  assert.equal(job.strategy['fail-fast'], false);
+  assert(job.steps.some((step) => step.run === 'pnpm install --frozen-lockfile --ignore-scripts'));
+  const execution = job.steps.find((step) => step.name === 'Run browser shard');
+  assert(execution);
+  assert.match(execution.run, /pnpm exec playwright test -c/);
+  assert.match(execution.run, /--shard=/);
+  assert.notEqual(execution['continue-on-error'], true);
+});

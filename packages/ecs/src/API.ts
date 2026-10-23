@@ -86,6 +86,17 @@ import { loadGlbImages } from './utils/gltf/load-glb-images';
 import { getMesh3DNodeParts } from './utils/mesh3d-node';
 import { set3DMeshGizmoSelectedForCanvas } from './utils/pick3d-bridge';
 import { resolveMesh3DCameraConfig } from './utils/mesh3d-companion';
+import {
+  camera3DPlaneHit,
+  camera3DPlanePoint,
+  camera3DViewportPoint,
+  isNavigableCamera3D,
+} from './utils/isometric-navigation';
+import {
+  pathAnchor3DLocalPoint,
+  pathAnchor3DPlane,
+  pathAnchor3DWorldPoint,
+} from './utils/path-anchor3d-plane';
 import { v4 as uuidv4 } from 'uuid';
 import {
   AABB,
@@ -468,6 +479,63 @@ export class API {
     }
   }
 
+  /** Intersect a viewport pointer with a Z plane in this canvas's free 3D view. */
+  viewport2WorldOnPlane(
+    { x, y }: IPointData,
+    planeZ = 0,
+  ): [number, number, number] | null {
+    if (!this.#canvas.has(Camera3D)) return null;
+    const camera = this.#canvas.read(Camera3D);
+    if (!isNavigableCamera3D(camera)) return null;
+    const { width, height } = this.#canvas.read(Canvas);
+    return camera3DPlanePoint(camera, [x, y], width, height, planeZ);
+  }
+
+  /** Project a 3D world point into CSS viewport pixels of this canvas. */
+  world3D2Viewport(
+    point: readonly [number, number, number],
+  ): [number, number] | null {
+    if (!this.#canvas.has(Camera3D)) return null;
+    const camera = this.#canvas.read(Camera3D);
+    if (!isNavigableCamera3D(camera)) return null;
+    const { width, height } = this.#canvas.read(Canvas);
+    return camera3DViewportPoint(camera, point, width, height);
+  }
+
+  /** Project a source Path point on its companion mesh's front face. */
+  pathLocal2Viewport3D(
+    node: SerializedNode,
+    point: readonly [number, number],
+  ): [number, number] | null {
+    const source = this.getEntity(node);
+    const plane = source && pathAnchor3DPlane(source);
+    return plane
+      ? this.world3D2Viewport(pathAnchor3DWorldPoint(plane, point))
+      : null;
+  }
+
+  /** Map a viewport pointer back to an extruded Path's local front plane. */
+  viewport2PathLocal3D(
+    node: SerializedNode,
+    viewport: IPointData,
+  ): [number, number] | null {
+    const source = this.getEntity(node);
+    const plane = source && pathAnchor3DPlane(source);
+    if (!plane || !this.#canvas.has(Camera3D)) return null;
+    const camera = this.#canvas.read(Camera3D);
+    if (!isNavigableCamera3D(camera)) return null;
+    const { width, height } = this.#canvas.read(Canvas);
+    const hit = camera3DPlaneHit(
+      camera,
+      [viewport.x, viewport.y],
+      width,
+      height,
+      plane.origin,
+      plane.normal,
+    );
+    return hit ? pathAnchor3DLocalPoint(plane, hit) : null;
+  }
+
   getAppState() {
     return this.stateManagement.getAppState();
   }
@@ -784,44 +852,58 @@ export class API {
     });
   }
 
-  selectMesh3DLayer(id: string) {
-    const entity = this.#mesh3DLayerEntities.get(id);
-    const layer = this.#mesh3DLayers.find((item) => item.id === id);
-    if (!isEntityAlive(entity) || !layer) {
-      return false;
-    }
-
+  /** Select one or more registered 3D layers without using their flat 2D bounds. */
+  selectMesh3DLayers(ids: string[]) {
+    const layers = ids
+      .filter((id, index) => ids.indexOf(id) === index)
+      .map((id) => ({
+        id,
+        entity: this.#mesh3DLayerEntities.get(id),
+        layer: this.#mesh3DLayers.find((item) => item.id === id),
+      }))
+      .filter((entry) => isEntityAlive(entry.entity) && !!entry.layer);
+    const selectedIds = layers.map(({ id }) => id);
+    const selectedSet = new Set(selectedIds);
     const prevAppState = this.getAppState();
     this.clear2DSelectionComponents(prevAppState.layersSelected);
 
-    this.#selectedMesh3DLayerIds.forEach((selectedId) => {
-      const selectedEntity = this.#mesh3DLayerEntities.get(selectedId);
+    this.#mesh3DLayerEntities.forEach((selectedEntity, selectedId) => {
       if (
         isEntityAlive(selectedEntity) &&
-        !selectedEntity.isSame(entity) &&
+        !selectedSet.has(selectedId) &&
         selectedEntity.has(Selected3D)
       ) {
         selectedEntity.remove(Selected3D);
       }
     });
 
-    if (!entity.has(Selected3D)) {
-      entity.add(Selected3D, {
-        mode: 'transform',
-        activeAxis: 'none',
-        activePartKind: null,
-        dragging: false,
-      });
+    for (const { entity } of layers) {
+      if (entity && !entity.has(Selected3D)) {
+        entity.add(Selected3D, {
+          mode: 'transform',
+          activeAxis: 'none',
+          activePartKind: null,
+          dragging: false,
+        });
+      }
     }
 
-    const selectedChanged = this.setSelectedMesh3DLayerIds([id]);
+    const selectedChanged = this.setSelectedMesh3DLayerIds(selectedIds);
     this.setAppState({
       ...prevAppState,
-      layersSelected: layer.sourceNodeId ? [layer.sourceNodeId] : [],
+      layersSelected: layers
+        .map(({ layer }) => layer?.sourceNodeId)
+        .filter((id): id is string => !!id),
       layersHighlighted: [],
     });
+    set3DMeshGizmoSelectedForCanvas(this.#canvas, selectedIds.length > 0);
 
     return selectedChanged;
+  }
+
+  selectMesh3DLayer(id: string) {
+    if (!this.#mesh3DLayerEntities.has(id)) return false;
+    return this.selectMesh3DLayers([id]);
   }
 
   selectMesh3DLayerByEntity(entity: Entity) {

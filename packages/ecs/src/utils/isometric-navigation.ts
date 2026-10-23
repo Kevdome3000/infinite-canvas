@@ -1,7 +1,7 @@
-import { mat4 } from 'gl-matrix';
+import { mat4, vec4 } from 'gl-matrix';
 import type { Camera3D } from '../components';
 import { buildCamera3DSceneUniforms } from './mesh3d-scene';
-import { screenToRay } from './ray-casting';
+import { screenToRay, type Ray } from './ray-casting';
 
 export type ViewportPoint = readonly [number, number];
 
@@ -22,7 +22,34 @@ export function camera3DPlanePoint(
   height: number,
   planeZ = 0,
 ): [number, number, number] | null {
-  if (width <= 0 || height <= 0) return null;
+  if (!Number.isFinite(planeZ)) return null;
+  const hit = camera3DPlaneHit(
+    camera,
+    viewport,
+    width,
+    height,
+    [0, 0, planeZ],
+    [0, 0, 1],
+  );
+  return hit && [hit[0], hit[1], planeZ];
+}
+
+/** A free 3D view's unprojected picking ray in world space. */
+export function camera3DViewportRay(
+  camera: Camera3D,
+  viewport: ViewportPoint,
+  width: number,
+  height: number,
+): Ray | null {
+  if (
+    !Number.isFinite(width) ||
+    !Number.isFinite(height) ||
+    width <= 0 ||
+    height <= 0 ||
+    !Number.isFinite(viewport[0]) ||
+    !Number.isFinite(viewport[1])
+  )
+    return null;
   const { projMatrix, viewMatrix, reverseDepth } = buildCamera3DSceneUniforms(
     camera,
     width / height,
@@ -42,14 +69,77 @@ export function camera3DPlanePoint(
     Array.from(inverse),
     reverseDepth,
   );
-  if (Math.abs(ray.direction[2]) < 1e-6) return null;
-  const t = (planeZ - ray.origin[2]) / ray.direction[2];
-  if (!Number.isFinite(t)) return null;
+  return [...ray.origin, ...ray.direction].every(Number.isFinite) ? ray : null;
+}
+
+/** Intersect a viewport ray with an arbitrary world-space edit plane. */
+export function camera3DPlaneHit(
+  camera: Camera3D,
+  viewport: ViewportPoint,
+  width: number,
+  height: number,
+  planePoint: readonly [number, number, number],
+  planeNormal: readonly [number, number, number],
+): [number, number, number] | null {
+  if (
+    !Number.isFinite(planePoint[0]) ||
+    !Number.isFinite(planePoint[1]) ||
+    !Number.isFinite(planePoint[2]) ||
+    !Number.isFinite(planeNormal[0]) ||
+    !Number.isFinite(planeNormal[1]) ||
+    !Number.isFinite(planeNormal[2])
+  )
+    return null;
+  const ray = camera3DViewportRay(camera, viewport, width, height);
+  if (!ray) return null;
+  const denominator =
+    ray.direction[0] * planeNormal[0] +
+    ray.direction[1] * planeNormal[1] +
+    ray.direction[2] * planeNormal[2];
+  if (Math.abs(denominator) < 1e-6) return null;
+  const t =
+    ((planePoint[0] - ray.origin[0]) * planeNormal[0] +
+      (planePoint[1] - ray.origin[1]) * planeNormal[1] +
+      (planePoint[2] - ray.origin[2]) * planeNormal[2]) /
+    denominator;
+  if (!Number.isFinite(t) || t < 0) return null;
   return [
     ray.origin[0] + ray.direction[0] * t,
     ray.origin[1] + ray.direction[1] * t,
-    planeZ,
+    ray.origin[2] + ray.direction[2] * t,
   ];
+}
+
+/** Project a world point with the same matrix used by the free 3D render pass. */
+export function camera3DViewportPoint(
+  camera: Camera3D,
+  point: readonly [number, number, number],
+  width: number,
+  height: number,
+): [number, number] | null {
+  if (
+    !Number.isFinite(width) ||
+    !Number.isFinite(height) ||
+    width <= 0 ||
+    height <= 0 ||
+    !Number.isFinite(point[0]) ||
+    !Number.isFinite(point[1]) ||
+    !Number.isFinite(point[2])
+  )
+    return null;
+  const { projMatrix, viewMatrix } = buildCamera3DSceneUniforms(
+    camera,
+    width / height,
+  );
+  const clip = vec4.fromValues(...point, 1);
+  vec4.transformMat4(clip, clip, viewMatrix.toFloat32Array());
+  vec4.transformMat4(clip, clip, projMatrix.toFloat32Array());
+  if (clip[3] <= 1e-8) return null;
+  const projected: [number, number] = [
+    ((clip[0] / clip[3] + 1) * width) / 2,
+    ((1 - clip[1] / clip[3]) * height) / 2,
+  ];
+  return projected.every(Number.isFinite) ? projected : null;
 }
 
 /** Keep the ground point under the pointer while panning the camera. */
