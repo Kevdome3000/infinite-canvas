@@ -48,6 +48,32 @@ test('installed tooling mitigations are registered without suppressing audit fin
   }
 });
 
+test('the Zod 3 audit exception stays scoped to the local Shadcn converter', () => {
+  const app = new URL('../../packages/app/package.json', import.meta.url);
+  const appRequire = createRequire(app);
+  const appZod = appRequire('zod');
+  const appVersion = JSON.parse(
+    readFileSync(appRequire.resolve('zod/package.json')),
+  ).version;
+  assert.match(appVersion, /^4\.(?:[6-9]|\d{2,})\./);
+
+  const shadcn = appRequire.resolve('shadcn');
+  const sdk = resolveFrom(shadcn, '@modelcontextprotocol/sdk');
+  const converter = createRequire(sdk).resolve('zod-to-json-schema');
+  const converterRequire = createRequire(converter);
+  const converterZodVersion = JSON.parse(
+    readFileSync(converterRequire.resolve('zod/package.json')),
+  ).version;
+  assert.match(converterZodVersion, /^3\./);
+  const zod3 = converterRequire('zod');
+  const { zodToJsonSchema } = converterRequire('zod-to-json-schema');
+  assert.equal(
+    zodToJsonSchema(zod3.object({ name: zod3.string() })).properties.name.type,
+    'string',
+  );
+  assert.equal(typeof appZod.object, 'function');
+});
+
 test('braces handles normal ranges, nesting, and escaped literals', () => {
   assert.deepEqual(braces.expand('src/{app,lib}/{1..3}.ts'), [
     'src/app/1.ts',

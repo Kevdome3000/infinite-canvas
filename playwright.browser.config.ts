@@ -7,6 +7,7 @@ export default defineConfig({
   // equivalents remain in ecs-text-path and ecs-dash-rendering.
   testIgnore: [
     'touch-webkit.spec.ts',
+    'isometric-touch-webkit.spec.ts',
     '**/text-path.spec.ts',
     '**/dash-rendering.spec.ts',
   ],

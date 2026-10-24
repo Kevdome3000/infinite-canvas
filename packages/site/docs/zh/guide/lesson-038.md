@@ -7,6 +7,7 @@ description: ''
 import IconLucide from '../../components/IconLucide.vue'
 import IconButton from '../../components/IconButton.vue'
 import ComponentsInstances from '../../components/ComponentsInstances.vue'
+import DesignToCodeInterfaces from '../../components/DesignToCodeInterfaces.vue'
 </script>
 
 # 课程 38 - 从设计到代码
@@ -382,6 +383,14 @@ export function Design() {
 ```
 
 `componentStructure: 'flatten'` 是回退方案：通过 `expandRefSerializedNodes` 把每个实例展开为具体 DOM，不产出组件定义。HTML/CSS emitter 始终扁平化，因为 HTML 没有组件概念。
+
+### 可用于实际界面的示例 {#practical-interface-examples}
+
+下面将运营数据面板和 SaaS 定价页加载到 **IC 编辑器画布**中。两份设计都包含嵌套 flex 布局与语义化颜色变量。你可以在画布中选中、修改节点，再从画布当前文档通过 `API.exportCode` 更新、复制或下载代码；切换示例会载入另一份可编辑设计。
+
+<DesignToCodeInterfaces locale="zh" />
+
+下载 `.ic` 文件后，可在[在线应用](https://app.infinitecanvas.cc/)中通过 **Import from… > .ic** 继续编辑设计。下载 HTML 文件后可直接用浏览器打开。React 版本需要放入已配置 Tailwind CSS 的项目，并渲染导出的 `AnalyticsDashboard` 或 `PricingPage` 组件。目前生成的是展示层代码；导航、按钮行为及实时数据仍需在应用中接入。这些示例使用固定宽度以便对照两种输出，正式使用时可根据断点调整布局。
 
 ### 反向：code → design {#design-to-code-reverse}
 

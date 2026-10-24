@@ -2,6 +2,63 @@ import { expect } from '@playwright/test';
 import { PNG } from 'pngjs';
 import { test } from '../isolated-webkit-test';
 import type {} from './fixtures/gizmo';
+import type { Pen } from '../../packages/ecs/src/components/Canvas';
+
+test('orbit mode rotates the free 3D view with a touch pointer', async ({
+  page,
+}) => {
+  const errors: string[] = [];
+  page.on('pageerror', (error) => errors.push(error.message));
+  await page.goto('/gizmo.html?appCamera');
+  await expect(page.locator('#status')).toHaveText('Ready');
+  await page.evaluate(async () => {
+    await window.gizmoTest.api().edit((editor) => {
+      editor.setCamera3D({
+        preset: 'isometric',
+        center: [100, 100, 0],
+        distance: 500,
+        orthographicHeight: 200,
+      });
+      editor.setAppState({ penbarSelected: 'orbit-3d' as Pen });
+    });
+    await window.gizmoTest.settle();
+  });
+  const before = await page.evaluate(() => window.gizmoTest.camera3DState());
+  const canvas = page.locator('#canvas');
+  const box = (await canvas.boundingBox())!;
+  const start = { x: box.x + 40, y: box.y + 40 };
+  const init = {
+    bubbles: true,
+    pointerType: 'touch',
+    pointerId: 1,
+    isPrimary: true,
+    button: 0,
+    buttons: 1,
+  };
+  await canvas.dispatchEvent('pointerdown', {
+    ...init,
+    clientX: start.x,
+    clientY: start.y,
+  });
+  await page.evaluate(() => window.gizmoTest.settle());
+  await canvas.dispatchEvent('pointermove', {
+    ...init,
+    clientX: start.x + 25,
+    clientY: start.y + 12,
+  });
+  await page.evaluate(() => window.gizmoTest.settle());
+  await canvas.dispatchEvent('pointerup', {
+    ...init,
+    buttons: 0,
+    clientX: start.x + 25,
+    clientY: start.y + 12,
+  });
+  await page.evaluate(() => window.gizmoTest.settle());
+  const after = await page.evaluate(() => window.gizmoTest.camera3DState());
+  expect(after.center).toEqual(before.center);
+  expect(after.eye).not.toEqual(before.eye);
+  expect(errors).toEqual([]);
+});
 
 for (const scenario of [
   { width: 400, height: 240, zoom: 1, rotation: 0, z: 0, dpr: 1 },
@@ -130,6 +187,72 @@ test('3D gizmo commits a pointer gesture once and restores the rendered pose thr
   expect(
     (await page.evaluate(() => window.gizmoTest.state())).translation[0],
   ).toBeCloseTo(100);
+  expect(errors).toEqual([]);
+});
+
+test('a shared gizmo rotates two selected 3D meshes with one undo step', async ({
+  page,
+}) => {
+  const errors: string[] = [];
+  page.on('pageerror', (error) => errors.push(error.message));
+  await page.goto('/gizmo.html');
+  await expect(page.locator('#status')).toHaveText('Ready');
+  await page.evaluate(async () => {
+    const api = window.gizmoTest.api();
+    await api.edit((editor) =>
+      editor.updateNode({
+        id: 'other',
+        type: 'mesh3d',
+        zIndex: 1,
+        x: 100,
+        y: 60,
+        width: 40,
+        height: 40,
+        scale3d: 20,
+      }),
+    );
+    await window.gizmoTest.settle();
+    await api.edit((editor) => editor.selectMesh3DLayers(['model', 'other']), {
+      capture: 'NEVER',
+    });
+    await window.gizmoTest.settle();
+    api.clearHistory();
+  });
+  const radius = 100 * Math.tan(Math.PI / 8) * 1.5 * 0.825;
+  await page.mouse.move(100 + radius / Math.SQRT2, 80 + radius / Math.SQRT2);
+  await page.mouse.down();
+  await expect
+    .poll(() => page.evaluate(() => window.gizmoTest.state().partKind))
+    .toBe('rotate');
+  await page.mouse.move(100, 80 + radius, { steps: 4 });
+  await page.mouse.up();
+  await page.evaluate(() => window.gizmoTest.settle());
+  const rotated = await page.evaluate(() => {
+    const api = window.gizmoTest.api();
+    const first = api.getNodeById('model');
+    const second = api.getNodeById('other');
+    if (first.type !== 'mesh3d' || second.type !== 'mesh3d')
+      throw new Error('Expected two mesh3d nodes');
+    return {
+      first,
+      second,
+    };
+  });
+  expect(rotated.first.rotation3d?.[2]).toBeCloseTo(Math.PI / 4, 1);
+  expect(rotated.second.rotation3d?.[2]).toBeCloseTo(Math.PI / 4, 1);
+  expect(rotated.first.y).toBeLessThan(60);
+  expect(rotated.second.y).toBeGreaterThan(60);
+  await page.evaluate(async () => {
+    const api = window.gizmoTest.api();
+    api.undo();
+    await window.gizmoTest.settle();
+  });
+  expect(
+    await page.evaluate(() => {
+      const api = window.gizmoTest.api();
+      return [api.getNodeById('model').x, api.getNodeById('other').x];
+    }),
+  ).toEqual([60, 100]);
   expect(errors).toEqual([]);
 });
 

@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import {
+  Mesh3DNode,
   Pen,
+  Transform3D,
+  canExtrudePath,
   collectPathControlHandles,
   normalizePathCommands,
   setPathHandlePoint,
@@ -31,7 +34,22 @@ const pathHandles = ref<
   { x: number; y: number; meta: PathControlHandleMeta; control: boolean }[]
 >([]);
 const previewBounds = ref({ left: 0, top: 0, width: 0, height: 0 });
-type Tool = Pen.SELECT | Pen.HAND | Pen.DRAW_BOX_3D | 'edit-path-3d';
+const showCallouts = ref(false);
+type Callout = {
+  id: string;
+  title: string;
+  anchorX: number;
+  anchorY: number;
+  labelX: number;
+  labelY: number;
+};
+const callouts = ref<Callout[]>([]);
+type Tool =
+  | Pen.SELECT
+  | Pen.HAND
+  | Pen.ORBIT_3D
+  | Pen.DRAW_BOX_3D
+  | 'edit-path-3d';
 const tool = ref<Tool>(Pen.SELECT);
 let drawStart:
   | {
@@ -137,7 +155,66 @@ function animatePathHandles() {
     typeof extrude === 'object' &&
     !!extrude.rotation?.some((angle) => angle !== 0);
   refreshPathHandles();
+  if (showCallouts.value) refreshCallouts();
   anchorFrame = requestAnimationFrame(animatePathHandles);
+}
+
+function refreshCallouts() {
+  if (!api) return;
+  syncPreviewBounds();
+  const { width, height } = previewBounds.value;
+  const cube = api.getNodeById('iso-cube');
+  const cubeEntity = cube && api.getEntity(cube);
+  const mesh = cubeEntity?.has(Mesh3DNode)
+    ? cubeEntity.read(Mesh3DNode).meshEntity
+    : undefined;
+  const cubePosition = mesh?.has(Transform3D)
+    ? mesh.read(Transform3D).translation
+    : undefined;
+  const cubeAnchor = cubePosition && api.world3D2Viewport(cubePosition);
+  const ring = ringNode();
+  const firstVertex =
+    ring && collectPathControlHandles(normalizePathCommands(ring.d))[0];
+  const ringAnchor =
+    ring && firstVertex
+      ? api.pathLocal2Viewport3D(ring, [firstVertex.x, firstVertex.y])
+      : null;
+  const next: Callout[] = [];
+  for (const [id, title, point, side] of [
+    [
+      'cube',
+      props.locale === 'zh' ? '立方体 Mesh' : 'Cube mesh',
+      cubeAnchor,
+      'right',
+    ],
+    [
+      'ring',
+      props.locale === 'zh' ? '挤出 SVG' : 'Extruded SVG',
+      ringAnchor,
+      'left',
+    ],
+  ] as const) {
+    if (!point || !point.every(Number.isFinite)) continue;
+    const [anchorX, anchorY] = point;
+    if (anchorX < 0 || anchorX > width || anchorY < 0 || anchorY > height)
+      continue;
+    next.push({
+      id,
+      title,
+      anchorX,
+      anchorY,
+      labelX: Math.max(
+        4,
+        Math.min(width - 144, anchorX + (side === 'right' ? 20 : -164)),
+      ),
+      labelY: Math.max(
+        4,
+        Math.min(height - 40, anchorY + (side === 'right' ? -54 : 18)),
+      ),
+    });
+  }
+  if (JSON.stringify(callouts.value) !== JSON.stringify(next))
+    callouts.value = next;
 }
 
 function queuePathEdit() {
@@ -212,7 +289,17 @@ function onAnchorMove(event: PointerEvent) {
     y: viewport[1],
   });
   if (!point) return;
-  setPathHandlePoint(edit.commands, edit.meta, point[0], point[1]);
+  const commands = edit.commands.map((command) => [...command] as PathCommand);
+  setPathHandlePoint(commands, edit.meta, point[0], point[1]);
+  const d = toPathData(commands);
+  const candidate = { ...node, d };
+  // A transient invalid contour removes the companion mesh and its edit plane.
+  // Keep the last valid shape so the next pointer move can still be projected.
+  const scene = api!
+    .getNodes()
+    .map((item) => (item.id === candidate.id ? candidate : item));
+  if (!canExtrudePath(candidate, scene)) return;
+  edit.commands = commands;
   refreshPathHandles();
   queuePathEdit();
 }
@@ -414,7 +501,7 @@ onMounted(async () => {
     api = event.detail;
     api.setAppState({
       penbarSelected: Pen.SELECT,
-      penbarAll: [Pen.SELECT, Pen.HAND, Pen.DRAW_BOX_3D],
+      penbarAll: [Pen.SELECT, Pen.HAND, Pen.ORBIT_3D, Pen.DRAW_BOX_3D],
       penbarVisible: false,
       penbarNameLabelVisible: true,
       taskbarVisible: false,
@@ -445,7 +532,13 @@ onUnmounted(() => {
         {{ props.locale === 'zh' ? '选择' : 'Select' }}
       </button>
       <button :aria-pressed="tool === Pen.HAND" @click="setTool(Pen.HAND)">
-        {{ props.locale === 'zh' ? '平移 / 旋转' : 'Pan / orbit' }}
+        {{ props.locale === 'zh' ? '平移' : 'Pan' }}
+      </button>
+      <button
+        :aria-pressed="tool === Pen.ORBIT_3D"
+        @click="setTool(Pen.ORBIT_3D)"
+      >
+        {{ props.locale === 'zh' ? '旋转视角' : 'Orbit' }}
       </button>
       <button
         :aria-pressed="tool === Pen.DRAW_BOX_3D"
@@ -461,6 +554,12 @@ onUnmounted(() => {
       </button>
       <button :aria-pressed="ringTilted" @click="toggleRingTilt">
         {{ props.locale === 'zh' ? '倾斜 SVG' : 'Tilt SVG' }}
+      </button>
+      <button
+        :aria-pressed="showCallouts"
+        @click="showCallouts = !showCallouts"
+      >
+        {{ props.locale === 'zh' ? '显示标注' : 'Show callouts' }}
       </button>
     </div>
     <label
@@ -512,8 +611,8 @@ onUnmounted(() => {
   <p class="isometric-hint">
     {{
       props.locale === 'zh'
-        ? '选择“绘制盒子”，在指定 Z 平面上拖出底面；或选择“编辑 SVG 锚点”，拖动橙色环的外轮廓与孔洞锚点。“倾斜 SVG”可验证旋转后的前表面锚点编辑。选择工具可框选，Shift 可从地板开始框选。平移工具拖动视图，Shift + 拖动转动视角；滚轮缩放，双指平移或缩放。'
-        : 'Choose Draw box to drag a base on the selected Z plane, or Edit SVG anchors to drag the orange ring’s outer and hole vertices. Tilt SVG lets you edit anchors on the rotated front face. Select can marquee meshes, and Shift starts a marquee over the ground. Pan / orbit moves the view; Shift + drag orbits. Wheel zooms, and two fingers pan or pinch to zoom.'
+        ? '选择“绘制盒子”，在指定 Z 平面上拖出底面；或选择“编辑 SVG 锚点”，拖动橙色环的外轮廓与孔洞锚点。“倾斜 SVG”可验证旋转后的前表面锚点编辑。选择工具可框选，Shift 可从地板开始框选。选择“平移”或“旋转视角”后可直接拖动，触屏也适用；滚轮缩放，双指平移或缩放。'
+        : 'Choose Draw box to drag a base on the selected Z plane, or Edit SVG anchors to drag the orange ring’s outer and hole vertices. Tilt SVG lets you edit anchors on the rotated front face. Select can marquee meshes, and Shift starts a marquee over the ground. Choose Pan or Orbit to drag the view directly, including by touch. Wheel zooms, and two fingers pan or pinch to zoom.'
     }}
   </p>
   <div class="isometric-canvas">
@@ -551,6 +650,41 @@ onUnmounted(() => {
         @pointerdown="onAnchorDown($event, handle.meta)"
       />
     </svg>
+    <svg
+      v-if="showCallouts"
+      class="isometric-callouts"
+      aria-hidden="true"
+      :style="{
+        left: `${previewBounds.left}px`,
+        top: `${previewBounds.top}px`,
+        width: `${previewBounds.width}px`,
+        height: `${previewBounds.height}px`,
+      }"
+    >
+      <g
+        v-for="callout in callouts"
+        :key="callout.id"
+        :data-callout="callout.id"
+      >
+        <line
+          :x1="callout.anchorX"
+          :y1="callout.anchorY"
+          :x2="callout.labelX + (callout.id === 'cube' ? 0 : 140)"
+          :y2="callout.labelY + 19"
+        />
+        <circle :cx="callout.anchorX" :cy="callout.anchorY" r="4" />
+        <rect
+          :x="callout.labelX"
+          :y="callout.labelY"
+          width="140"
+          height="38"
+          rx="7"
+        />
+        <text :x="callout.labelX + 12" :y="callout.labelY + 24">
+          {{ callout.title }}
+        </text>
+      </g>
+    </svg>
   </div>
 </template>
 
@@ -585,6 +719,7 @@ onUnmounted(() => {
 }
 .isometric-canvas {
   position: relative;
+  touch-action: none;
 }
 .isometric-canvas ic-spectrum-canvas {
   display: block;
@@ -596,6 +731,7 @@ onUnmounted(() => {
 .isometric-preview {
   position: absolute;
   pointer-events: none;
+  touch-action: none;
 }
 .isometric-preview polygon {
   fill: #43a98a66;
@@ -612,5 +748,29 @@ onUnmounted(() => {
 }
 .isometric-preview .path-anchor.control {
   fill: #db6b24;
+}
+.isometric-callouts {
+  position: absolute;
+  pointer-events: none;
+  overflow: hidden;
+}
+.isometric-callouts line {
+  stroke: var(--vp-c-brand-1);
+  stroke-width: 1.5;
+}
+.isometric-callouts circle {
+  fill: var(--vp-c-brand-1);
+  stroke: var(--vp-c-bg);
+  stroke-width: 2;
+}
+.isometric-callouts rect {
+  fill: var(--vp-c-bg);
+  stroke: var(--vp-c-brand-1);
+  stroke-width: 1;
+}
+.isometric-callouts text {
+  fill: var(--vp-c-text-1);
+  font-size: 13px;
+  font-weight: 600;
 }
 </style>
