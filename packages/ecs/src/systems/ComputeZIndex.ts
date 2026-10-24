@@ -38,6 +38,11 @@ export class ComputeZIndex extends System {
     (q) => q.added.and.changed.with(ZIndex).trackWrites,
   );
 
+  // Reparenting changes flattened render order even when ZIndex is unchanged.
+  private readonly parentChanges = this.query(
+    (q) => q.added.and.changed.with(Children).trackWrites,
+  );
+
   constructor() {
     super();
     this.query(
@@ -79,6 +84,8 @@ export class ComputeZIndex extends System {
     };
     this.zIndexes.added.forEach(collect);
     this.zIndexes.changed.forEach(collect);
+    this.parentChanges.added.forEach(collect);
+    this.parentChanges.changed.forEach(collect);
 
     movedByCamera.forEach((moved, camera) => {
       const descendants = getDescendants(camera, sortForReconciliation);
