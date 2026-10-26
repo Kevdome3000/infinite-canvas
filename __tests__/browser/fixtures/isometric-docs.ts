@@ -3,6 +3,7 @@ import IsometricView from '../../../packages/site/docs/components/IsometricView.
 import {
   Camera3D,
   Extrude3D,
+  Material3D,
   Mesh3DNode,
   Transform3D,
   type API,
@@ -50,14 +51,14 @@ document.addEventListener(
   true,
 );
 const app = createApp(IsometricView, { locale: 'zh' });
-app.mount('#demo');
-document.querySelector('ic-spectrum-canvas')!.addEventListener(
+document.querySelector('#demo')!.addEventListener(
   'ic-ready',
   (event) => {
     api = (event as CustomEvent<API>).detail;
   },
-  { once: true },
+  { capture: true, once: true },
 );
+app.mount('#demo');
 
 const probe = {
   ready: () => {
@@ -82,6 +83,42 @@ const probe = {
     const cube = api!.getNodeById('iso-cube');
     api!.updateNode(cube, { x: cube.x + deltaX });
     await settleECSFrames(api!, 3);
+  },
+  toneSteps: () => {
+    const editor = api!;
+    const cube = editor
+      .getEntity(editor.getNodeById('iso-cube'))
+      .read(Mesh3DNode).meshEntity!;
+    const ring = editor
+      .getEntity(editor.getNodeById('iso-ring'))
+      .read(Extrude3D).meshEntity!;
+    return [cube.read(Material3D).toneSteps, ring.read(Material3D).toneSteps];
+  },
+  outlineWidths: () => {
+    const editor = api!;
+    const cube = editor
+      .getEntity(editor.getNodeById('iso-cube'))
+      .read(Mesh3DNode).meshEntity!;
+    const ring = editor
+      .getEntity(editor.getNodeById('iso-ring'))
+      .read(Extrude3D).meshEntity!;
+    return [
+      cube.read(Material3D).outlineWidth,
+      ring.read(Material3D).outlineWidth,
+    ];
+  },
+  rimStrengths: () => {
+    const editor = api!;
+    const cube = editor
+      .getEntity(editor.getNodeById('iso-cube'))
+      .read(Mesh3DNode).meshEntity!;
+    const ring = editor
+      .getEntity(editor.getNodeById('iso-ring'))
+      .read(Extrude3D).meshEntity!;
+    return [
+      cube.read(Material3D).rimLightStrength,
+      ring.read(Material3D).rimLightStrength,
+    ].map((strength) => Math.round(strength * 100) / 100);
   },
   groupXHandle: () => {
     const editor = api!;

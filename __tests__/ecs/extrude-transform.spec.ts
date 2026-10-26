@@ -143,6 +143,59 @@ it('preserves bevel profile in wire values and across gizmo pose edits', () => {
   ).toBe(1);
 });
 
+it('keeps tone bands through extrusion pose edits and validates wire values', () => {
+  const previous = { depth: 20, toneSteps: 4 };
+  expect(extrude3DFromWire(previous)?.toneSteps).toBe(4);
+  expect(
+    extrude3DToWire({ depth: 30, z: 0, rotation: [0, 0, 0] }, previous),
+  ).toMatchObject({ depth: 30, toneSteps: 4 });
+  expect(extrude3DFromWire({ depth: 20, toneSteps: 9 })?.toneSteps).toBe(0);
+  expect(
+    extrude3DToWire(
+      { depth: 20, z: 0, rotation: [0, 0, 0], toneSteps: 0 },
+      previous,
+    ),
+  ).toBe(20);
+});
+
+it('keeps extrusion outlines through pose edits and clamps width', () => {
+  const previous = { depth: 20, outlineWidth: 2, outlineColor: '#643819' };
+  expect(extrude3DFromWire(previous)?.outlineWidth).toBe(2);
+  expect(extrude3DFromWire(previous)?.outlineColor).toBe('#643819');
+  expect(
+    extrude3DToWire({ depth: 30, z: 0, rotation: [0, 0, 0] }, previous),
+  ).toMatchObject({ depth: 30, outlineWidth: 2, outlineColor: '#643819' });
+  expect(extrude3DFromWire({ depth: 20, outlineWidth: 20 })?.outlineWidth).toBe(
+    8,
+  );
+  expect(extrude3DFromWire({ depth: 20, outlineWidth: -1 })?.outlineWidth).toBe(
+    0,
+  );
+});
+
+it('keeps rim light through extrusion pose edits and clamps strength', () => {
+  const previous = {
+    depth: 20,
+    rimLightStrength: 0.9,
+    rimLightColor: '#ffd18a',
+  };
+  expect(extrude3DFromWire(previous)?.rimLightStrength).toBe(0.9);
+  expect(extrude3DFromWire(previous)?.rimLightColor).toBe('#ffd18a');
+  expect(
+    extrude3DToWire({ depth: 30, z: 0, rotation: [0, 0, 0] }, previous),
+  ).toMatchObject({
+    depth: 30,
+    rimLightStrength: 0.9,
+    rimLightColor: '#ffd18a',
+  });
+  expect(
+    extrude3DFromWire({ depth: 20, rimLightStrength: 3 })?.rimLightStrength,
+  ).toBe(1);
+  expect(
+    extrude3DFromWire({ depth: 20, rimLightStrength: -1 })?.rimLightStrength,
+  ).toBe(0);
+});
+
 it.each([
   { rotation: [0.2, -0.3, 0.4], base: 0.6 },
   { rotation: [0.2, Math.PI / 2, 0.4], base: 0 },
@@ -243,7 +296,9 @@ it('does not manufacture geometry from missing components or empty bounds', () =
 it('does not resolve an extrusion pose without a source world transform', () => {
   const rectangle = source();
   rectangle.values.delete(GlobalTransform);
-  expect(resolveExtrudeCompanionTransform(rectangle.entity, true)).toBeUndefined();
+  expect(
+    resolveExtrudeCompanionTransform(rectangle.entity, true),
+  ).toBeUndefined();
 
   const vector = source();
   vector.values.set(Path, { d: 'M0 0 H40 V40 H0 Z', fillRule: 'nonzero' });

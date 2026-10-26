@@ -16,6 +16,27 @@ export function mesh3DNodeFromWire(node: Mesh3DNodeSerializedNode): Mesh3DNode {
   return new Mesh3DNode({
     ...material,
     baseColor: parseMesh3DBaseColor(material.baseColor),
+    toneSteps:
+      Number.isInteger(material.toneSteps) &&
+      material.toneSteps! >= 2 &&
+      material.toneSteps! <= 8
+        ? material.toneSteps
+        : 0,
+    outlineWidth:
+      Number.isFinite(material.outlineWidth) && material.outlineWidth! > 0
+        ? Math.min(material.outlineWidth!, 8)
+        : 0,
+    outlineColor: material.outlineColor
+      ? parseMesh3DBaseColor(material.outlineColor)
+      : [0.08, 0.12, 0.2, 1],
+    rimLightStrength:
+      Number.isFinite(material.rimLightStrength) &&
+      material.rimLightStrength! > 0
+        ? Math.min(material.rimLightStrength!, 1)
+        : 0,
+    rimLightColor: material.rimLightColor
+      ? parseMesh3DBaseColor(material.rimLightColor)
+      : [0.55, 0.8, 1, 1],
     baseColorOverridden: material.baseColor !== undefined,
     metallicOverridden: material.metallic !== undefined,
     roughnessOverridden: material.roughness !== undefined,

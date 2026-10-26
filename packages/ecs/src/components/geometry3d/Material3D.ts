@@ -33,6 +33,21 @@ export class Material3D {
   /** Optional side-wall color for an extruded mesh; null uses baseColor. */
   @field.object declare sideColor: [number, number, number, number] | null;
 
+  /** Optional number of lit luminance bands; zero keeps continuous PBR shading. */
+  @field.float32 declare toneSteps: number;
+
+  /** Screen-space silhouette width in CSS pixels; zero disables the extra pass. */
+  @field.float32 declare outlineWidth: number;
+
+  /** Authored sRGB outline color. */
+  @field.object declare outlineColor: [number, number, number, number];
+
+  /** View-dependent lit rim strength in 0..1; zero disables it. */
+  @field.float32 declare rimLightStrength: number;
+
+  /** Authored sRGB rim light color. */
+  @field.object declare rimLightColor: [number, number, number, number];
+
   /**
    * Ambient light intensity (0..1).
    */
@@ -158,6 +173,11 @@ export class Material3D {
     }
     this.baseColor ??= [1, 1, 1, 1];
     this.sideColor ??= null;
+    this.toneSteps ??= 0;
+    this.outlineWidth ??= 0;
+    this.outlineColor ??= [0.08, 0.12, 0.2, 1];
+    this.rimLightStrength ??= 0;
+    this.rimLightColor ??= [0.55, 0.8, 1, 1];
     this.ambient ??= 0.5;
     this.diffuse ??= 0.7;
     this.specular ??= 0.3;

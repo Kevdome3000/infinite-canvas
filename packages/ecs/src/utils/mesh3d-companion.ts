@@ -61,6 +61,21 @@ export function queueMesh3DCompanion(
   const rotation3d = [...node.rotation3d] as [number, number, number];
   const scale3d = node.scale3d;
   const baseColor = [...node.baseColor] as [number, number, number, number];
+  const toneSteps = node.toneSteps;
+  const outlineWidth = node.outlineWidth;
+  const outlineColor = [...node.outlineColor] as [
+    number,
+    number,
+    number,
+    number,
+  ];
+  const rimLightStrength = node.rimLightStrength;
+  const rimLightColor = [...node.rimLightColor] as [
+    number,
+    number,
+    number,
+    number,
+  ];
   const ambient = node.ambient;
   const diffuse = node.diffuse;
   const specular = node.specular;
@@ -121,6 +136,11 @@ export function queueMesh3DCompanion(
       new Mesh3D(meshData),
       new Material3D({
         baseColor,
+        toneSteps,
+        outlineWidth,
+        outlineColor,
+        rimLightStrength,
+        rimLightColor,
         ambient,
         diffuse,
         specular,

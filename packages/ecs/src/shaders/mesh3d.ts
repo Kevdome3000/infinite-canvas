@@ -86,6 +86,10 @@ layout(std140) uniform ModelUniforms3D {
   vec4 u_OcclusionUvTransform;
   vec4 u_NormalParams; // x: ready, y: UV set, z: rotation, w: scale
   vec4 u_OcclusionParams; // x: ready, y: UV set, z: rotation, w: strength
+  vec4 u_StylizationParams; // x: lit luminance bands, y: rim light strength
+  vec4 u_OutlineParams; // x: width in device pixels, yz: viewport size
+  vec4 u_OutlineColor;
+  vec4 u_RimColor;
 };
 
 layout(location = 0) in vec3 a_Position3D;
@@ -138,6 +142,20 @@ void main() {
   } else {
     gl_Position = u_ProjectionMatrix3D * u_ViewMatrix3D * worldPos;
   }
+#ifdef OUTLINE_PASS
+  // Move the back-face hull outwards in screen pixels without changing depth.
+  vec4 offsetClip = u_ProjectionMatrix3D * u_ViewMatrix3D *
+    vec4(worldPos.xyz + normalize(v_Normal) * 0.01, 1.0);
+  vec2 ndcDelta = offsetClip.xy / offsetClip.w -
+    gl_Position.xy / gl_Position.w;
+  vec2 pixelDelta = ndcDelta * u_OutlineParams.yz;
+  float pixelLength = length(pixelDelta);
+  if (pixelLength > 1e-6) {
+    vec2 direction = pixelDelta / pixelLength;
+    gl_Position.xy += direction * u_OutlineParams.x *
+      vec2(2.0 / u_OutlineParams.y, 2.0 / u_OutlineParams.z) * gl_Position.w;
+  }
+#endif
 }
 `;
 
@@ -194,6 +212,10 @@ layout(std140) uniform ModelUniforms3D {
   vec4 u_OcclusionUvTransform;
   vec4 u_NormalParams;
   vec4 u_OcclusionParams;
+  vec4 u_StylizationParams;
+  vec4 u_OutlineParams;
+  vec4 u_OutlineColor;
+  vec4 u_RimColor;
 };
 
 uniform sampler2D u_Map;
@@ -618,6 +640,10 @@ vec2 transformUv(vec2 uv, vec4 transform, float rotation) {
 }
 
 vec4 shadeMaterial(out bool alphaDiscard) {
+  alphaDiscard = false;
+#ifdef OUTLINE_PASS
+  return u_OutlineColor;
+#endif
   vec4 baseColor = u_BaseColor;
   if (u_PbrParams.z > 0.5 && abs(v_LocalNormalZ) < 1.0) {
     baseColor = u_SideColor;
@@ -741,7 +767,21 @@ vec4 shadeMaterial(out bool alphaDiscard) {
     emission *= srgbToLinear(texture(SAMPLER_2D(u_EmissiveMap), emissiveUv).rgb);
   }
   vec3 result = ambient + Lo + emission * u_EmissiveParams.z;
-  return vec4(linearToSrgb(toneMapACES(result)), baseColor.a);
+  vec3 mapped = toneMapACES(result);
+  if (u_StylizationParams.x >= 2.0) {
+    float luminance = dot(mapped, vec3(0.2126, 0.7152, 0.0722));
+    float bands = u_StylizationParams.x;
+    float stepped = (floor(min(luminance, 0.9999) * bands) + 0.5) / bands;
+    mapped = clamp(mapped * (stepped / max(luminance, 1e-4)), 0.0, 1.0);
+  }
+  if (u_StylizationParams.y > 0.0) {
+    // Work in display-linear color after tone mapping; the authored rim color
+    // is sRGB. Geometry, shadows, alpha, and depth remain unchanged.
+    float facing = clamp(dot(shadowNormal, viewDir), 0.0, 1.0);
+    float rim = pow(1.0 - facing, 2.0) * u_StylizationParams.y * u_RimColor.a;
+    mapped = mix(mapped, srgbToLinear(u_RimColor.rgb), clamp(rim, 0.0, 1.0));
+  }
+  return vec4(linearToSrgb(mapped), baseColor.a);
 }
 
 void main() {

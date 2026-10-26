@@ -19,6 +19,12 @@ Choose **Edit SVG anchors** to drag the orange ring's outer vertices or the inne
 
 Turn on **Show callouts** to label the cube and the extruded SVG. Each screen-facing label has a leader anchored to the live 3D mesh or Path vertex. It follows camera movement, mesh transforms, and SVG anchor edits; labels for anchors outside the viewport are hidden. Turn the overlay off when editing without annotations. These are DOM/SVG overlays and do not participate in 3D depth testing.
 
+Turn on **Stepped tones** to quantize lit luminance into four bands on both objects. This is applied in the 3D material shader after lighting and tone mapping, so geometry, shadows, picking, and depth ordering remain the same. Turn it off to restore continuous PBR shading. The unlit material mode ignores this setting. Mesh nodes accept `material3d.toneSteps`, and extruded Path/rect nodes accept `extrude3d: { toneSteps }`; valid values are 2–8, while 0 or an omitted value disables banding.
+
+Turn on **Show outlines** for a dark silhouette around the cube and the orange SVG ring, including its hole. The renderer expands back faces in screen space and tests them against the existing 3D depth buffer, so foreground geometry hides outlines behind it. Mesh nodes accept `material3d: { outlineWidth: 2, outlineColor: '#1e3264' }`; extruded Path/rect nodes accept the same fields in `extrude3d`. Width is in screen pixels, from 0 (off) to 8. This pass supports opaque meshes in a free 3D camera; alpha blended and alpha masked materials are excluded. Standard glTF export uses PBR materials and does not retain the tone or outline settings.
+
+Turn on **Rim light** to tint visible surfaces near their view-facing edges. The material shader derives the tint from the surface normal and view direction, after normal lighting and tone mapping. It follows camera orbit and uses the mesh's existing depth and alpha rules; it is a surface highlight, not a blurred glow outside the silhouette. Mesh nodes accept `material3d: { rimLightStrength: 0.9, rimLightColor: '#9ad9ff' }`, and extruded Path/rect nodes accept the same fields in `extrude3d`. Strength is 0 (off) to 1. Unlit materials ignore it, and standard glTF export does not retain it.
+
 <script setup>
 import IsometricView from '../components/IsometricView.vue'
 </script>

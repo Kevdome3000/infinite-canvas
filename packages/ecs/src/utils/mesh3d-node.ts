@@ -312,6 +312,11 @@ export function syncMesh3DNodeCompanionMaterial(
     : imported?.baseColor ?? node.baseColor)];
   syncMaterial3D(meshEntity, {
     baseColor,
+    toneSteps: node.toneSteps,
+    outlineWidth: node.outlineWidth,
+    outlineColor: [...node.outlineColor],
+    rimLightStrength: node.rimLightStrength,
+    rimLightColor: [...node.rimLightColor],
     ambient: node.ambient,
     diffuse: node.diffuse,
     specular: node.specular,

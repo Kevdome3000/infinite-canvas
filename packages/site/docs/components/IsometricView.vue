@@ -35,6 +35,9 @@ const pathHandles = ref<
 >([]);
 const previewBounds = ref({ left: 0, top: 0, width: 0, height: 0 });
 const showCallouts = ref(false);
+const steppedTones = ref(false);
+const showOutlines = ref(false);
+const showRimLight = ref(false);
 type Callout = {
   id: string;
   title: string;
@@ -113,8 +116,88 @@ function toggleRingTilt() {
     if (node?.type !== 'path') return;
     editor.updateNode(node, {
       extrude3d: {
+        ...(typeof node.extrude3d === 'object' ? node.extrude3d : {}),
         depth: 50,
         rotation: tilted ? [0.35, -0.25, 0.2] : [0, 0, 0],
+      },
+    });
+    editor.record();
+  });
+}
+
+function toggleSteppedTones() {
+  const editor = api;
+  if (!editor) return;
+  const toneSteps = steppedTones.value ? 0 : 4;
+  editor.runAtNextTick(() => {
+    const cube = editor.getNodeById('iso-cube');
+    const ring = ringNode();
+    if (cube?.type !== 'mesh3d' || !ring) return;
+    editor.updateNode(cube, {
+      material3d: { ...cube.material3d, toneSteps },
+    });
+    editor.updateNode(ring, {
+      extrude3d: {
+        ...(typeof ring.extrude3d === 'object'
+          ? ring.extrude3d
+          : { depth: 50 }),
+        toneSteps,
+      },
+    });
+    editor.record();
+  });
+}
+
+function toggleOutlines() {
+  const editor = api;
+  if (!editor) return;
+  const outlineWidth = showOutlines.value ? 0 : 2;
+  editor.runAtNextTick(() => {
+    const cube = editor.getNodeById('iso-cube');
+    const ring = ringNode();
+    if (cube?.type !== 'mesh3d' || !ring) return;
+    editor.updateNode(cube, {
+      material3d: {
+        ...cube.material3d,
+        outlineWidth,
+        outlineColor: '#1e3264',
+      },
+    });
+    editor.updateNode(ring, {
+      extrude3d: {
+        ...(typeof ring.extrude3d === 'object'
+          ? ring.extrude3d
+          : { depth: 50 }),
+        outlineWidth,
+        outlineColor: '#643819',
+      },
+    });
+    editor.record();
+  });
+}
+
+function toggleRimLight() {
+  const editor = api;
+  if (!editor) return;
+  const rimLightStrength = showRimLight.value ? 0 : 0.9;
+  editor.runAtNextTick(() => {
+    const cube = editor.getNodeById('iso-cube');
+    const ring = ringNode();
+    if (cube?.type !== 'mesh3d' || !ring) return;
+    editor.updateNode(cube, {
+      material3d: {
+        ...cube.material3d,
+        rimLightStrength,
+        rimLightColor: '#9ad9ff',
+      },
+    });
+    editor.updateNode(ring, {
+      extrude3d: {
+        ...(typeof ring.extrude3d === 'object'
+          ? ring.extrude3d
+          : { depth: 50 }),
+        rimLightStrength,
+        rimLightColor: '#ffd18a',
       },
     });
     editor.record();
@@ -151,6 +234,13 @@ function refreshPathHandles() {
 
 function animatePathHandles() {
   const extrude = ringNode()?.extrude3d;
+  const cube = api?.getNodeById('iso-cube');
+  steppedTones.value =
+    cube?.type === 'mesh3d' && (cube.material3d?.toneSteps ?? 0) >= 2;
+  showOutlines.value =
+    cube?.type === 'mesh3d' && (cube.material3d?.outlineWidth ?? 0) > 0;
+  showRimLight.value =
+    cube?.type === 'mesh3d' && (cube.material3d?.rimLightStrength ?? 0) > 0;
   ringTilted.value =
     typeof extrude === 'object' &&
     !!extrude.rotation?.some((angle) => angle !== 0);
@@ -561,6 +651,15 @@ onUnmounted(() => {
       >
         {{ props.locale === 'zh' ? '显示标注' : 'Show callouts' }}
       </button>
+      <button :aria-pressed="steppedTones" @click="toggleSteppedTones">
+        {{ props.locale === 'zh' ? '分层色阶' : 'Stepped tones' }}
+      </button>
+      <button :aria-pressed="showOutlines" @click="toggleOutlines">
+        {{ props.locale === 'zh' ? '显示轮廓' : 'Show outlines' }}
+      </button>
+      <button :aria-pressed="showRimLight" @click="toggleRimLight">
+        {{ props.locale === 'zh' ? '边缘光' : 'Rim light' }}
+      </button>
     </div>
     <label
       >{{ props.locale === 'zh' ? '视角' : 'View' }}
@@ -702,9 +801,11 @@ onUnmounted(() => {
 }
 .isometric-tools {
   display: flex;
+  flex-wrap: wrap;
   gap: 0.3rem;
 }
 .isometric-tools button {
+  white-space: nowrap;
   padding: 0.25rem 0.6rem;
   border: 1px solid var(--vp-c-divider);
   border-radius: 0.3rem;
@@ -712,6 +813,17 @@ onUnmounted(() => {
 .isometric-tools button[aria-pressed='true'] {
   color: var(--vp-c-brand-1);
   border-color: var(--vp-c-brand-1);
+}
+@media (max-width: 640px) {
+  .isometric-tools {
+    width: 100%;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    padding-bottom: 0.2rem;
+  }
+  .isometric-tools button {
+    flex: none;
+  }
 }
 .isometric-hint {
   margin: 0 0 0.75rem;
