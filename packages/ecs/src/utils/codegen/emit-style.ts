@@ -26,7 +26,23 @@ export function styleValueToCss(
   return String(lit ?? '');
 }
 
-function box(v: [number, number, number, number]): string {
+/** Keep fill opacity on the paint, so text and child elements stay opaque. */
+export function solidFillColorToCss(
+  color: StyleValue,
+  opacity: StyleValue | undefined,
+  mode: CodeVariablesMode,
+): string {
+  const cssColor = styleValueToCss(color, mode);
+  if (!opacity) return cssColor;
+  const literal = Number(opacity.literal);
+  const weight =
+    opacity.token || !Number.isFinite(literal)
+      ? `calc(${styleValueToCss(opacity, mode)} * 100%)`
+      : `${formatNumber(literal * 100)}%`;
+  return `color-mix(in srgb, ${cssColor} ${weight}, transparent)`;
+}
+
+export function boxToCss(v: [number, number, number, number]): string {
   const [t, r, b, l] = v;
   if (t === r && r === b && b === l) {
     return `${formatNumber(t)}px`;
@@ -37,6 +53,34 @@ function box(v: [number, number, number, number]): string {
   return `${formatNumber(t)}px ${formatNumber(r)}px ${formatNumber(
     b,
   )}px ${formatNumber(l)}px`;
+}
+
+/** A single image fill and its node share one `<img>` opacity in generated code. */
+export function combinedImageOpacityCss(
+  style: StyleIR,
+  mode: CodeVariablesMode,
+): string | undefined {
+  const fill = style.imageFillOpacity;
+  if (!fill)
+    return style.opacity === undefined
+      ? undefined
+      : formatNumber(style.opacity);
+  if (typeof fill.literal === 'number')
+    return formatNumber((style.opacity ?? 1) * fill.literal);
+  const fillCss = styleValueToCss(fill, mode);
+  return style.opacity === undefined
+    ? fillCss
+    : `calc(${formatNumber(style.opacity)} * ${fillCss})`;
+}
+
+export function textDecorationToCss(
+  decoration: NonNullable<StyleIR['textDecoration']>,
+  mode: CodeVariablesMode,
+): string {
+  return `${decoration.style} ${decoration.line} ${styleValueToCss(
+    decoration.color,
+    mode,
+  )} ${formatNumber(decoration.thickness)}px`;
 }
 
 /**
@@ -62,13 +106,20 @@ export function styleIRToCssDeclarations(
     if (style.columnGap !== undefined)
       push('column-gap', `${formatNumber(style.columnGap)}px`);
   }
+  if (style.display === 'inline-block') push('display', 'inline-block');
+  if (style.position) push('position', style.position);
+  if (style.left !== undefined) push('left', `${formatNumber(style.left)}px`);
+  if (style.top !== undefined) push('top', `${formatNumber(style.top)}px`);
   if (style.flexGrow !== undefined)
     push('flex-grow', formatNumber(style.flexGrow));
   if (style.flexShrink !== undefined)
     push('flex-shrink', formatNumber(style.flexShrink));
+  if (style.flexBasis !== undefined)
+    push('flex-basis', `${formatNumber(style.flexBasis)}px`);
+  if (style.alignSelf) push('align-self', style.alignSelf);
 
-  if (style.padding) push('padding', box(style.padding));
-  if (style.margin) push('margin', box(style.margin));
+  if (style.padding) push('padding', boxToCss(style.padding));
+  if (style.margin) push('margin', boxToCss(style.margin));
 
   if (style.width !== undefined)
     push('width', `${formatNumber(style.width)}px`);
@@ -82,9 +133,22 @@ export function styleIRToCssDeclarations(
     push('min-height', `${formatNumber(style.minHeight)}px`);
   if (style.maxHeight !== undefined)
     push('max-height', `${formatNumber(style.maxHeight)}px`);
+  if (style.transform) {
+    push('transform', style.transform);
+    push('transform-origin', '0 0');
+  }
+  if (style.overflow) push('overflow', style.overflow);
+  if (style.objectFit) push('object-fit', style.objectFit);
+  if (style.objectPosition) push('object-position', style.objectPosition);
+  if (style.mixBlendMode) push('mix-blend-mode', style.mixBlendMode);
 
   if (style.backgroundColor)
-    push('background-color', styleValueToCss(style.backgroundColor, mode));
+    push(
+      'background-color',
+      solidFillColorToCss(style.backgroundColor, style.solidFillOpacity, mode),
+    );
+  if (style.backgroundImage)
+    push('background-image', styleValueToCss(style.backgroundImage, mode));
   if (style.borderRadius)
     push('border-radius', styleValueToCss(style.borderRadius, mode, true));
   if (style.borderWidth) {
@@ -103,20 +167,45 @@ export function styleIRToCssDeclarations(
       )}px ${styleValueToCss(s.color, mode)}`,
     );
   }
-  if (style.opacity !== undefined) push('opacity', formatNumber(style.opacity));
+  const opacity = combinedImageOpacityCss(style, mode);
+  if (opacity !== undefined) push('opacity', opacity);
+  if (style.visibility) push('visibility', style.visibility);
 
-  if (style.color) push('color', styleValueToCss(style.color, mode));
+  if (style.color)
+    push(
+      'color',
+      solidFillColorToCss(style.color, style.solidFillOpacity, mode),
+    );
   if (style.fontSize)
     push('font-size', styleValueToCss(style.fontSize, mode, true));
   if (style.fontWeight !== undefined)
     push('font-weight', String(style.fontWeight));
   if (style.fontStyle) push('font-style', style.fontStyle);
+  if (style.fontVariant) push('font-variant', style.fontVariant);
+  if (style.fontKerning) push('font-kerning', style.fontKerning);
   if (style.fontFamily) push('font-family', style.fontFamily);
   if (style.textAlign) push('text-align', style.textAlign);
+  if (style.whiteSpace) push('white-space', style.whiteSpace);
+  if (style.textWrapWidth !== undefined) {
+    if (style.display !== 'inline-block') push('display', 'inline-block');
+    push('overflow-wrap', 'anywhere');
+    push('max-width', `${formatNumber(style.textWrapWidth)}px`);
+  }
+  if (style.maxLines !== undefined && style.textOverflow === 'ellipsis') {
+    push('display', '-webkit-box');
+    push('-webkit-box-orient', 'vertical');
+    push('-webkit-line-clamp', String(style.maxLines));
+    push('overflow', 'hidden');
+  } else if (style.maxLines !== undefined && style.textOverflow === 'clip') {
+    push('max-height', `calc(${style.maxLines} * 1lh)`);
+    push('overflow', 'hidden');
+  }
   if (style.letterSpacing)
     push('letter-spacing', styleValueToCss(style.letterSpacing, mode, true));
   if (style.lineHeight)
     push('line-height', styleValueToCss(style.lineHeight, mode, true));
+  if (style.textDecoration)
+    push('text-decoration', textDecorationToCss(style.textDecoration, mode));
 
   return out;
 }

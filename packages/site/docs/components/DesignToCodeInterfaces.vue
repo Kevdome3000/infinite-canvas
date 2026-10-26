@@ -1,11 +1,13 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import type { Highlighter } from 'shiki';
 import {
   Pen,
   downloadIcDocument,
+  reconcileRefInstances,
   type API,
   type CodeFramework,
+  type SerializedNode,
 } from '@infinite-canvas-tutorial/ecs';
 import { Event } from '@infinite-canvas-tutorial/webcomponents';
 import { ensureExampleWorld } from '../lib/ensure-example-world';
@@ -18,6 +20,7 @@ const props = withDefaults(defineProps<{ locale?: 'en' | 'zh' }>(), {
 const canvasElement = ref<HTMLElement | null>(null);
 const sceneId = ref(interfaceScenes[0].id);
 const framework = ref<CodeFramework>('html-css');
+const outputView = ref<'code' | 'preview'>('code');
 const code = ref('');
 const highlightedCode = ref('');
 const ready = ref(false);
@@ -31,6 +34,16 @@ let disposeSubscription: (() => void) | undefined;
 let refreshTimer: ReturnType<typeof setTimeout> | undefined;
 let onReady: ((event: CustomEvent<API>) => void) | undefined;
 let highlighterPromise: Promise<Highlighter> | undefined;
+let expandedBaseline: SerializedNode[] = [];
+
+function codeSource() {
+  if (!api) return [];
+  return reconcileRefInstances(
+    scene.value.nodes,
+    expandedBaseline,
+    api.getNodes(),
+  );
+}
 
 function getHighlighter() {
   highlighterPromise ??= import('shiki/bundle/web')
@@ -49,14 +62,25 @@ function getHighlighter() {
 
 function fitCamera() {
   if (!api || !canvasElement.value) return;
-  const zoom = Math.min(
-    0.52,
-    Math.max(0.2, (canvasElement.value.clientWidth - 128) / 1050),
-  );
+  const { width, height } = scene.value;
+  const { clientWidth, clientHeight } = canvasElement.value;
+  const mobile = width < 500;
+  const zoom = mobile
+    ? Math.max(
+        0.2,
+        Math.min(
+          0.72,
+          (clientWidth - 64) / width,
+          (clientHeight - 96) / height,
+        ),
+      )
+    : Math.min(0.52, Math.max(0.2, (clientWidth - 128) / width));
+  const left = mobile ? Math.max(32, (clientWidth - width * zoom) / 2) : 64;
+  const top = mobile ? Math.max(64, (clientHeight - height * zoom) / 2) : 64;
   api.setAppState({
     cameraZoom: zoom,
-    cameraX: -64 / zoom,
-    cameraY: -64 / zoom,
+    cameraX: -left / zoom,
+    cameraY: -top / zoom,
   });
 }
 
@@ -81,14 +105,16 @@ function generateCode() {
       api.exportCode(undefined, {
         framework: 'html-css',
         variablesMode: 'css-var',
+        semanticElements: scene.value.semanticElements,
       }),
     );
   }
-  return api.exportCode(undefined, {
+  return api.exportCode(codeSource(), {
     framework: 'react-tailwind',
     variablesMode: 'resolved',
     componentStructure: 'preserve',
     componentName: scene.value.componentName,
+    semanticElements: scene.value.semanticElements,
   });
 }
 
@@ -108,6 +134,7 @@ async function loadScene(id: string) {
   const next = interfaceScenes.find((item) => item.id === id);
   if (!next) return;
   sceneId.value = id;
+  expandedBaseline = [];
   ready.value = false;
   code.value = '';
   try {
@@ -126,6 +153,8 @@ async function loadScene(id: string) {
       },
       { capture: 'NEVER' },
     );
+    expandedBaseline = structuredClone(api.getNodes());
+    await nextTick();
     fitCamera();
     refreshCode();
     ready.value = true;
@@ -163,13 +192,15 @@ function downloadCode() {
 
 function downloadDesign() {
   if (!api) return;
-  downloadIcDocument(
-    api.exportIcDocument(window.location.origin),
-    `${scene.value.id}.ic`,
-  );
+  const document = api.exportIcDocument(window.location.origin);
+  document.elements = codeSource();
+  downloadIcDocument(document, `${scene.value.id}.ic`);
 }
 
-watch(framework, refreshCode);
+watch(framework, (format) => {
+  if (format !== 'html-css') outputView.value = 'code';
+  refreshCode();
+});
 watch([code, framework], async ([source, format], _previous, onCleanup) => {
   let cancelled = false;
   onCleanup(() => {
@@ -264,7 +295,10 @@ onUnmounted(() => {
     <div class="interface-demo-canvas">
       <ic-spectrum-canvas
         ref="canvasElement"
-        style="width: 100%; height: 560px"
+        :style="{
+          width: '100%',
+          height: scene.width < 500 ? '720px' : '560px',
+        }"
         renderer="webgl"
         app-state='{"topbarVisible":true,"cameraZoom":0.52,"cameraX":-123,"cameraY":-123}'
       />
@@ -276,6 +310,29 @@ onUnmounted(() => {
           ? '从当前画布生成的代码'
           : 'Code from the current canvas'
       }}</strong>
+      <div
+        class="interface-demo-tabs"
+        role="group"
+        :aria-label="locale === 'zh' ? '输出视图' : 'Output view'"
+      >
+        <button
+          type="button"
+          :aria-pressed="outputView === 'code'"
+          :class="{ active: outputView === 'code' }"
+          @click="outputView = 'code'"
+        >
+          {{ locale === 'zh' ? '代码' : 'Code' }}
+        </button>
+        <button
+          type="button"
+          :disabled="!ready || framework !== 'html-css'"
+          :aria-pressed="outputView === 'preview'"
+          :class="{ active: outputView === 'preview' }"
+          @click="outputView = 'preview'"
+        >
+          {{ locale === 'zh' ? 'HTML 预览' : 'HTML preview' }}
+        </button>
+      </div>
       <div>
         <button type="button" :disabled="!ready" @click="loadScene(sceneId)">
           {{ locale === 'zh' ? '重置画布' : 'Reset canvas' }}
@@ -297,9 +354,19 @@ onUnmounted(() => {
     <p v-if="notice" class="interface-demo-notice" role="status">
       {{ notice }}
     </p>
-    <div class="interface-demo-code">
+    <div v-if="outputView === 'code'" class="interface-demo-code">
       <div v-if="highlightedCode" v-html="highlightedCode" />
       <pre v-else><code>{{ code }}</code></pre>
+    </div>
+    <div v-else class="interface-demo-preview">
+      <iframe
+        :key="scene.id"
+        :title="locale === 'zh' ? '生成的 HTML 预览' : 'Generated HTML preview'"
+        :srcdoc="code"
+        :width="scene.width"
+        :height="scene.height"
+        sandbox=""
+      />
     </div>
   </div>
 </template>
@@ -369,6 +436,18 @@ onUnmounted(() => {
   border-radius: 0;
   font-size: 12px;
   background: var(--vp-code-block-bg);
+}
+.interface-demo-preview {
+  max-height: 520px;
+  overflow: auto;
+  padding: 16px;
+  background: #e8ebf2;
+}
+.interface-demo-preview iframe {
+  display: block;
+  margin-inline: auto;
+  border: 0;
+  background: #fff;
 }
 .interface-demo-code :deep(pre) {
   margin: 0;

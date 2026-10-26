@@ -2,6 +2,275 @@ import { expect, test } from '@playwright/test';
 import { PNG } from 'pngjs';
 import type {} from './fixtures/isometric-docs';
 
+test('auto orbit shares the animation clock with the spotlight and yields to editing', async ({
+  page,
+}) => {
+  const errors: string[] = [];
+  page.on('pageerror', (error) => errors.push(error.message));
+  await page.goto('/isometric-docs.html');
+  await expect
+    .poll(() => page.evaluate(() => window.isometricDocs.ready()), {
+      timeout: 30000,
+    })
+    .toBe(true);
+  const initialEye = await page.evaluate(() =>
+    window.isometricDocs.cameraEye(),
+  );
+  const initialDocument = await page.evaluate(() =>
+    window.isometricDocs.documentNodes(),
+  );
+  const orbit = page.getByRole('button', { name: '自动环绕' });
+  const spotlight = page.getByRole('button', { name: '动态聚光灯' });
+  await orbit.click();
+  await expect(orbit).toHaveAttribute('aria-pressed', 'true');
+  await expect
+    .poll(() => page.evaluate(() => window.isometricDocs.cameraEye()[0]))
+    .not.toBeCloseTo(initialEye[0], 1);
+  expect(
+    await page.evaluate(() => window.isometricDocs.documentNodes()),
+  ).toEqual(initialDocument);
+  await spotlight.click();
+  await expect
+    .poll(() => page.evaluate(() => window.isometricDocs.sweepLight()))
+    .toMatchObject({ intensity: 8, castShadow: true });
+  await orbit.click();
+  await expect(orbit).toHaveAttribute('aria-pressed', 'false');
+  const stoppedEye = await page.evaluate(() =>
+    window.isometricDocs.cameraEye(),
+  );
+  await page.evaluate(() => window.isometricDocs.settle());
+  expect(await page.evaluate(() => window.isometricDocs.cameraEye())).toEqual(
+    stoppedEye,
+  );
+  expect(await page.evaluate(() => window.isometricDocs.cubeMeshStable())).toBe(
+    true,
+  );
+  await orbit.click();
+  const canvas = page.locator('ic-spectrum-canvas');
+  const box = (await canvas.boundingBox())!;
+  await page.mouse.click(box.x + 15, box.y + box.height - 15);
+  await expect(orbit).toHaveAttribute('aria-pressed', 'false');
+  await spotlight.click();
+  expect(errors).toEqual([]);
+});
+
+test('offscreen isometric previews pause and resume camera, light, and callouts', async ({
+  page,
+}) => {
+  const errors: string[] = [];
+  page.on('pageerror', (error) => errors.push(error.message));
+  await page.goto('/isometric-docs.html');
+  await expect
+    .poll(() => page.evaluate(() => window.isometricDocs.ready()), {
+      timeout: 30000,
+    })
+    .toBe(true);
+  await page.getByRole('button', { name: '显示标注' }).click();
+  const cubeAnchor = page.locator('[data-callout="cube"] circle');
+  await expect(cubeAnchor).toBeVisible();
+  const initialEye = await page.evaluate(() =>
+    window.isometricDocs.cameraEye(),
+  );
+  await page.getByRole('button', { name: '自动环绕' }).click();
+  await page.getByRole('button', { name: '动态聚光灯' }).click();
+  await expect
+    .poll(() => page.evaluate(() => window.isometricDocs.cameraEye()[0]))
+    .not.toBeCloseTo(initialEye[0], 1);
+  await page.evaluate(async () => {
+    const canvas = document.querySelector('ic-spectrum-canvas')!;
+    const offscreen = new Promise<void>((resolve) => {
+      const observer = new IntersectionObserver(([entry]) => {
+        if (!entry.isIntersecting) {
+          observer.disconnect();
+          resolve();
+        }
+      });
+      observer.observe(canvas);
+    });
+    const spacer = document.createElement('div');
+    spacer.id = 'visibility-spacer';
+    spacer.style.height = '1400px';
+    document.body.insertBefore(spacer, document.querySelector('#demo'));
+    await offscreen;
+  });
+  const eye = await page.evaluate(() => window.isometricDocs.cameraEye());
+  const light = await page.evaluate(() => window.isometricDocs.sweepLight());
+  const anchor = await cubeAnchor.getAttribute('cx');
+  await page.evaluate(() => window.isometricDocs.moveCube(25));
+  await page.evaluate(() => window.isometricDocs.settle());
+  expect(await page.evaluate(() => window.isometricDocs.cameraEye())).toEqual(
+    eye,
+  );
+  expect(await page.evaluate(() => window.isometricDocs.sweepLight())).toEqual(
+    light,
+  );
+  expect(await cubeAnchor.getAttribute('cx')).toBe(anchor);
+  await page.evaluate(() =>
+    document.querySelector('#visibility-spacer')!.remove(),
+  );
+  await expect
+    .poll(() => page.evaluate(() => window.isometricDocs.cameraEye()[0]))
+    .not.toBeCloseTo(eye[0], 1);
+  await expect
+    .poll(() => page.evaluate(() => window.isometricDocs.sweepLight()?.x))
+    .not.toBeCloseTo(light!.x, 1);
+  await expect.poll(() => cubeAnchor.getAttribute('cx')).not.toBe(anchor);
+  expect(errors).toEqual([]);
+});
+
+test('moving spotlight updates light and shadows without rebuilding the cube', async ({
+  page,
+}) => {
+  test.setTimeout(90000);
+  const errors: string[] = [];
+  page.on('pageerror', (error) => errors.push(error.message));
+  await page.goto('/isometric-docs.html');
+  await expect
+    .poll(() => page.evaluate(() => window.isometricDocs.ready()), {
+      timeout: 30000,
+    })
+    .toBe(true);
+  expect(await page.evaluate(() => window.isometricDocs.cubeMeshStable())).toBe(
+    true,
+  );
+  expect(
+    await page.evaluate(() => window.isometricDocs.sweepLight()),
+  ).toMatchObject({
+    intensity: 0,
+    castShadow: false,
+  });
+  const canvas = page.locator('ic-spectrum-canvas');
+  const unlit = PNG.sync.read(await canvas.screenshot()).data;
+
+  const toggle = page.getByRole('button', { name: '动态聚光灯' });
+  await toggle.click();
+  await expect
+    .poll(() => page.evaluate(() => window.isometricDocs.sweepLight()))
+    .toMatchObject({ intensity: 8, castShadow: true });
+  const firstX = (await page.evaluate(() => window.isometricDocs.sweepLight()))!
+    .x;
+  await expect
+    .poll(() => page.evaluate(() => window.isometricDocs.sweepLight()?.x))
+    .not.toBeCloseTo(firstX, 1);
+  expect(await page.evaluate(() => window.isometricDocs.cubeMeshStable())).toBe(
+    true,
+  );
+  const lit = PNG.sync.read(await canvas.screenshot()).data;
+  let changed = 0;
+  for (let i = 0; i < unlit.length; i += 4)
+    if (
+      Math.abs(unlit[i] - lit[i]) +
+        Math.abs(unlit[i + 1] - lit[i + 1]) +
+        Math.abs(unlit[i + 2] - lit[i + 2]) >
+      40
+    )
+      changed++;
+  expect(changed).toBeGreaterThan(500);
+
+  await toggle.click();
+  await expect
+    .poll(() => page.evaluate(() => window.isometricDocs.sweepLight()))
+    .toMatchObject({ intensity: 0, castShadow: false });
+  expect(errors).toEqual([]);
+});
+
+test('the shared 3D scale handle resizes a Mesh and extruded SVG in one undo step', async ({
+  page,
+}) => {
+  test.setTimeout(90000);
+  const errors: string[] = [];
+  page.on('pageerror', (error) => errors.push(error.message));
+  await page.goto('/isometric-docs.html');
+  await expect
+    .poll(() => page.evaluate(() => window.isometricDocs.ready()), {
+      timeout: 30000,
+    })
+    .toBe(true);
+  await page.evaluate(() => window.isometricDocs.selectGroup());
+  const before = await page.evaluate(() =>
+    window.isometricDocs.groupScaleState(),
+  );
+  const handle = await page.evaluate(() =>
+    window.isometricDocs.groupScaleHandle(),
+  );
+  await page.mouse.move(handle.x, handle.y);
+  await page.mouse.down();
+  await page.mouse.move(handle.x, handle.y - 35, { steps: 3 });
+  await page.keyboard.press('Escape');
+  await page.mouse.up();
+  await page.evaluate(() => window.isometricDocs.settle());
+  expect(
+    await page.evaluate(() => window.isometricDocs.groupScaleState()),
+  ).toEqual(before);
+  await page.evaluate(() => window.isometricDocs.selectGroup());
+  const resumed = await page.evaluate(() =>
+    window.isometricDocs.groupScaleHandle(),
+  );
+  await page.mouse.move(resumed.x, resumed.y);
+  await page.mouse.down();
+  await page.mouse.move(resumed.x, resumed.y - 60, { steps: 5 });
+  await page.evaluate(() => window.isometricDocs.settle());
+  const preview = await page.evaluate(() =>
+    window.isometricDocs.groupScaleState(),
+  );
+  expect(preview.cube.scale[0]).toBeGreaterThan(before.cube.scale[0] * 1.3);
+  expect(preview.ring.scale[2]).toBeGreaterThan(before.ring.scale[2] * 1.3);
+  expect(preview.ring.documentScale).toEqual(before.ring.documentScale);
+  await page.mouse.up();
+  await page.evaluate(() => window.isometricDocs.settle());
+  const after = await page.evaluate(() =>
+    window.isometricDocs.groupScaleState(),
+  );
+  expect(after.cube.scale[0]).toBeGreaterThan(before.cube.scale[0] * 1.3);
+  expect(after.ring.scale[2]).toBeGreaterThan(before.ring.scale[2] * 1.3);
+  expect(after.ring.documentScale[0]).toBeGreaterThan(1.3);
+  expect(after.ring.documentScale[1]).toBeGreaterThan(1.3);
+  await page.evaluate(() => window.isometricDocs.undo());
+  const undone = await page.evaluate(() =>
+    window.isometricDocs.groupScaleState(),
+  );
+  expect(undone.cube.scale).toEqual(before.cube.scale);
+  expect(undone.ring.scale).toEqual(before.ring.scale);
+  expect(undone.ring.documentScale).toEqual(before.ring.documentScale);
+  expect(errors).toEqual([]);
+});
+
+test('group scaling preserves a flipped SVG source', async ({ page }) => {
+  test.setTimeout(90000);
+  const errors: string[] = [];
+  page.on('pageerror', (error) => errors.push(error.message));
+  await page.goto('/isometric-docs.html');
+  await expect
+    .poll(() => page.evaluate(() => window.isometricDocs.ready()), {
+      timeout: 30000,
+    })
+    .toBe(true);
+  await page.evaluate(() => window.isometricDocs.flipRing());
+  await page.evaluate(() => window.isometricDocs.selectGroup());
+  const before = await page.evaluate(() =>
+    window.isometricDocs.groupScaleState(),
+  );
+  expect(before.ring.documentScale[0]).toBe(-1);
+  const handle = await page.evaluate(() =>
+    window.isometricDocs.groupScaleHandle(),
+  );
+  await page.mouse.move(handle.x, handle.y);
+  await page.mouse.down();
+  await page.mouse.move(handle.x, handle.y - 60, { steps: 5 });
+  await page.mouse.up();
+  await page.evaluate(() => window.isometricDocs.settle());
+  const after = await page.evaluate(() =>
+    window.isometricDocs.groupScaleState(),
+  );
+  expect(after.ring.documentScale[0]).toBeLessThan(-1.3);
+  expect(after.ring.documentScale[1]).toBeGreaterThan(1.3);
+  await page.evaluate(() => window.isometricDocs.undo());
+  expect(
+    await page.evaluate(() => window.isometricDocs.groupScaleState()),
+  ).toEqual(before);
+  expect(errors).toEqual([]);
+});
+
 test('rim light follows 3D materials and can be undone', async ({ page }) => {
   test.setTimeout(90000);
   const errors: string[] = [];

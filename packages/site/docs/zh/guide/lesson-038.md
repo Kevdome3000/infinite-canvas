@@ -339,18 +339,29 @@ const code = serializedNodesToCode(nodes, {
 
 ### 概念映射 {#design-to-code-mapping}
 
-| `.ic` 概念                                                | 代码产物                                              |
-| --------------------------------------------------------- | ----------------------------------------------------- |
-| `rect`/`g` + `display: flex`                              | `<div>` + flex 工具类（`flex items-center …`）        |
-| `flexDirection` / `justify` / `align` / `gap` / `padding` | Tailwind flex 工具类 / CSS                            |
-| `cornerRadius` / `fills` / `strokes` / `dropShadow`       | `rounded-* / bg-* / border / shadow-*`                |
-| `text` + `content`                                        | 文本节点；`$token` 文本 → 变量                        |
-| `iconfont`（lucide）                                      | `lucide-react` `<Search />`                           |
-| `iconfont`（其他族）                                      | `@iconify/react` `<Icon icon="family:name" />`        |
-| `$color.bg` 变量                                          | `bg-[var(--color-bg)]`（css-var）/ 字面量（resolved） |
-| `reusable` 根                                             | 一个 React 组件定义                                   |
-| `ref` + `descendants` 覆盖                                | 组件实例 + props                                      |
-| `name`                                                    | 组件名 / prop 名 / class 名                           |
+| `.ic` 概念                                          | 代码产物                                              |
+| --------------------------------------------------- | ----------------------------------------------------- |
+| `rect`/`g` + `display: flex`                        | `<div>` + flex 工具类（`flex items-center …`）        |
+| Flex 方向、对齐、尺寸、间距和内边距                 | Tailwind flex 工具类 / CSS                            |
+| `cornerRadius` / `fills` / `strokes` / `dropShadow` | `rounded-* / bg-* / border / shadow-*`                |
+| 带图片填充的 `rect`                                 | `<img src>` 与 `object-fit` / `object-position`       |
+| 单层 CSS 渐变填充的 `rect`                          | CSS `background-image`                                |
+| `ellipse`                                           | CSS `border-radius: 50%`                              |
+| `rect` / `ellipse` + `clipMode: clip`               | 在裁剪元素上使用 CSS `overflow: hidden`               |
+| `rotation` / `scaleX` / `scaleY`                    | 围绕局部左上角的 CSS `transform`                      |
+| 节点级 `blendMode`                                  | CSS `mix-blend-mode`                                  |
+| `visibility: hidden` / `visible`                    | CSS 可见性，保留布局空间                              |
+| `text` + `content`                                  | 文本节点；`$token` 文本 → 变量                        |
+| 文本装饰的线条、样式、颜色与粗细                    | CSS `text-decoration`                                 |
+| `fontVariant` / `fontKerning`                       | CSS `font-variant` / `font-kerning`                   |
+| `wordWrap` / `wordWrapWidth`                        | `white-space`、`overflow-wrap` 与 `max-width`         |
+| `maxLines` / `textOverflow`                         | CSS 多行省略（`ellipsis`）或按行高裁剪（`clip`）      |
+| `iconfont`（lucide）                                | `lucide-react` `<Search />`                           |
+| `iconfont`（其他族）                                | `@iconify/react` `<Icon icon="family:name" />`        |
+| `$color.bg` 变量                                    | `bg-[var(--color-bg)]`（css-var）/ 字面量（resolved） |
+| `reusable` 根                                       | 一个 React 组件定义                                   |
+| `ref` + `descendants` 覆盖                          | 组件实例 + props                                      |
+| `name`                                              | 组件名 / prop 名 / class 名                           |
 
 ### 变量模式 {#design-to-code-variable-modes}
 
@@ -362,7 +373,25 @@ const code = serializedNodesToCode(nodes, {
 
 ### 组件与实例 {#design-to-code-components}
 
-在 `componentStructure: 'preserve'`（默认，也是 Pencil 的卖点）下，每个 `reusable` 根会成为一个组件，每个 `ref` 成为一次实例调用。各实例上出现过的可覆盖属性（`content`、`fills`、`fontSize`、`cornerRadius`）会被提升为 props，默认值取自模板：
+在 `componentStructure: 'preserve'`（默认，也是 Pencil 的卖点）下，每个 `reusable` 根会成为一个组件，每个 `ref` 成为一次实例调用。各实例上出现过的可覆盖属性（`content`、`fills`、包括 `fontVariant` 和 `fontKerning` 的排版属性、文本装饰、`opacity`、`visibility`、`cornerRadius`、显式 `width` / `height`、`minWidth` / `maxWidth` / `minHeight` / `maxHeight`、`padding`、`margin`、flex 间距、`flexDirection`、`alignItems`、`justifyContent`、`flexWrap`、`alignSelf`、`flexGrow`、`flexShrink`、`flexBasis`、`strokeWidth`、`strokes` 和投影字段）会被提升为 props，默认值取自模板。`.ic` 中数值型 `lineHeight` 表示像素高度，因此 React 导出会补 `px`，不会将其当成无单位的行高倍率。布尔型 `fontKerning` 会转为 CSS 的 `normal` 或 `none`。四边间距数组会转为 CSS 简写字符串，文本装饰字段会合并为一个参数，投影字段会合并为一个 `boxShadow` prop。装饰线粗细为 0 时导出 `none`，与画布语义一致：
+
+文本导出通过 `white-space: pre` 保留显式换行。开启 `wordWrap` 且 `wordWrapWidth` 为正数时，会使用 `pre-wrap`、`overflow-wrap: anywhere`，并把该宽度作为最大宽度。正数 `maxLines` 会为默认的 `ellipsis` 添加 CSS 多行省略，为 `clip` 添加按行高裁剪。已开启换行的可复用文本如果只修改换行宽度，会生成组件 prop；切换换行开关或修改截断配置则会展开实例，以匹配编辑后的布局。当前画布测量尚未应用 `whiteSpace` 属性；自定义 `textOverflow` 标记字符串尚无对应的标准 CSS 实现。
+
+对于可复用图片，仅修改图片 URL 时，实例的 `fills` 覆盖会绑定到组件的 `<img src>` 参数。修改填充类型、适配方式、位置或填充透明度时，实例会展开，使生成的元素与样式对应编辑结果。对于单层图片填充，导出的 `<img>` 透明度会合并填充透明度与节点整体透明度。
+
+矩形只有一层启用的 `linear-gradient(...)` 或 `radial-gradient(...)` 填充时，会导出为 CSS `background-image`。实例仅修改渐变值时会生成组件参数。其他渐变格式、多层填充、填充透明度和单层混合模式暂不映射为单个 CSS 背景图。
+
+单层纯色填充的透明度会通过 CSS `color-mix` 导出，不会连同子元素一起变淡。节点整体透明度仍使用独立的 CSS `opacity`。可复用实例修改半透明填充时会展开，以保留生成样式中的填充透明度。
+
+节点旋转（弧度）与 `scaleX` / `scaleY` 会导出为以 `0 0` 为原点的 CSS `rotate(...) scale(...)`，顺序与画布局部变换一致。实例修改变换后会展开，以包含修改后的几何效果。
+
+非 flex 容器中的子节点会把画布局部 `x` / `y` 导出为相对于容器的 CSS `left` / `top`；flex 子节点仍按正常 flex 流布局。非 flex 容器里的复用组件实例会增加定位包装元素，修改实例内部子节点的位置时则展开实例以保留编辑。多个顶层节点都有明确尺寸时，导出代码还会创建相对定位的外框，保留它们之间的间距，包括旋转和翻转后的边界。尺寸无法测量的顶层节点仍按普通文档流排列。
+
+节点级 `visibility` 会导出为 CSS `visibility`，隐藏节点仍占据布局空间。默认的 `inherited` 状态对应 CSS 继承。复用组件实例及其子节点修改可见性时，会生成组件参数。
+
+矩形和椭圆的 `clipMode: clip` 会在导出的 HTML 和 React 代码中裁剪子内容。圆角矩形保留圆角，椭圆使用 `border-radius: 50%`。复用实例修改裁剪模式时会展开实例以保留该修改。`erase` 和 `soft` 蒙版无法直接映射为 CSS `overflow`，暂不作为裁剪导出。
+
+节点级 `blendMode` 会导出为 CSS `mix-blend-mode`；实例修改它时也会生成组件参数。`light` 对应 CSS 的 `lighten`；没有 CSS 等价物的模式与 SVG 导出一致，按 `normal` 处理。填充层自身的 `blendMode` 用于该节点内部的多层填充合成，不会作为节点级 `mix-blend-mode` 导出。
 
 ```tsx
 interface RoundButtonProps {
@@ -386,11 +415,15 @@ export function Design() {
 
 ### 可用于实际界面的示例 {#practical-interface-examples}
 
-下面将运营数据面板和 SaaS 定价页加载到 **IC 编辑器画布**中。两份设计都包含嵌套 flex 布局与语义化颜色变量。你可以在画布中选中、修改节点，再从画布当前文档通过 `API.exportCode` 更新、复制或下载代码；切换示例会载入另一份可编辑设计。
+下面将运营数据面板、SaaS 定价页和移动端结账页加载到 **IC 编辑器画布**中。三份设计都包含嵌套 flex 布局与语义化颜色变量；结账页采用 390 × 844 的窄屏画板。你可以在画布中选中、修改节点，再从画布当前文档通过 `API.exportCode` 更新、复制或下载代码；选择 HTML/CSS 后，点击 **HTML 预览** 可在沙箱窗口中按画板尺寸查看生成的页面。切换示例会载入另一份可编辑设计。
+
+这些示例在调用 `API.exportCode` 时按节点 ID 传入 `semanticElements`，让部分画布矩形和文字在两种导出结果中变成 HTML 页面区域、标题与 `<button type="button">` 控件。这份映射属于示例的导出配置；按钮行为和导航仍需在应用中接入。
+
+定价页使用一个 `reusable` 套餐卡片模板和三个 `ref` 实例。编辑器会展开实例以便渲染和编辑；此示例会把文字、颜色、排版与文本装饰、透明度、显式尺寸与尺寸约束、间距、Flex 对齐与子项尺寸、纯色描边和投影修改还原为实例覆盖项，供 React 与 `.ic` 下载使用。Growth 卡片展示了强调色描边。数值型 `flexBasis` 和尺寸约束在 HTML/CSS 和 React 样式中按像素输出。若卡片结构或不支持的属性被修改，导出会使用展开后的节点，让结果继续与画布一致。
 
 <DesignToCodeInterfaces locale="zh" />
 
-下载 `.ic` 文件后，可在[在线应用](https://app.infinitecanvas.cc/)中通过 **Import from… > .ic** 继续编辑设计。下载 HTML 文件后可直接用浏览器打开。React 版本需要放入已配置 Tailwind CSS 的项目，并渲染导出的 `AnalyticsDashboard` 或 `PricingPage` 组件。目前生成的是展示层代码；导航、按钮行为及实时数据仍需在应用中接入。这些示例使用固定宽度以便对照两种输出，正式使用时可根据断点调整布局。
+下载 `.ic` 文件后，可在[在线应用](https://app.infinitecanvas.cc/)中通过 **Import from… > .ic** 继续编辑设计。下载 HTML 文件后可直接用浏览器打开。React 版本需要放入已配置 Tailwind CSS 的项目，并渲染导出的 `AnalyticsDashboard`、`PricingPage` 或 `CheckoutScreen` 组件。目前生成的是展示层代码；导航、结账动作、支付及实时数据仍需在应用中接入。桌面与移动画板使用固定宽度，正式使用时可根据断点调整布局。
 
 ### 反向：code → design {#design-to-code-reverse}
 

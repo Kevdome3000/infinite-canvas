@@ -335,18 +335,30 @@ const code = serializedNodesToCode(nodes, {
 
 ### Concept mapping {#design-to-code-mapping}
 
-| `.ic` concept                                             | Code output                                           |
-| --------------------------------------------------------- | ----------------------------------------------------- |
-| `rect`/`g` + `display: flex`                              | `<div>` + flex utilities (`flex items-center …`)      |
-| `flexDirection` / `justify` / `align` / `gap` / `padding` | Tailwind flex utilities / CSS                         |
-| `cornerRadius` / `fills` / `strokes` / `dropShadow`       | `rounded-* / bg-* / border / shadow-*`                |
-| `text` + `content`                                        | text node; `$token` content → variable                |
-| `iconfont` (lucide)                                       | `lucide-react` `<Search />`                           |
-| `iconfont` (other families)                               | `@iconify/react` `<Icon icon="family:name" />`        |
-| `$color.bg` variable                                      | `bg-[var(--color-bg)]` (css-var) / literal (resolved) |
-| `reusable` root                                           | a React component definition                          |
-| `ref` + `descendants` overrides                           | a component instance with props                       |
-| `name`                                                    | component / prop / class name                         |
+| `.ic` concept                                        | Code output                                           |
+| ---------------------------------------------------- | ----------------------------------------------------- |
+| `rect`/`g` + `display: flex`                         | `<div>` + flex utilities (`flex items-center …`)      |
+| Flex direction, alignment, sizing, gaps, and padding | Tailwind flex utilities / CSS                         |
+| Child `x` / `y` inside a non-flex container          | Absolute positioning relative to that container       |
+| `cornerRadius` / `fills` / `strokes` / `dropShadow`  | `rounded-* / bg-* / border / shadow-*`                |
+| `rect` with an image fill                            | `<img src>` with `object-fit` / `object-position`     |
+| `rect` with one CSS gradient fill                    | CSS `background-image`                                |
+| `ellipse`                                            | CSS `border-radius: 50%`                              |
+| `rect` / `ellipse` + `clipMode: clip`                | CSS `overflow: hidden` on the clipping element        |
+| `rotation` / `scaleX` / `scaleY`                     | CSS `transform` around the local top-left corner      |
+| node-level `blendMode`                               | CSS `mix-blend-mode`                                  |
+| `visibility: hidden` / `visible`                     | CSS visibility without removing layout space          |
+| `text` + `content`                                   | text node; `$token` content → variable                |
+| text decoration line, style, color, and thickness    | CSS `text-decoration`                                 |
+| `fontVariant` / `fontKerning`                        | CSS `font-variant` / `font-kerning`                   |
+| `wordWrap` / `wordWrapWidth`                         | `white-space`, `overflow-wrap`, and `max-width`       |
+| `maxLines` / `textOverflow`                          | CSS line clamp or clipped line count                  |
+| `iconfont` (lucide)                                  | `lucide-react` `<Search />`                           |
+| `iconfont` (other families)                          | `@iconify/react` `<Icon icon="family:name" />`        |
+| `$color.bg` variable                                 | `bg-[var(--color-bg)]` (css-var) / literal (resolved) |
+| `reusable` root                                      | a React component definition                          |
+| `ref` + `descendants` overrides                      | a component instance with props                       |
+| `name`                                               | component / prop / class name                         |
 
 ### Variable modes {#design-to-code-variable-modes}
 
@@ -358,7 +370,25 @@ The three variable modes match the SVG export semantics:
 
 ### Components and instances {#design-to-code-components}
 
-With `componentStructure: 'preserve'` (the default, and Pencil's selling point), each `reusable` root becomes a component and every `ref` becomes an instance. Overridable attributes (`content`, `fills`, `fontSize`, `cornerRadius`) seen across instances are lifted into props with the template value as default:
+With `componentStructure: 'preserve'` (the default, and Pencil's selling point), each `reusable` root becomes a component and every `ref` becomes an instance. Overridable attributes (`content`, `fills`, typography including `fontVariant` and `fontKerning`, text decoration, `opacity`, `visibility`, `cornerRadius`, explicit `width`/`height`, `minWidth`/`maxWidth`/`minHeight`/`maxHeight`, `padding`, `margin`, flex gaps, `flexDirection`, `alignItems`, `justifyContent`, `flexWrap`, `alignSelf`, `flexGrow`, `flexShrink`, `flexBasis`, `strokeWidth`, `strokes`, and drop-shadow fields) seen across instances are lifted into props with the template value as default. Numeric `lineHeight` values are pixel heights in `.ic`, so React output adds `px` instead of treating them as unitless multipliers. Boolean `fontKerning` becomes CSS `normal` or `none`. Spacing arrays become CSS shorthand strings, the text-decoration fields combine into one prop, and the shadow fields combine into one `boxShadow` prop. A decoration with zero thickness renders as `none`, matching the canvas:
+
+Text exports preserve explicit line breaks with `white-space: pre`. When `wordWrap` is enabled with a positive `wordWrapWidth`, the output uses `pre-wrap`, `overflow-wrap: anywhere`, and that width as a maximum. A positive `maxLines` adds CSS line clamping for `ellipsis` (the default) or a clipped line-height limit for `clip`. Editing the wrap width of an already wrapped reusable text becomes a component prop. Switching wrapping on or off, or changing its truncation settings, expands the instance so the exported layout follows the edit. The canvas does not currently apply its `whiteSpace` setting in text measurement; custom `textOverflow` marker strings have no equivalent in standard CSS.
+
+For a reusable image, changing only the image URL binds the instance's `fills` override to the component's `<img src>` prop. Changing the fill type, fit, position, or fill opacity expands the instance so the generated element and styles reflect the edit. For a single image fill, the exported `<img>` opacity combines the fill opacity with the node opacity.
+
+A rectangle with one enabled `linear-gradient(...)` or `radial-gradient(...)` fill exports that gradient as `background-image`. Editing only its gradient value on an instance becomes a component prop. Other gradient formats, layered fills, fill opacity, and per-fill blend modes are not mapped to one CSS background image.
+
+A single solid fill with opacity below 1 exports through CSS `color-mix`, preserving the fill alpha without dimming child elements. Node opacity remains a separate CSS `opacity`. Editing a translucent fill on a reusable instance expands that instance so the generated paint retains its opacity.
+
+Node rotation (stored in radians) and `scaleX` / `scaleY` export as a CSS `rotate(...) scale(...)` transform with origin `0 0`, matching the canvas's local transform order. Editing an instance transform expands that instance so the changed geometry is included in the export.
+
+Rectangles and ellipses with `clipMode: clip` now clip their children in generated HTML and React code. Rounded rectangles retain their corner radius, and ellipses use `border-radius: 50%`. Changing a reusable instance's clip mode expands that instance so its clipping state is preserved. `erase` and `soft` masks do not have a direct CSS overflow equivalent and are not exported as clipping.
+
+For a non-flex container, children use their local canvas `x` / `y` as CSS `left` / `top` positions. Flex children remain in normal flex flow. A preserved component instance inside a non-flex container gets a positioned wrapper; moving a child inside an instance expands that instance to retain the edit. When multiple top-level nodes all have explicit sizes, the export also adds a relative frame and keeps their spacing, including rotated and flipped bounds. Roots without measurable sizes retain normal document flow.
+
+Node-level `visibility` becomes CSS `visibility`, so hidden nodes keep their layout space. The default `inherited` state uses CSS inheritance. Changing a reusable instance's visibility becomes a component prop, including edits to descendants.
+
+Node-level `blendMode` becomes CSS `mix-blend-mode`, including a component prop when an instance changes it. `light` maps to CSS `lighten`; modes without a CSS equivalent follow SVG export and render as `normal`. A fill layer's own `blendMode` blends with other fills in that node and is not treated as node-level `mix-blend-mode`.
 
 ```tsx
 interface RoundButtonProps {
@@ -382,11 +412,15 @@ export function Design() {
 
 ### Practical interface examples {#practical-interface-examples}
 
-The following examples load an analytics dashboard and a SaaS pricing page into the **IC editor canvas**. Both scenes include nested flex layouts and semantic color variables. Select and edit nodes on the canvas, then refresh, copy, or download code generated from the canvas's current document with `API.exportCode`. Switch designs to load another editable scene.
+The following examples load an analytics dashboard, a SaaS pricing page, and a mobile checkout screen into the **IC editor canvas**. All three scenes use nested flex layouts and semantic color variables; the checkout uses a narrow 390 × 844 artboard. Select and edit nodes on the canvas, then refresh, copy, or download code generated from the canvas's current document with `API.exportCode`. With HTML/CSS selected, use **HTML preview** to view the generated page at its artboard size in a sandboxed frame. Switch designs to load another editable scene.
+
+The examples pass a node-ID keyed `semanticElements` map to `API.exportCode`. It turns selected canvas rectangles and text into HTML landmarks, headings, and `<button type="button">` controls in both exports. The map belongs to this demo's export configuration; wire button actions and navigation in your application.
+
+The pricing page uses one `reusable` plan-card template and three `ref` instances. The editor expands instances to render and edit them; this demo reconciles text, color, typography and text decoration, opacity, explicit size and size constraints, spacing, flex alignment and item sizing, solid border, and drop-shadow edits back into instance overrides for the React and `.ic` downloads. The Growth card demonstrates an accent border. Numeric `flexBasis` and size constraint values become pixel values in HTML/CSS and React styles. If a card's structure or an unsupported property changes, the export uses its expanded nodes so the result still matches the canvas.
 
 <DesignToCodeInterfaces />
 
-Download the `.ic` file to continue editing the design in the [online app](https://app.infinitecanvas.cc/) via **Import from… > .ic**. Download the HTML file and open it directly in a browser. For React, put the downloaded `.tsx` in a project with Tailwind CSS and render its exported `AnalyticsDashboard` or `PricingPage` component. The generator currently emits presentation markup; wire navigation, actions and live data to your application logic after export. Fixed widths in these examples are intentional for comparing the two outputs; adapt the generated layout for your responsive breakpoints.
+Download the `.ic` file to continue editing the design in the [online app](https://app.infinitecanvas.cc/) via **Import from… > .ic**. Download the HTML file and open it directly in a browser. For React, put the downloaded `.tsx` in a project with Tailwind CSS and render its exported `AnalyticsDashboard`, `PricingPage`, or `CheckoutScreen` component. The generator currently emits presentation markup; wire navigation, checkout actions, payments, and live data to your application logic after export. The desktop and mobile artboards use fixed widths for a clear design handoff; adapt the generated layout for your responsive breakpoints.
 
 ### Reverse: code → design {#design-to-code-reverse}
 

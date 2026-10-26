@@ -20,6 +20,10 @@ import {
 import { expandRefSerializedNodes } from '../deserialize/expand-ref-nodes';
 import type { ThemeMode } from '../../components/Theme';
 import { toComponentName, toPropName } from './string-utils';
+import { boxToCss, styleValueToCss, textDecorationToCss } from './emit-style';
+import { toCSSMixBlendMode } from '../blend-mode';
+import { hasUnsupportedPaintFillOverride } from './paint-fill-override';
+import { singleCssGradientFill } from './gradient-fill';
 import type {
   CodeBindingTarget,
   CodeComponentDef,
@@ -27,6 +31,7 @@ import type {
   CodeIR,
   CodeNode,
   CodeNodeRole,
+  CodeSemanticElement,
   CodegenOptions,
   CodeVariablesMode,
   StyleIR,
@@ -35,12 +40,91 @@ import type {
 
 type AnyNode = SerializedNode & Record<string, unknown>;
 
-/** `descendants` 中可识别为 prop 的属性键 → 绑定目标。 */
+/** 实例覆盖键（含合成的 `dropShadow`）→ prop 绑定目标。 */
 const OVERRIDABLE_KEY_TO_TARGET: Record<string, CodeBindingTarget> = {
   content: 'text',
   fontSize: 'fontSize',
   cornerRadius: 'borderRadius',
+  width: 'width',
+  height: 'height',
+  strokeWidth: 'borderWidth',
+  opacity: 'opacity',
+  visibility: 'visibility',
+  fontWeight: 'fontWeight',
+  fontStyle: 'fontStyle',
+  fontVariant: 'fontVariant',
+  fontKerning: 'fontKerning',
+  fontFamily: 'fontFamily',
+  textAlign: 'textAlign',
+  wordWrapWidth: 'textWrapWidth',
+  letterSpacing: 'letterSpacing',
+  lineHeight: 'lineHeight',
+  textDecoration: 'textDecoration',
+  dropShadow: 'boxShadow',
+  padding: 'padding',
+  margin: 'margin',
+  gap: 'gap',
+  rowGap: 'rowGap',
+  columnGap: 'columnGap',
+  flexDirection: 'flexDirection',
+  alignItems: 'alignItems',
+  justifyContent: 'justifyContent',
+  flexWrap: 'flexWrap',
+  alignSelf: 'alignSelf',
+  flexGrow: 'flexGrow',
+  flexShrink: 'flexShrink',
+  flexBasis: 'flexBasis',
+  blendMode: 'mixBlendMode',
+  minWidth: 'minWidth',
+  maxWidth: 'maxWidth',
+  minHeight: 'minHeight',
+  maxHeight: 'maxHeight',
 };
+
+const SHADOW_KEYS = new Set([
+  'dropShadowColor',
+  'dropShadowOffsetX',
+  'dropShadowOffsetY',
+  'dropShadowBlurRadius',
+]);
+const DECORATION_KEYS = new Set([
+  'decorationLine',
+  'decorationStyle',
+  'decorationColor',
+  'decorationThickness',
+]);
+
+function shadowStyleValue(
+  template: AnyNode,
+  patch: Record<string, unknown> | undefined,
+  mode: CodeVariablesMode,
+): StyleValue {
+  const shadow = { ...template, ...patch };
+  const color = toStyleValue(shadow.dropShadowColor as string);
+  if (!color || color.literal === 'none') return { literal: 'none' };
+  const px = (raw: unknown) =>
+    styleValueToCss(
+      toStyleValue(raw as string | number) ?? { literal: 0 },
+      mode,
+      true,
+    );
+  return {
+    literal: `${px(shadow.dropShadowOffsetX)} ${px(
+      shadow.dropShadowOffsetY,
+    )} ${px(shadow.dropShadowBlurRadius)} ${styleValueToCss(color, mode)}`,
+  };
+}
+
+function textDecorationStyleValue(
+  template: AnyNode,
+  patch: Record<string, unknown> | undefined,
+  mode: CodeVariablesMode,
+): StyleValue {
+  const decoration = textDecorationFromNode({ ...template, ...patch });
+  return {
+    literal: decoration ? textDecorationToCss(decoration, mode) : 'none',
+  };
+}
 
 function asArray<T>(v: unknown): T[] {
   return Array.isArray(v) ? (v as T[]) : [];
@@ -57,6 +141,30 @@ function toStyleValue(
     return { token: designVariableRefKeyFromWire(raw) };
   }
   return { literal: raw };
+}
+
+function textDecorationFromNode(node: AnyNode): StyleIR['textDecoration'] {
+  const line = node.decorationLine;
+  const thickness = Number(node.decorationThickness ?? 0);
+  if (
+    !['underline', 'overline', 'line-through'].includes(line as string) ||
+    !Number.isFinite(thickness) ||
+    thickness <= 0
+  )
+    return undefined;
+  const decorationStyle = node.decorationStyle;
+  return {
+    line: line as NonNullable<StyleIR['textDecoration']>['line'],
+    style: (['solid', 'double', 'dotted', 'dashed', 'wavy'].includes(
+      decorationStyle as string,
+    )
+      ? decorationStyle
+      : 'solid') as NonNullable<StyleIR['textDecoration']>['style'],
+    color: toStyleValue(node.decorationColor as string) ?? {
+      literal: 'black',
+    },
+    thickness,
+  };
 }
 
 /** 取填充/描边栈里第一层启用的 solid 颜色（含 `$token`）。 */
@@ -139,8 +247,26 @@ function decideRole(node: AnyNode): CodeNodeRole {
 }
 
 /** 把节点上的样式相关字段映射为结构化 {@link StyleIR}。 */
-function buildStyle(node: AnyNode, role: CodeNodeRole): StyleIR {
+function buildStyle(
+  node: AnyNode,
+  role: CodeNodeRole,
+  hasChildren: boolean,
+): StyleIR {
   const style: StyleIR = {};
+
+  const rotation = Number.isFinite(node.rotation)
+    ? (node.rotation as number)
+    : 0;
+  const scaleX = Number.isFinite(node.scaleX) ? (node.scaleX as number) : 1;
+  const scaleY = Number.isFinite(node.scaleY) ? (node.scaleY as number) : 1;
+  const cssNumber = (value: number) => String(Number(value.toFixed(6)));
+  const transforms: string[] = [];
+  if (rotation !== 0) transforms.push(`rotate(${cssNumber(rotation)}rad)`);
+  if (scaleX !== 1 || scaleY !== 1)
+    transforms.push(`scale(${cssNumber(scaleX)}, ${cssNumber(scaleY)})`);
+  if (transforms.length) style.transform = transforms.join(' ');
+  if (role === 'text' && style.transform && node.display !== 'flex')
+    style.display = 'inline-block';
 
   // flex 布局
   if (node.display === 'flex') {
@@ -158,28 +284,70 @@ function buildStyle(node: AnyNode, role: CodeNodeRole): StyleIR {
   if (typeof node.flexGrow === 'number' && node.flexGrow)
     style.flexGrow = node.flexGrow;
   if (typeof node.flexShrink === 'number') style.flexShrink = node.flexShrink;
+  if (node.alignSelf && node.alignSelf !== 'auto')
+    style.alignSelf = node.alignSelf as never;
+  if (typeof node.flexBasis === 'number') style.flexBasis = node.flexBasis;
 
   const padding = normalizeBox(node.padding as number | number[] | undefined);
   if (padding) style.padding = padding;
   const margin = normalizeBox(node.margin as number | number[] | undefined);
   if (margin) style.margin = margin;
 
+  // 反序列化会把未指定尺寸的 flex 容器补为 0；有子节点时应让 CSS 按内容计算。
+  const autoSizedContainer =
+    role === 'container' && node.display === 'flex' && hasChildren;
   // 尺寸：容器/图片/形状写显式宽高；文本随内容，不强制尺寸
   if (role !== 'text') {
-    if (typeof node.width === 'number') style.width = node.width;
-    if (typeof node.height === 'number') style.height = node.height;
+    if (typeof node.width === 'number' && (!autoSizedContainer || node.width))
+      style.width = node.width;
+    if (typeof node.height === 'number' && (!autoSizedContainer || node.height))
+      style.height = node.height;
   }
   if (typeof node.minWidth === 'number') style.minWidth = node.minWidth;
   if (typeof node.maxWidth === 'number') style.maxWidth = node.maxWidth;
   if (typeof node.minHeight === 'number') style.minHeight = node.minHeight;
   if (typeof node.maxHeight === 'number') style.maxHeight = node.maxHeight;
+  style.mixBlendMode = toCSSMixBlendMode(node.blendMode as never) ?? undefined;
+  if (role === 'image') {
+    const activeFills = asArray<SerializedFillLayerItem>(node.fills).filter(
+      (fill) => fill.enabled !== false,
+    );
+    const imageFill = activeFills.find((fill) => fill.type === 'image');
+    if (imageFill?.type === 'image') {
+      style.objectFit = imageFill.objectFit;
+      style.objectPosition = imageFill.objectPosition;
+      if (
+        activeFills.length === 1 &&
+        imageFill.opacity !== undefined &&
+        imageFill.opacity !== 1
+      ) {
+        const opacity = imageFill.opacity;
+        style.imageFillOpacity =
+          typeof opacity === 'number' || Number.isNaN(Number(opacity))
+            ? toStyleValue(opacity)
+            : { literal: Number(opacity) };
+      }
+    }
+  }
 
   const fills = asArray<SerializedFillLayerItem>(node.fills);
   const fillColor = primaryColorFromLayers(fills);
+  const activeFills = fills.filter((fill) => fill.enabled !== false);
+  if (
+    fillColor &&
+    activeFills.length === 1 &&
+    activeFills[0].type === 'solid' &&
+    activeFills[0].opacity !== undefined &&
+    Number(activeFills[0].opacity) !== 1
+  )
+    style.solidFillOpacity = toStyleValue(activeFills[0].opacity);
   if (role === 'text' || role === 'icon') {
     if (fillColor) style.color = fillColor;
   } else if (role !== 'image' && fillColor) {
     style.backgroundColor = fillColor;
+  } else if (role === 'container' || node.type === 'ellipse') {
+    const gradient = singleCssGradientFill(fills);
+    if (gradient) style.backgroundImage = { literal: gradient };
   }
 
   // 描边 → border
@@ -191,17 +359,24 @@ function buildStyle(node: AnyNode, role: CodeNodeRole): StyleIR {
     if (strokeColor) style.borderColor = strokeColor;
   }
 
-  if (node.cornerRadius !== undefined) {
+  if (node.type === 'ellipse') {
+    style.borderRadius = { literal: '50%' };
+  } else if (node.cornerRadius !== undefined) {
     const r = toStyleValue(node.cornerRadius as number);
     if (r) style.borderRadius = r;
   }
+  if (
+    node.clipMode === 'clip' &&
+    (node.type === 'rect' || node.type === 'ellipse')
+  )
+    style.overflow = 'hidden';
 
   if (
     typeof node.dropShadowColor === 'string' ||
     typeof node.dropShadowBlurRadius === 'number'
   ) {
     const color = toStyleValue(node.dropShadowColor as string);
-    if (color) {
+    if (color && color.literal !== 'none') {
       style.boxShadow = {
         offsetX: (node.dropShadowOffsetX as number) ?? 0,
         offsetY: (node.dropShadowOffsetY as number) ?? 0,
@@ -214,6 +389,8 @@ function buildStyle(node: AnyNode, role: CodeNodeRole): StyleIR {
   if (typeof node.opacity === 'number' && node.opacity !== 1) {
     style.opacity = node.opacity;
   }
+  if (node.visibility === 'hidden' || node.visibility === 'visible')
+    style.visibility = node.visibility;
 
   // 文本排版
   if (role === 'text') {
@@ -223,12 +400,35 @@ function buildStyle(node: AnyNode, role: CodeNodeRole): StyleIR {
       style.fontWeight = node.fontWeight as string | number;
     if (node.fontStyle && node.fontStyle !== 'normal')
       style.fontStyle = node.fontStyle as string;
+    if (typeof node.fontVariant === 'string')
+      style.fontVariant = node.fontVariant;
+    if (typeof node.fontKerning === 'boolean')
+      style.fontKerning = node.fontKerning ? 'normal' : 'none';
     if (typeof node.fontFamily === 'string') style.fontFamily = node.fontFamily;
     if (node.textAlign) style.textAlign = node.textAlign as never;
+    style.whiteSpace = node.wordWrap ? 'pre-wrap' : 'pre';
+    if (
+      node.wordWrap === true &&
+      typeof node.wordWrapWidth === 'number' &&
+      node.wordWrapWidth > 0
+    ) {
+      style.textWrapWidth = node.wordWrapWidth;
+      if (
+        typeof node.maxLines === 'number' &&
+        Number.isFinite(node.maxLines) &&
+        node.maxLines > 0
+      ) {
+        style.maxLines = Math.floor(node.maxLines);
+        if (node.textOverflow === undefined || node.textOverflow === 'ellipsis')
+          style.textOverflow = 'ellipsis';
+        else if (node.textOverflow === 'clip') style.textOverflow = 'clip';
+      }
+    }
     const ls = toStyleValue(node.letterSpacing as number);
     if (ls) style.letterSpacing = ls;
     const lh = toStyleValue(node.lineHeight as number);
-    if (lh) style.lineHeight = lh;
+    if (lh && lh.literal !== 0) style.lineHeight = lh;
+    style.textDecoration = textDecorationFromNode(node);
   }
 
   return style;
@@ -236,8 +436,12 @@ function buildStyle(node: AnyNode, role: CodeNodeRole): StyleIR {
 
 interface BuildContext {
   childrenByParent: Map<string | undefined, AnyNode[]>;
+  semanticElements: Record<string, CodeSemanticElement>;
+  byId: Map<string, AnyNode>;
+  templateToComponentName: Map<string, string>;
   /** 模板 id → 该模板被实例覆盖过的 (key) 集合，用于推断 props。 */
   overridesByTemplate: Map<string, Set<string>>;
+  variablesMode: CodeVariablesMode;
 }
 
 function sortChildren(nodes: AnyNode[]): AnyNode[] {
@@ -249,13 +453,31 @@ function buildCodeNode(
   node: AnyNode,
   ctx: BuildContext,
   bindingsForTemplate?: Set<string>,
+  inFreeLayout = false,
 ): CodeNode {
+  if (node.type === 'ref') {
+    const instance = buildInstanceNode(
+      node as RefSerializedNode,
+      ctx.templateToComponentName,
+      ctx.byId,
+      ctx.variablesMode,
+    );
+    if (instance) {
+      if (inFreeLayout) positionFreeChild(instance.style, node);
+      return instance;
+    }
+  }
   const role = decideRole(node);
-  const style = buildStyle(node, role);
+  const children = sortChildren(ctx.childrenByParent.get(node.id) ?? []);
+  const style = buildStyle(node, role, children.length > 0);
+  if (inFreeLayout) positionFreeChild(style, node);
+  else if (children.length > 0 && node.display !== 'flex')
+    style.position = 'relative';
   const codeNode: CodeNode = {
     role,
     id: node.id,
     name: typeof node.name === 'string' ? node.name : undefined,
+    element: ctx.semanticElements[node.id],
     style,
     children: [],
   };
@@ -286,7 +508,7 @@ function buildCodeNode(
         continue;
       }
       const target =
-        OVERRIDABLE_KEY_TO_TARGET[attr] ?? colorTargetFor(attr, role);
+        OVERRIDABLE_KEY_TO_TARGET[attr] ?? colorTargetFor(attr, role, node);
       if (!target) {
         continue;
       }
@@ -298,19 +520,37 @@ function buildCodeNode(
     }
   }
 
-  const children = sortChildren(ctx.childrenByParent.get(node.id) ?? []);
   codeNode.children = children.map((c) =>
-    buildCodeNode(c, ctx, bindingsForTemplate),
+    buildCodeNode(c, ctx, bindingsForTemplate, node.display !== 'flex'),
   );
   return codeNode;
+}
+
+/** Canvas coordinates are local to the parent when Yoga is not laying out children. */
+function positionFreeChild(style: StyleIR, node: AnyNode): void {
+  style.position = 'absolute';
+  style.left =
+    typeof node.x === 'number' && Number.isFinite(node.x) ? node.x : 0;
+  style.top =
+    typeof node.y === 'number' && Number.isFinite(node.y) ? node.y : 0;
 }
 
 function colorTargetFor(
   attr: string,
   role: CodeNodeRole,
+  node: AnyNode,
 ): CodeBindingTarget | undefined {
   if (attr === 'fills' || attr === 'fill') {
+    if (role === 'image') return 'imageSrc';
+    if (
+      (role === 'container' || node.type === 'ellipse') &&
+      singleCssGradientFill(asArray<SerializedFillLayerItem>(node.fills))
+    )
+      return 'backgroundImage';
     return role === 'text' || role === 'icon' ? 'color' : 'backgroundColor';
+  }
+  if (attr === 'strokes' || attr === 'stroke') {
+    return role === 'container' || role === 'shape' ? 'borderColor' : undefined;
   }
   return undefined;
 }
@@ -330,13 +570,49 @@ function propNameFor(node: AnyNode, attr: string): string {
 function overrideStyleValue(
   patch: Record<string, unknown> | undefined,
   attr: string,
+  role: CodeNodeRole,
 ): StyleValue | undefined {
   if (!patch) {
     return undefined;
   }
   if (attr === 'fills' || attr === 'fill') {
     const fills = asArray<SerializedFillLayerItem>(patch.fills);
-    return primaryColorFromLayers(fills) ?? toStyleValue(patch.fill as string);
+    if (role === 'image')
+      return (
+        primaryImageFromLayers(fills) ?? toStyleValue(patch.fill as string)
+      );
+    const gradient = singleCssGradientFill(fills);
+    return (
+      (gradient ? { literal: gradient } : undefined) ??
+      primaryColorFromLayers(fills) ??
+      toStyleValue(patch.fill as string)
+    );
+  }
+  if (attr === 'strokes' || attr === 'stroke') {
+    const strokes = asArray<SerializedFillLayerItem>(patch.strokes);
+    return (
+      primaryColorFromLayers(strokes) ?? toStyleValue(patch.stroke as string)
+    );
+  }
+  if (attr === 'padding' || attr === 'margin') {
+    const box = normalizeBox(patch[attr] as number | number[] | undefined);
+    return box ? { literal: boxToCss(box) } : undefined;
+  }
+  if (attr === 'blendMode') {
+    return {
+      literal: toCSSMixBlendMode(patch.blendMode as never) ?? 'normal',
+    };
+  }
+  if (attr === 'visibility') {
+    return {
+      literal:
+        patch.visibility === 'inherited'
+          ? 'inherit'
+          : (patch.visibility as string),
+    };
+  }
+  if (attr === 'fontKerning') {
+    return { literal: patch.fontKerning === false ? 'none' : 'normal' };
   }
   return toStyleValue(patch[attr] as string | number);
 }
@@ -357,11 +633,96 @@ function templateDefaultValue(
       toStyleValue((desc as TextSerializedNode).content) ?? { literal: '' }
     );
   }
-  if (attr === 'fills' || attr === 'fill') {
+  if (attr === 'opacity') {
+    return toStyleValue(desc.opacity as number) ?? { literal: 1 };
+  }
+  if (attr === 'visibility') {
+    return {
+      literal:
+        desc.visibility === 'hidden' || desc.visibility === 'visible'
+          ? desc.visibility
+          : 'inherit',
+    };
+  }
+  if (attr === 'blendMode') {
+    return {
+      literal: toCSSMixBlendMode(desc.blendMode as never) ?? 'normal',
+    };
+  }
+  if (attr === 'flexDirection') {
+    return toStyleValue(desc.flexDirection as string) ?? { literal: 'row' };
+  }
+  if (attr === 'alignItems') {
+    return toStyleValue(desc.alignItems as string) ?? { literal: 'stretch' };
+  }
+  if (attr === 'justifyContent') {
     return (
-      primaryColorFromLayers(asArray<SerializedFillLayerItem>(desc.fills)) ?? {
-        literal: '#000000',
+      toStyleValue(desc.justifyContent as string) ?? { literal: 'flex-start' }
+    );
+  }
+  if (attr === 'flexWrap') {
+    return toStyleValue(desc.flexWrap as string) ?? { literal: 'nowrap' };
+  }
+  if (attr === 'alignSelf') {
+    return toStyleValue(desc.alignSelf as string) ?? { literal: 'auto' };
+  }
+  if (attr === 'flexGrow') {
+    return toStyleValue(desc.flexGrow as number) ?? { literal: 0 };
+  }
+  if (attr === 'flexShrink') {
+    return toStyleValue(desc.flexShrink as number) ?? { literal: 1 };
+  }
+  if (attr === 'flexBasis') {
+    return toStyleValue(desc.flexBasis as number) ?? { literal: 'auto' };
+  }
+  if (attr === 'minWidth' || attr === 'minHeight') {
+    return toStyleValue(desc[attr] as number) ?? { literal: 'auto' };
+  }
+  if (attr === 'maxWidth' || attr === 'maxHeight') {
+    return toStyleValue(desc[attr] as number) ?? { literal: 'none' };
+  }
+  if (attr === 'fontWeight') {
+    return toStyleValue(desc.fontWeight as string | number) ?? { literal: 400 };
+  }
+  if (attr === 'fontStyle') {
+    return toStyleValue(desc.fontStyle as string) ?? { literal: 'normal' };
+  }
+  if (attr === 'fontVariant') {
+    return toStyleValue(desc.fontVariant as string) ?? { literal: 'normal' };
+  }
+  if (attr === 'fontKerning') {
+    return { literal: desc.fontKerning === false ? 'none' : 'normal' };
+  }
+  if (attr === 'wordWrapWidth') {
+    return toStyleValue(desc.wordWrapWidth as number) ?? { literal: 0 };
+  }
+  if (attr === 'fontFamily' || attr === 'textAlign') {
+    return toStyleValue(desc[attr] as string) ?? { literal: 'inherit' };
+  }
+  if (attr === 'letterSpacing') {
+    return (
+      toStyleValue(desc.letterSpacing as string | number) ?? {
+        literal: 'normal',
       }
+    );
+  }
+  if (attr === 'padding' || attr === 'margin') {
+    const box = normalizeBox(desc[attr] as number | number[] | undefined);
+    return { literal: box ? boxToCss(box) : '0px' };
+  }
+  if (attr === 'fills' || attr === 'fill') {
+    const fills = asArray<SerializedFillLayerItem>(desc.fills);
+    const gradient = singleCssGradientFill(fills);
+    return (
+      primaryImageFromLayers(fills) ??
+      (gradient ? { literal: gradient } : undefined) ??
+      primaryColorFromLayers(fills) ?? { literal: '#000000' }
+    );
+  }
+  if (attr === 'strokes' || attr === 'stroke') {
+    return (
+      primaryColorFromLayers(asArray<SerializedFillLayerItem>(desc.strokes)) ??
+      toStyleValue(desc.stroke as string) ?? { literal: '#000000' }
     );
   }
   return toStyleValue(desc[attr] as string | number) ?? { literal: 0 };
@@ -410,11 +771,24 @@ export function buildCodeIR(
     );
   }
 
-  if (componentStructure === 'flatten') {
+  if (
+    componentStructure === 'flatten' ||
+    hasUnsupportedPaintRefOverrides(working as AnyNode[]) ||
+    hasUnsupportedTransformRefOverrides(working as AnyNode[]) ||
+    hasUnsupportedClipRefOverrides(working as AnyNode[]) ||
+    hasUnsupportedFreeLayoutRefOverrides(working as AnyNode[]) ||
+    hasUnsupportedTextWrapRefOverrides(working as AnyNode[])
+  ) {
     const expanded = expandRefSerializedNodes(working, working);
+    const roots = buildRootsExcludingReusable(
+      expanded as AnyNode[],
+      options.semanticElements ?? {},
+      variablesMode,
+    );
     return {
       components: [],
-      roots: buildRootsExcludingReusable(expanded as AnyNode[]),
+      roots,
+      rootFrame: positionSceneRoots(roots, expanded as AnyNode[]),
       variables,
       themeMode,
       variablesMode,
@@ -426,11 +800,16 @@ export function buildCodeIR(
     variables,
     themeMode,
     variablesMode,
+    options.semanticElements ?? {},
   );
 }
 
 /** 由扁平节点表构建顶层树，跳过 `reusable` 模板根（flatten 模式仍保留实例展开结果）。 */
-function buildRootsExcludingReusable(nodes: AnyNode[]): CodeNode[] {
+function buildRootsExcludingReusable(
+  nodes: AnyNode[],
+  semanticElements: Record<string, CodeSemanticElement>,
+  variablesMode: CodeVariablesMode,
+): CodeNode[] {
   const byId = new Map<string, AnyNode>(nodes.map((n) => [n.id, n]));
   const childrenByParent = new Map<string | undefined, AnyNode[]>();
   for (const n of nodes) {
@@ -440,7 +819,11 @@ function buildRootsExcludingReusable(nodes: AnyNode[]): CodeNode[] {
   }
   const ctx: BuildContext = {
     childrenByParent,
+    semanticElements,
+    byId,
+    templateToComponentName: new Map(),
     overridesByTemplate: new Map(),
+    variablesMode,
   };
   const roots = sortChildren(
     nodes.filter((n) => !n.parentId || !byId.has(n.parentId)),
@@ -448,11 +831,76 @@ function buildRootsExcludingReusable(nodes: AnyNode[]): CodeNode[] {
   return roots.map((n) => buildCodeNode(n, ctx));
 }
 
+/** Keep spacing between scene roots when all have a measurable frame. */
+function positionSceneRoots(
+  roots: CodeNode[],
+  nodes: AnyNode[],
+): CodeIR['rootFrame'] {
+  if (roots.length < 2) return undefined;
+  const byId = new Map(nodes.map((node) => [node.id, node]));
+  const frames = roots.map((root) => {
+    const node = byId.get(root.id);
+    const template = node?.type === 'ref' ? byId.get(node.ref as string) : null;
+    const x = node?.x;
+    const y = node?.y;
+    const width = node?.width ?? template?.width;
+    const height = node?.height ?? template?.height;
+    const rotation = node?.rotation ?? template?.rotation ?? 0;
+    const scaleX = node?.scaleX ?? template?.scaleX ?? 1;
+    const scaleY = node?.scaleY ?? template?.scaleY ?? 1;
+    if (
+      ![x, y, width, height, rotation, scaleX, scaleY].every(
+        (value) => typeof value === 'number' && Number.isFinite(value),
+      ) ||
+      (width as number) <= 0 ||
+      (height as number) <= 0
+    )
+      return undefined;
+    return {
+      x: x as number,
+      y: y as number,
+      width: width as number,
+      height: height as number,
+      rotation: rotation as number,
+      scaleX: scaleX as number,
+      scaleY: scaleY as number,
+    };
+  });
+  if (frames.some((frame) => !frame)) return undefined;
+  const sized = frames as Array<NonNullable<(typeof frames)[number]>>;
+  // CSS `rotate(...) scale(...)` around 0 0 matches the canvas local transform.
+  const corners = sized.flatMap((frame) => {
+    const cos = Math.cos(frame.rotation);
+    const sin = Math.sin(frame.rotation);
+    return [
+      [0, 0],
+      [frame.width, 0],
+      [0, frame.height],
+      [frame.width, frame.height],
+    ].map(([x, y]) => ({
+      x: frame.x + cos * frame.scaleX * x - sin * frame.scaleY * y,
+      y: frame.y + sin * frame.scaleX * x + cos * frame.scaleY * y,
+    }));
+  });
+  // Round outward so CSS transform serialization cannot clip a subpixel edge.
+  const minX = Math.floor(Math.min(...corners.map((corner) => corner.x)));
+  const minY = Math.floor(Math.min(...corners.map((corner) => corner.y)));
+  const maxX = Math.ceil(Math.max(...corners.map((corner) => corner.x)));
+  const maxY = Math.ceil(Math.max(...corners.map((corner) => corner.y)));
+  roots.forEach((root, index) => {
+    root.style.position = 'absolute';
+    root.style.left = sized[index].x - minX;
+    root.style.top = sized[index].y - minY;
+  });
+  return { width: maxX - minX, height: maxY - minY };
+}
+
 function buildPreserve(
   nodes: AnyNode[],
   variables: DesignVariablesMap,
   themeMode: ThemeMode | undefined,
   variablesMode: CodeVariablesMode,
+  semanticElements: Record<string, CodeSemanticElement>,
 ): CodeIR {
   const byId = new Map<string, AnyNode>(nodes.map((n) => [n.id, n]));
   const childrenByParent = new Map<string | undefined, AnyNode[]>();
@@ -485,10 +933,20 @@ function buildPreserve(
       ) {
         continue;
       }
+      if (SHADOW_KEYS.has(attr)) {
+        set.add(`${templateId}::dropShadow`);
+        continue;
+      }
+      if (DECORATION_KEYS.has(attr)) {
+        set.add(`${templateId}::textDecoration`);
+        continue;
+      }
       if (
         attr in OVERRIDABLE_KEY_TO_TARGET ||
         attr === 'fills' ||
-        attr === 'fill'
+        attr === 'fill' ||
+        attr === 'strokes' ||
+        attr === 'stroke'
       ) {
         set.add(`${templateId}::${attr}`);
       }
@@ -496,10 +954,20 @@ function buildPreserve(
     const descendants = refn.descendants ?? {};
     for (const [descId, patch] of Object.entries(descendants)) {
       for (const attr of Object.keys(patch)) {
+        if (SHADOW_KEYS.has(attr)) {
+          set.add(`${descId}::dropShadow`);
+          continue;
+        }
+        if (DECORATION_KEYS.has(attr)) {
+          set.add(`${descId}::textDecoration`);
+          continue;
+        }
         if (
           attr in OVERRIDABLE_KEY_TO_TARGET ||
           attr === 'fills' ||
-          attr === 'fill'
+          attr === 'fill' ||
+          attr === 'strokes' ||
+          attr === 'stroke'
         ) {
           set.add(`${descId}::${attr}`);
         }
@@ -508,10 +976,7 @@ function buildPreserve(
     overridesByTemplate.set(templateId, set);
   }
 
-  const ctx: BuildContext = { childrenByParent, overridesByTemplate };
-
-  // 2) 组件定义（reusable 根）
-  const components: CodeComponentDef[] = [];
+  // 2) 先分配所有模板名，嵌套在普通容器中的 ref 才能解析为组件调用。
   const usedNames = new Set<string>();
   const templateToComponentName = new Map<string, string>();
   for (const n of nodes) {
@@ -527,10 +992,24 @@ function buildPreserve(
     }
     usedNames.add(name);
     templateToComponentName.set(n.id, name);
+  }
+
+  const ctx: BuildContext = {
+    childrenByParent,
+    semanticElements,
+    byId,
+    templateToComponentName,
+    overridesByTemplate,
+    variablesMode,
+  };
+  const components: CodeComponentDef[] = [];
+  for (const n of nodes) {
+    if (!n.reusable) continue;
+    const name = templateToComponentName.get(n.id)!;
 
     const bindings = overridesByTemplate.get(n.id) ?? new Set<string>();
     const root = buildCodeNode(n, ctx, bindings);
-    const props = buildComponentProps(n, bindings, byId);
+    const props = buildComponentProps(n, bindings, byId, variablesMode);
     components.push({ name, templateId: n.id, root, props });
   }
 
@@ -565,6 +1044,7 @@ function buildPreserve(
         },
         templateToComponentName,
         byId,
+        variablesMode,
       );
       if (instance) {
         roots.push(instance);
@@ -577,13 +1057,133 @@ function buildPreserve(
     roots.push(buildCodeNode(n, ctx));
   }
 
-  return { components, roots, variables, themeMode, variablesMode };
+  return {
+    components,
+    roots,
+    rootFrame: positionSceneRoots(roots, nodes),
+    variables,
+    themeMode,
+    variablesMode,
+  };
+}
+
+function hasUnsupportedPaintRefOverrides(nodes: AnyNode[]): boolean {
+  const byId = new Map(nodes.map((node) => [node.id, node]));
+  return nodes.some((node) => {
+    if (node.type !== 'ref') return false;
+    const template = byId.get(node.ref as string);
+    if (!template) return false;
+    if (
+      'fills' in node &&
+      hasUnsupportedPaintFillOverride(
+        template.fills,
+        node.fills,
+        decideRole(template) === 'container' || template.type === 'ellipse',
+      )
+    )
+      return true;
+    const descendants = node.descendants as
+      | Record<string, Record<string, unknown>>
+      | undefined;
+    return Object.entries(descendants ?? {}).some(([id, patch]) => {
+      const child = byId.get(id);
+      return (
+        child &&
+        'fills' in patch &&
+        hasUnsupportedPaintFillOverride(
+          child.fills,
+          patch.fills,
+          decideRole(child) === 'container' || child.type === 'ellipse',
+        )
+      );
+    });
+  });
+}
+
+/** Transform changes need a complete instance body; a style prop alone misses the root. */
+function hasUnsupportedTransformRefOverrides(nodes: AnyNode[]): boolean {
+  const byId = new Map(nodes.map((node) => [node.id, node]));
+  const changed = (template: AnyNode | undefined, patch: AnyNode) =>
+    !!template &&
+    (['rotation', 'scaleX', 'scaleY'] as const).some(
+      (key) =>
+        key in patch &&
+        !Object.is(patch[key], template[key] ?? (key === 'rotation' ? 0 : 1)),
+    );
+  return nodes.some((node) => {
+    if (node.type !== 'ref') return false;
+    if (changed(byId.get(node.ref as string), node)) return true;
+    return Object.entries(
+      (node.descendants ?? {}) as Record<string, AnyNode>,
+    ).some(([id, patch]) => changed(byId.get(id), patch));
+  });
+}
+
+/** A clip change alters descendant visibility and cannot be represented by a paint prop. */
+function hasUnsupportedClipRefOverrides(nodes: AnyNode[]): boolean {
+  const byId = new Map(nodes.map((node) => [node.id, node]));
+  const changed = (template: AnyNode | undefined, patch: AnyNode) =>
+    !!template && 'clipMode' in patch && patch.clipMode !== template.clipMode;
+  return nodes.some((node) => {
+    if (node.type !== 'ref') return false;
+    if (changed(byId.get(node.ref as string), node)) return true;
+    return Object.entries(
+      (node.descendants ?? {}) as Record<string, AnyNode>,
+    ).some(([id, patch]) => changed(byId.get(id), patch));
+  });
+}
+
+/** Template child coordinates and display mode cannot be changed by current style props. */
+function hasUnsupportedFreeLayoutRefOverrides(nodes: AnyNode[]): boolean {
+  const byId = new Map(nodes.map((node) => [node.id, node]));
+  const displayChanged = (template: AnyNode | undefined, patch: AnyNode) =>
+    !!template && 'display' in patch && patch.display !== template.display;
+  return nodes.some((node) => {
+    if (node.type !== 'ref') return false;
+    if (displayChanged(byId.get(node.ref as string), node)) return true;
+    return Object.entries(
+      (node.descendants ?? {}) as Record<string, AnyNode>,
+    ).some(([id, patch]) => {
+      const template = byId.get(id);
+      if (!template) return false;
+      if (displayChanged(template, patch)) return true;
+      const parent = byId.get(template.parentId as string);
+      return (
+        !!parent &&
+        parent.display !== 'flex' &&
+        (('x' in patch && patch.x !== template.x) ||
+          ('y' in patch && patch.y !== template.y))
+      );
+    });
+  });
+}
+
+/** `wordWrap` changes the element's layout mode, so a width-only prop cannot express it. */
+function hasUnsupportedTextWrapRefOverrides(nodes: AnyNode[]): boolean {
+  const byId = new Map(nodes.map((node) => [node.id, node]));
+  const unsupported = (template: AnyNode | undefined, patch: AnyNode) =>
+    !!template &&
+    ('wordWrap' in patch ||
+      'maxLines' in patch ||
+      'textOverflow' in patch ||
+      ('wordWrapWidth' in patch &&
+        (template.wordWrap !== true ||
+          typeof template.wordWrapWidth !== 'number' ||
+          template.wordWrapWidth <= 0)));
+  return nodes.some((node) => {
+    if (node.type !== 'ref') return false;
+    if (unsupported(byId.get(node.ref as string), node)) return true;
+    return Object.entries(
+      (node.descendants ?? {}) as Record<string, AnyNode>,
+    ).some(([id, patch]) => unsupported(byId.get(id), patch));
+  });
 }
 
 function buildComponentProps(
   template: AnyNode,
   bindings: Set<string>,
   byId: Map<string, AnyNode>,
+  variablesMode: CodeVariablesMode,
 ): CodeComponentProp[] {
   const props: CodeComponentProp[] = [];
   const seen = new Set<string>();
@@ -595,7 +1195,7 @@ function buildComponentProps(
     }
     const role = decideRole(desc);
     const target =
-      OVERRIDABLE_KEY_TO_TARGET[attr] ?? colorTargetFor(attr, role);
+      OVERRIDABLE_KEY_TO_TARGET[attr] ?? colorTargetFor(attr, role, desc);
     if (!target) {
       continue;
     }
@@ -607,9 +1207,14 @@ function buildComponentProps(
     props.push({
       name,
       target,
-      defaultValue: templateDefaultValue(template, descId, attr, byId) ?? {
-        literal: '',
-      },
+      defaultValue:
+        attr === 'dropShadow'
+          ? shadowStyleValue(desc, undefined, variablesMode)
+          : attr === 'textDecoration'
+          ? textDecorationStyleValue(desc, undefined, variablesMode)
+          : templateDefaultValue(template, descId, attr, byId) ?? {
+              literal: '',
+            },
     });
   }
   return props;
@@ -621,6 +1226,7 @@ function buildInstanceNode(
   },
   templateToComponentName: Map<string, string>,
   byId: Map<string, AnyNode>,
+  variablesMode: CodeVariablesMode,
 ): CodeNode | undefined {
   const componentName = templateToComponentName.get(refn.ref);
   if (!componentName) {
@@ -646,15 +1252,38 @@ function buildInstanceNode(
 
   const collectFrom = (descId: string, patch: Record<string, unknown>) => {
     const descNode = byId.get(descId);
+    if (descNode && Object.keys(patch).some((key) => SHADOW_KEYS.has(key))) {
+      props[propNameFor(descNode, 'dropShadow')] = shadowStyleValue(
+        descNode,
+        patch,
+        variablesMode,
+      );
+    }
+    if (
+      descNode &&
+      Object.keys(patch).some((key) => DECORATION_KEYS.has(key))
+    ) {
+      props[propNameFor(descNode, 'textDecoration')] = textDecorationStyleValue(
+        descNode,
+        patch,
+        variablesMode,
+      );
+    }
     for (const attr of Object.keys(patch)) {
       if (
         !(attr in OVERRIDABLE_KEY_TO_TARGET) &&
         attr !== 'fills' &&
-        attr !== 'fill'
+        attr !== 'fill' &&
+        attr !== 'strokes' &&
+        attr !== 'stroke'
       ) {
         continue;
       }
-      const sv = overrideStyleValue(patch, attr);
+      const sv = overrideStyleValue(
+        patch,
+        attr,
+        descNode ? decideRole(descNode) : 'shape',
+      );
       if (sv && descNode) {
         props[propNameFor(descNode, attr)] = sv;
       }

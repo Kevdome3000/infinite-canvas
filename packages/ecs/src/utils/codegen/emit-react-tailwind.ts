@@ -9,7 +9,12 @@
  */
 import { formatNumber } from '../serialize/points';
 import { pascalCase } from './string-utils';
-import { styleValueToCss } from './emit-style';
+import {
+  combinedImageOpacityCss,
+  solidFillColorToCss,
+  styleValueToCss,
+  textDecorationToCss,
+} from './emit-style';
 import type {
   CodeBindingTarget,
   CodeComponentDef,
@@ -22,10 +27,47 @@ import type {
 
 const TARGET_TO_CSS_KEY: Record<CodeBindingTarget, string> = {
   text: 'content',
+  imageSrc: 'src',
+  mixBlendMode: 'mixBlendMode',
   backgroundColor: 'backgroundColor',
+  backgroundImage: 'backgroundImage',
   color: 'color',
   fontSize: 'fontSize',
   borderRadius: 'borderRadius',
+  width: 'width',
+  height: 'height',
+  borderWidth: 'borderWidth',
+  borderColor: 'borderColor',
+  opacity: 'opacity',
+  visibility: 'visibility',
+  fontWeight: 'fontWeight',
+  fontStyle: 'fontStyle',
+  fontVariant: 'fontVariant',
+  fontKerning: 'fontKerning',
+  fontFamily: 'fontFamily',
+  textAlign: 'textAlign',
+  textWrapWidth: 'maxWidth',
+  letterSpacing: 'letterSpacing',
+  lineHeight: 'lineHeight',
+  textDecoration: 'textDecoration',
+  boxShadow: 'boxShadow',
+  padding: 'padding',
+  margin: 'margin',
+  gap: 'gap',
+  rowGap: 'rowGap',
+  columnGap: 'columnGap',
+  flexDirection: 'flexDirection',
+  alignItems: 'alignItems',
+  justifyContent: 'justifyContent',
+  flexWrap: 'flexWrap',
+  alignSelf: 'alignSelf',
+  flexGrow: 'flexGrow',
+  flexShrink: 'flexShrink',
+  flexBasis: 'flexBasis',
+  minWidth: 'minWidth',
+  maxWidth: 'maxWidth',
+  minHeight: 'minHeight',
+  maxHeight: 'maxHeight',
 };
 
 interface TwResult {
@@ -59,7 +101,7 @@ function genTailwind(
 
   if (style.display === 'flex') {
     classes.push('flex');
-    switch (style.flexDirection) {
+    switch (skip.has('flexDirection') ? undefined : style.flexDirection) {
       case 'row-reverse':
         classes.push('flex-row-reverse');
         break;
@@ -82,7 +124,7 @@ function genTailwind(
       stretch: 'items-stretch',
       baseline: 'items-baseline',
     };
-    if (style.alignItems && align[style.alignItems])
+    if (!skip.has('alignItems') && style.alignItems && align[style.alignItems])
       classes.push(align[style.alignItems]);
     const justify: Record<string, string> = {
       center: 'justify-center',
@@ -92,44 +134,98 @@ function genTailwind(
       'space-around': 'justify-around',
       'space-evenly': 'justify-evenly',
     };
-    if (style.justifyContent && justify[style.justifyContent])
+    if (
+      !skip.has('justifyContent') &&
+      style.justifyContent &&
+      justify[style.justifyContent]
+    )
       classes.push(justify[style.justifyContent]);
-    if (style.flexWrap === 'wrap') classes.push('flex-wrap');
-    else if (style.flexWrap === 'wrap-reverse')
+    if (!skip.has('flexWrap') && style.flexWrap === 'wrap')
+      classes.push('flex-wrap');
+    else if (!skip.has('flexWrap') && style.flexWrap === 'wrap-reverse')
       classes.push('flex-wrap-reverse');
-    if (style.gap !== undefined)
+    if (style.gap !== undefined && !skip.has('gap'))
       classes.push(`gap-[${formatNumber(style.gap)}px]`);
-    if (style.rowGap !== undefined)
+    if (style.rowGap !== undefined && !skip.has('rowGap'))
       classes.push(`gap-y-[${formatNumber(style.rowGap)}px]`);
-    if (style.columnGap !== undefined)
+    if (style.columnGap !== undefined && !skip.has('columnGap'))
       classes.push(`gap-x-[${formatNumber(style.columnGap)}px]`);
   }
-  if (style.flexGrow !== undefined)
+  if (style.display === 'inline-block') classes.push('inline-block');
+  if (style.position) classes.push(style.position);
+  if (style.left !== undefined)
+    classes.push(`left-[${formatNumber(style.left)}px]`);
+  if (style.top !== undefined)
+    classes.push(`top-[${formatNumber(style.top)}px]`);
+  if (style.flexGrow !== undefined && !skip.has('flexGrow'))
     classes.push(style.flexGrow === 1 ? 'grow' : `grow-[${style.flexGrow}]`);
-  if (style.flexShrink === 0) classes.push('shrink-0');
+  if (style.flexShrink === 0 && !skip.has('flexShrink'))
+    classes.push('shrink-0');
+  if (style.flexBasis !== undefined && !skip.has('flexBasis'))
+    classes.push(`basis-[${formatNumber(style.flexBasis)}px]`);
+  if (style.alignSelf && !skip.has('alignSelf')) {
+    const alignSelf: Record<string, string> = {
+      auto: 'self-auto',
+      center: 'self-center',
+      'flex-start': 'self-start',
+      'flex-end': 'self-end',
+      stretch: 'self-stretch',
+      baseline: 'self-baseline',
+    };
+    classes.push(alignSelf[style.alignSelf]);
+  }
 
-  pushBox(classes, 'p', style.padding);
-  pushBox(classes, 'm', style.margin);
+  if (!skip.has('padding')) pushBox(classes, 'p', style.padding);
+  if (!skip.has('margin')) pushBox(classes, 'm', style.margin);
 
-  if (style.width !== undefined)
+  if (style.width !== undefined && !skip.has('width'))
     classes.push(`w-[${formatNumber(style.width)}px]`);
-  if (style.height !== undefined)
+  if (style.height !== undefined && !skip.has('height'))
     classes.push(`h-[${formatNumber(style.height)}px]`);
-  if (style.minWidth !== undefined)
+  if (style.minWidth !== undefined && !skip.has('minWidth'))
     classes.push(`min-w-[${formatNumber(style.minWidth)}px]`);
-  if (style.maxWidth !== undefined)
+  if (style.maxWidth !== undefined && !skip.has('maxWidth'))
     classes.push(`max-w-[${formatNumber(style.maxWidth)}px]`);
-  if (style.minHeight !== undefined)
+  if (style.minHeight !== undefined && !skip.has('minHeight'))
     classes.push(`min-h-[${formatNumber(style.minHeight)}px]`);
-  if (style.maxHeight !== undefined)
+  if (style.maxHeight !== undefined && !skip.has('maxHeight'))
     classes.push(`max-h-[${formatNumber(style.maxHeight)}px]`);
+  if (style.transform) {
+    inline.push(['transform', JSON.stringify(style.transform)]);
+    inline.push(['transformOrigin', JSON.stringify('0 0')]);
+  }
+  if (style.overflow) classes.push('overflow-hidden');
+  if (style.objectFit)
+    inline.push(['objectFit', JSON.stringify(style.objectFit)]);
+  if (style.objectPosition)
+    inline.push(['objectPosition', JSON.stringify(style.objectPosition)]);
+  if (style.mixBlendMode && !skip.has('mixBlendMode'))
+    inline.push(['mixBlendMode', JSON.stringify(style.mixBlendMode)]);
+  if (style.visibility && !skip.has('visibility'))
+    classes.push(style.visibility === 'hidden' ? 'invisible' : 'visible');
 
   if (style.backgroundColor && !skip.has('backgroundColor')) {
-    if (needsInline(style.backgroundColor, mode))
+    if (style.solidFillOpacity)
+      inline.push([
+        'backgroundColor',
+        JSON.stringify(
+          solidFillColorToCss(
+            style.backgroundColor,
+            style.solidFillOpacity,
+            mode,
+          ),
+        ),
+      ]);
+    else if (needsInline(style.backgroundColor, mode))
       addInline('backgroundColor', style.backgroundColor);
     else
       classes.push(`bg-[${tw(styleValueToCss(style.backgroundColor, mode))}]`);
   }
+  if (style.backgroundImage && !skip.has('backgroundImage'))
+    inline.push([
+      'backgroundImage',
+      JSON.stringify(styleValueToCss(style.backgroundImage, mode)),
+    ]);
   if (style.borderRadius && !skip.has('borderRadius')) {
     if (needsInline(style.borderRadius, mode))
       addInline('borderRadius', style.borderRadius);
@@ -139,10 +235,11 @@ function genTailwind(
       );
   }
   if (style.borderWidth) {
-    classes.push(
-      `border-[${tw(styleValueToCss(style.borderWidth, mode, true))}]`,
-    );
-    if (style.borderColor) {
+    if (!skip.has('borderWidth'))
+      classes.push(
+        `border-[${tw(styleValueToCss(style.borderWidth, mode, true))}]`,
+      );
+    if (style.borderColor && !skip.has('borderColor')) {
       if (needsInline(style.borderColor, mode))
         addInline('borderColor', style.borderColor);
       else
@@ -151,7 +248,7 @@ function genTailwind(
         );
     }
   }
-  if (style.boxShadow) {
+  if (style.boxShadow && !skip.has('boxShadow')) {
     const s = style.boxShadow;
     if (needsInline(s.color, mode)) {
       inline.push([
@@ -170,11 +267,24 @@ function genTailwind(
       );
     }
   }
-  if (style.opacity !== undefined)
-    classes.push(`opacity-[${formatNumber(style.opacity)}]`);
+  if (!skip.has('opacity')) {
+    const opacity = combinedImageOpacityCss(style, mode);
+    if (opacity !== undefined) {
+      if (Number.isFinite(Number(opacity)))
+        classes.push(`opacity-[${opacity}]`);
+      else inline.push(['opacity', JSON.stringify(opacity)]);
+    }
+  }
 
   if (style.color && !skip.has('color')) {
-    if (needsInline(style.color, mode)) addInline('color', style.color);
+    if (style.solidFillOpacity)
+      inline.push([
+        'color',
+        JSON.stringify(
+          solidFillColorToCss(style.color, style.solidFillOpacity, mode),
+        ),
+      ]);
+    else if (needsInline(style.color, mode)) addInline('color', style.color);
     else classes.push(`text-[${tw(styleValueToCss(style.color, mode))}]`);
   }
   if (style.fontSize && !skip.has('fontSize')) {
@@ -183,16 +293,50 @@ function genTailwind(
     else
       classes.push(`text-[${tw(styleValueToCss(style.fontSize, mode, true))}]`);
   }
-  if (style.fontWeight !== undefined)
+  if (style.fontWeight !== undefined && !skip.has('fontWeight'))
     classes.push(`font-[${style.fontWeight}]`);
-  if (style.fontStyle === 'italic') classes.push('italic');
-  if (style.fontFamily) classes.push(`font-[${tw(style.fontFamily)}]`);
-  if (style.textAlign) classes.push(`text-${style.textAlign}`);
-  if (style.letterSpacing)
+  if (style.fontStyle === 'italic' && !skip.has('fontStyle'))
+    classes.push('italic');
+  if (style.fontVariant && !skip.has('fontVariant'))
+    inline.push(['fontVariant', JSON.stringify(style.fontVariant)]);
+  if (style.fontKerning && !skip.has('fontKerning'))
+    inline.push(['fontKerning', JSON.stringify(style.fontKerning)]);
+  if (style.textDecoration && !skip.has('textDecoration'))
+    inline.push([
+      'textDecoration',
+      JSON.stringify(textDecorationToCss(style.textDecoration, mode)),
+    ]);
+  if (style.fontFamily && !skip.has('fontFamily'))
+    classes.push(`font-[${tw(style.fontFamily)}]`);
+  if (style.textAlign && !skip.has('textAlign'))
+    classes.push(`text-${style.textAlign}`);
+  if (style.whiteSpace) {
+    classes.push(
+      style.whiteSpace === 'pre-wrap'
+        ? 'whitespace-pre-wrap'
+        : 'whitespace-pre',
+    );
+  }
+  if (style.textWrapWidth !== undefined) {
+    if (style.display !== 'inline-block') classes.push('inline-block');
+    inline.push(['overflowWrap', JSON.stringify('anywhere')]);
+    if (!skip.has('textWrapWidth'))
+      classes.push(`max-w-[${formatNumber(style.textWrapWidth)}px]`);
+  }
+  if (style.maxLines !== undefined && style.textOverflow === 'ellipsis') {
+    inline.push(['display', JSON.stringify('-webkit-box')]);
+    inline.push(['WebkitBoxOrient', JSON.stringify('vertical')]);
+    inline.push(['WebkitLineClamp', String(style.maxLines)]);
+    inline.push(['overflow', JSON.stringify('hidden')]);
+  } else if (style.maxLines !== undefined && style.textOverflow === 'clip') {
+    inline.push(['maxHeight', JSON.stringify(`calc(${style.maxLines} * 1lh)`)]);
+    inline.push(['overflow', JSON.stringify('hidden')]);
+  }
+  if (style.letterSpacing && !skip.has('letterSpacing'))
     classes.push(
       `tracking-[${tw(styleValueToCss(style.letterSpacing, mode, true))}]`,
     );
-  if (style.lineHeight)
+  if (style.lineHeight && !skip.has('lineHeight'))
     classes.push(
       `leading-[${tw(styleValueToCss(style.lineHeight, mode, true))}]`,
     );
@@ -238,12 +382,36 @@ function renderAttributes(
     if (b.target !== 'text') skip.add(b.target);
   }
   const { classes, inline } = genTailwind(node.style, state.mode, skip);
+  if (node.element?.tag === 'button') classes.unshift('cursor-pointer');
+  if (node.element?.tag === 'a') classes.unshift('no-underline');
 
   // 样式绑定 → inline style 引用 prop 标识符
+  // `gap` must precede its longhands so row/column overrides win.
+  const gapBinding = (node.bindings ?? []).find((b) => b.target === 'gap');
+  if (gapBinding) inline.push(['gap', gapBinding.prop]);
   for (const b of node.bindings ?? []) {
-    if (b.target === 'text') continue;
-    inline.push([TARGET_TO_CSS_KEY[b.target], b.prop]);
+    if (b.target === 'text' || b.target === 'imageSrc' || b.target === 'gap')
+      continue;
+    if (b.target === 'lineHeight') {
+      inline.push([
+        'lineHeight',
+        `typeof ${b.prop} === "number" ? (${b.prop} > 0 ? ${b.prop} + "px" : undefined) : ${b.prop}`,
+      ]);
+    } else if (b.target === 'opacity' && node.style.imageFillOpacity) {
+      const fill = node.style.imageFillOpacity;
+      const opacity =
+        typeof fill.literal === 'number'
+          ? `${b.prop} * ${formatNumber(fill.literal)}`
+          : `${JSON.stringify('calc(')} + ${b.prop} + ${JSON.stringify(
+              ` * ${styleValueToCss(fill, state.mode)})`,
+            )}`;
+      inline.push(['opacity', opacity]);
+    } else {
+      inline.push([TARGET_TO_CSS_KEY[b.target], b.prop]);
+    }
   }
+  if ((node.bindings ?? []).some((b) => b.target === 'borderWidth'))
+    inline.push(['borderStyle', JSON.stringify('solid')]);
 
   const className = classes.length ? ` className="${classes.join(' ')}"` : '';
   let styleExpr = '';
@@ -286,7 +454,10 @@ function renderNode(node: CodeNode, state: EmitState, depth: number): string {
           : `${k}=${JSON.stringify(val)}`;
       })
       .join(' ');
-    return `${pad}<${node.instanceOf}${props ? ' ' + props : ''} />`;
+    const component = `<${node.instanceOf}${props ? ' ' + props : ''} />`;
+    if (!node.style.position) return `${pad}${component}`;
+    const { className, styleExpr } = renderAttributes(node, state);
+    return `${pad}<div${className}${styleExpr}>${component}</div>`;
   }
 
   const { className, styleExpr } = renderAttributes(node, state);
@@ -296,29 +467,43 @@ function renderNode(node: CodeNode, state: EmitState, depth: number): string {
   }
 
   if (node.role === 'image') {
-    const src = node.image ? styleValueToCss(node.image, state.mode) : '';
-    return `${pad}<img src=${JSON.stringify(src)} alt=${JSON.stringify(
+    const imageBinding = (node.bindings ?? []).find(
+      (binding) => binding.target === 'imageSrc',
+    );
+    const src = imageBinding
+      ? `{${imageBinding.prop}}`
+      : JSON.stringify(
+          node.image ? styleValueToCss(node.image, state.mode) : '',
+        );
+    return `${pad}<img src=${src} alt=${JSON.stringify(
       node.name ?? '',
     )}${className}${styleExpr} />`;
   }
 
+  const tag = node.element?.tag ?? (node.role === 'text' ? 'span' : 'div');
+  const semanticAttr =
+    tag === 'button'
+      ? ' type="button"'
+      : tag === 'a' && node.element?.tag === 'a'
+      ? ` href=${JSON.stringify(node.element.href)}`
+      : '';
+
   if (node.role === 'text' && node.children.length === 0) {
-    return `${pad}<span${className}${styleExpr}>${textExpr(
+    return `${pad}<${tag}${semanticAttr}${className}${styleExpr}>${textExpr(
       node,
       state,
-    )}</span>`;
+    )}</${tag}>`;
   }
 
-  const tag = 'div';
   const inner = textExpr(node, state);
   if (node.children.length === 0) {
-    return `${pad}<${tag}${className}${styleExpr}>${inner}</${tag}>`;
+    return `${pad}<${tag}${semanticAttr}${className}${styleExpr}>${inner}</${tag}>`;
   }
   const childrenStr = node.children
     .map((c) => renderNode(c, state, depth + 1))
     .join('\n');
   const leading = inner ? `${state.indent.repeat(depth + 1)}${inner}\n` : '';
-  return `${pad}<${tag}${className}${styleExpr}>\n${leading}${childrenStr}\n${pad}</${tag}>`;
+  return `${pad}<${tag}${semanticAttr}${className}${styleExpr}>\n${leading}${childrenStr}\n${pad}</${tag}>`;
 }
 
 function renderIcon(
@@ -347,7 +532,44 @@ function renderIcon(
 function renderComponent(def: CodeComponentDef, state: EmitState): string {
   const propsType = def.props
     .map((p) => {
-      const tsType = p.target === 'fontSize' ? 'number' : 'string';
+      const tsType = [
+        'fontSize',
+        'textWrapWidth',
+        'width',
+        'height',
+        'borderWidth',
+        'opacity',
+        'gap',
+        'rowGap',
+        'columnGap',
+        'flexGrow',
+        'flexShrink',
+      ].includes(p.target)
+        ? 'number'
+        : [
+            'fontWeight',
+            'fontStyle',
+            'fontVariant',
+            'fontKerning',
+            'textAlign',
+            'letterSpacing',
+            'lineHeight',
+            'textDecoration',
+            'flexDirection',
+            'alignItems',
+            'justifyContent',
+            'flexWrap',
+            'alignSelf',
+            'flexBasis',
+            'mixBlendMode',
+            'visibility',
+            'minWidth',
+            'maxWidth',
+            'minHeight',
+            'maxHeight',
+          ].includes(p.target)
+        ? `CSSProperties['${p.target}']`
+        : 'string';
       return `${state.indent}${p.name}?: ${tsType};`;
     })
     .join('\n');
@@ -384,12 +606,19 @@ export function emitReactTailwind(
   const componentBlocks = ir.components.map((c) => renderComponent(c, state));
 
   const rootBody = ir.roots.map((n) => renderNode(n, state, 2)).join('\n');
-  const rootWrapped =
-    ir.roots.length === 1
-      ? rootBody
-      : `${indent.repeat(2)}<>\n${ir.roots
-          .map((n) => renderNode(n, state, 3))
-          .join('\n')}\n${indent.repeat(2)}</>`;
+  const rootWrapped = ir.rootFrame
+    ? `${indent.repeat(
+        2,
+      )}<div className="relative" style={{ width: ${formatNumber(
+        ir.rootFrame.width,
+      )}, height: ${formatNumber(ir.rootFrame.height)} }}>\n${ir.roots
+        .map((n) => renderNode(n, state, 3))
+        .join('\n')}\n${indent.repeat(2)}</div>`
+    : ir.roots.length === 1
+    ? rootBody
+    : `${indent.repeat(2)}<>\n${ir.roots
+        .map((n) => renderNode(n, state, 3))
+        .join('\n')}\n${indent.repeat(2)}</>`;
 
   const topComponent = `export function ${
     pascalCase(topName) || 'Design'
@@ -397,6 +626,35 @@ export function emitReactTailwind(
 
   // imports（在确定用到哪些图标后再生成）
   const imports: string[] = [];
+  if (
+    ir.components.some((component) =>
+      component.props.some((prop) =>
+        [
+          'fontWeight',
+          'fontStyle',
+          'fontVariant',
+          'fontKerning',
+          'textAlign',
+          'letterSpacing',
+          'lineHeight',
+          'textDecoration',
+          'flexDirection',
+          'alignItems',
+          'justifyContent',
+          'flexWrap',
+          'alignSelf',
+          'flexBasis',
+          'mixBlendMode',
+          'minWidth',
+          'maxWidth',
+          'minHeight',
+          'maxHeight',
+        ].includes(prop.target),
+      ),
+    )
+  ) {
+    imports.push(`import type { CSSProperties } from 'react';`);
+  }
   if (state.lucideIcons.size) {
     imports.push(
       `import { ${[...state.lucideIcons]

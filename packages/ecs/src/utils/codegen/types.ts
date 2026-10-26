@@ -31,6 +31,23 @@ export type CodeVariablesMode = 'resolved' | 'preserve-token' | 'css-var';
  */
 export type CodeComponentStructure = 'preserve' | 'flatten';
 
+/** Optional semantic HTML for a scene node. Actions remain unbound until the app wires them. */
+export type CodeSemanticElement =
+  | { tag: 'button' }
+  | { tag: 'a'; href: string }
+  | {
+      tag:
+        | 'main'
+        | 'nav'
+        | 'header'
+        | 'footer'
+        | 'section'
+        | 'aside'
+        | 'h1'
+        | 'h2'
+        | 'p';
+    };
+
 /** 一个样式取值：要么是字面量，要么是设计变量引用（`token` 为去掉 `$` 的键名）。 */
 export interface StyleValue {
   literal?: string | number;
@@ -40,9 +57,19 @@ export interface StyleValue {
 
 /** 结构化、框架无关的样式。颜色/尺寸等可能携带设计变量引用。 */
 export interface StyleIR {
-  display?: 'flex';
+  display?: 'flex' | 'inline-block';
+  position?: 'relative' | 'absolute';
+  left?: number;
+  top?: number;
   flexDirection?: 'row' | 'row-reverse' | 'column' | 'column-reverse';
   alignItems?: 'center' | 'flex-start' | 'flex-end' | 'stretch' | 'baseline';
+  alignSelf?:
+    | 'auto'
+    | 'center'
+    | 'flex-start'
+    | 'flex-end'
+    | 'stretch'
+    | 'baseline';
   justifyContent?:
     | 'center'
     | 'flex-start'
@@ -67,7 +94,16 @@ export interface StyleIR {
   maxWidth?: number;
   minHeight?: number;
   maxHeight?: number;
+  /** Local canvas transform; rotation is stored in radians. */
+  transform?: string;
+  /** Rectangular or elliptical `clipMode: clip` clips descendant content. */
+  overflow?: 'hidden';
+  objectFit?: 'fill' | 'contain' | 'cover' | 'none' | 'scale-down';
+  objectPosition?: string;
   backgroundColor?: StyleValue;
+  /** Opacity of the only enabled solid fill, applied to its paint rather than children. */
+  solidFillOpacity?: StyleValue;
+  backgroundImage?: StyleValue;
   borderRadius?: StyleValue;
   borderWidth?: StyleValue;
   borderColor?: StyleValue;
@@ -78,14 +114,32 @@ export interface StyleIR {
     color: StyleValue;
   };
   opacity?: number;
+  visibility?: 'hidden' | 'visible';
+  /** Opacity of the single image fill, multiplied with node opacity for `<img>`. */
+  imageFillOpacity?: StyleValue;
+  mixBlendMode?: string;
   color?: StyleValue;
   fontSize?: StyleValue;
   fontWeight?: string | number;
   fontStyle?: string;
+  fontVariant?: string;
+  fontKerning?: 'normal' | 'none';
   fontFamily?: string;
   textAlign?: 'left' | 'center' | 'right' | 'justify';
+  /** Canvas text preserves hard breaks; wrapped text also has a fixed line width. */
+  whiteSpace?: 'pre' | 'pre-wrap';
+  textWrapWidth?: number;
+  /** Canvas applies this limit only to wrapped text with a positive wrap width. */
+  maxLines?: number;
+  textOverflow?: 'ellipsis' | 'clip';
   letterSpacing?: StyleValue;
   lineHeight?: StyleValue;
+  textDecoration?: {
+    line: 'underline' | 'overline' | 'line-through';
+    style: 'solid' | 'double' | 'dotted' | 'dashed' | 'wavy';
+    color: StyleValue;
+    thickness: number;
+  };
 }
 
 export type CodeNodeRole = 'container' | 'text' | 'icon' | 'image' | 'shape';
@@ -93,10 +147,47 @@ export type CodeNodeRole = 'container' | 'text' | 'icon' | 'image' | 'shape';
 /** 组件实例的某条属性覆盖会绑定到一个 prop；emitter 据此把 prop 注入对应位置。 */
 export type CodeBindingTarget =
   | 'text'
+  | 'imageSrc'
+  | 'mixBlendMode'
   | 'backgroundColor'
+  | 'backgroundImage'
   | 'color'
   | 'fontSize'
-  | 'borderRadius';
+  | 'borderRadius'
+  | 'width'
+  | 'height'
+  | 'borderWidth'
+  | 'borderColor'
+  | 'opacity'
+  | 'visibility'
+  | 'fontWeight'
+  | 'fontStyle'
+  | 'fontVariant'
+  | 'fontKerning'
+  | 'fontFamily'
+  | 'textAlign'
+  | 'textWrapWidth'
+  | 'letterSpacing'
+  | 'lineHeight'
+  | 'textDecoration'
+  | 'boxShadow'
+  | 'padding'
+  | 'margin'
+  | 'gap'
+  | 'rowGap'
+  | 'columnGap'
+  | 'flexDirection'
+  | 'alignItems'
+  | 'justifyContent'
+  | 'flexWrap'
+  | 'alignSelf'
+  | 'flexGrow'
+  | 'flexShrink'
+  | 'flexBasis'
+  | 'minWidth'
+  | 'maxWidth'
+  | 'minHeight'
+  | 'maxHeight';
 
 export interface CodeBinding {
   target: CodeBindingTarget;
@@ -110,6 +201,8 @@ export interface CodeNode {
   /** 源 `.ic` 节点 id。 */
   id: string;
   name?: string;
+  /** HTML element to emit instead of the default div/span. */
+  element?: CodeSemanticElement;
   style: StyleIR;
   children: CodeNode[];
   /** `role === 'text'` 时的文本内容（字面量或变量引用）。 */
@@ -145,6 +238,8 @@ export interface CodeComponentDef {
 export interface CodeIR {
   components: CodeComponentDef[];
   roots: CodeNode[];
+  /** Bounding frame for multiple explicitly sized scene roots. */
+  rootFrame?: { width: number; height: number };
   variables: DesignVariablesMap;
   themeMode?: ThemeMode;
   variablesMode: CodeVariablesMode;
@@ -158,6 +253,8 @@ export interface CodegenOptions {
   themeMode?: ThemeMode;
   /** React emitter 顶层组件名，默认 `Design`。 */
   componentName?: string;
+  /** Node-id keyed semantic elements for exported HTML/JSX. */
+  semanticElements?: Record<string, CodeSemanticElement>;
   /** 缩进字符串，默认两个空格。 */
   indent?: string;
 }
