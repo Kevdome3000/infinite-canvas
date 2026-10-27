@@ -54,6 +54,71 @@ describe('design variables', () => {
     expect(nodes[0].fills?.[0]?.value).toBe('$color.bg');
   });
 
+  it('resolves design variables in reusable instance overrides', () => {
+    const nodes = [
+      {
+        id: 'instance',
+        type: 'ref',
+        ref: 'template',
+        fills: [{ type: 'solid', value: '$color.bg' }],
+        descendants: {
+          action: {
+            fills: [{ type: 'solid', value: '$color.accent' }],
+          },
+        },
+      },
+    ];
+    const variables = {
+      'color.bg': { type: 'color' as const, value: '#eee' },
+      'color.accent': { type: 'color' as const, value: '#7969f5' },
+    };
+    const resolved = resolveSerializedNodesDesignVariables(
+      nodes as any,
+      variables,
+    )[0] as (typeof nodes)[number];
+    expect(resolved.fills[0].value).toBe('#eee');
+    expect(resolved.descendants.action.fills[0].value).toBe('#7969f5');
+    expect(nodes[0].descendants.action.fills[0].value).toBe('$color.accent');
+
+    const cssVars = prepareSerializedNodesForSvgExport(
+      nodes as any,
+      variables,
+      'css-var',
+    ).nodes[0] as (typeof nodes)[number];
+    expect(cssVars.descendants.action.fills[0].value).toBe(
+      'var(--color-accent)',
+    );
+  });
+
+  it('resolves text content while preserving literal prices', () => {
+    const nodes = [
+      { id: 'title', type: 'text', content: '$copy.title' },
+      { id: 'price', type: 'text', content: '$29' },
+      {
+        id: 'instance',
+        type: 'ref',
+        ref: 'template',
+        descendants: { label: { content: '$copy.action' } },
+      },
+    ];
+    const variables = {
+      'copy.title': { type: 'string' as const, value: 'Welcome' },
+      'copy.action': { type: 'string' as const, value: 'Continue' },
+    };
+    for (const mode of ['resolved', 'css-var'] as const) {
+      const exported = prepareSerializedNodesForSvgExport(
+        nodes as any,
+        variables,
+        mode,
+      ).nodes as typeof nodes;
+      expect(exported[0].content).toBe('Welcome');
+      expect(exported[1].content).toBe('$29');
+      expect(exported[2].descendants?.label.content).toBe('Continue');
+    }
+    expect(nodes[0].content).toBe('$copy.title');
+    expect(nodes[2].descendants?.label.content).toBe('$copy.action');
+  });
+
   it('prepareSerializedNodesForSvgExport css-var', () => {
     const nodes = [
       {

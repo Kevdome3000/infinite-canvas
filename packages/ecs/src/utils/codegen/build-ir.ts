@@ -15,6 +15,7 @@ import {
   designVariableRefKeyFromWire,
   isDesignVariableReference,
   resolveSerializedNodesDesignVariables,
+  resolveSerializedNodesTextVariables,
   type DesignVariablesMap,
 } from '../design-variables';
 import { expandRefSerializedNodes } from '../deserialize/expand-ref-nodes';
@@ -23,7 +24,20 @@ import { toComponentName, toPropName } from './string-utils';
 import { boxToCss, styleValueToCss, textDecorationToCss } from './emit-style';
 import { toCSSMixBlendMode } from '../blend-mode';
 import { hasUnsupportedPaintFillOverride } from './paint-fill-override';
-import { singleCssGradientFill } from './gradient-fill';
+import {
+  cssBackgroundGradient,
+  isCssGradient,
+  singleCssGradientFill,
+} from './gradient-fill';
+import { pathGeometryBounds } from '../path-rendering';
+import { parsePath } from '../curve/shape-path';
+import { parsePatternTransform } from '../pattern-transform';
+import {
+  computeLinearGradient,
+  computeRadialGradient,
+  isGradient,
+  parseGradient,
+} from '../gradient';
 import type {
   CodeBindingTarget,
   CodeComponentDef,
@@ -34,6 +48,12 @@ import type {
   CodeSemanticElement,
   CodegenOptions,
   CodeVariablesMode,
+  CodeVectorMarker,
+  CodeVectorGradient,
+  CodeVectorImage,
+  CodeVectorFillLayer,
+  CodeVectorStrokeLayer,
+  CodePaintOverlay,
   StyleIR,
   StyleValue,
 } from './types';
@@ -224,6 +244,86 @@ function normalizeBox(
   return undefined;
 }
 
+function supportsCssBackgroundLayers(
+  activeFills: SerializedFillLayerItem[],
+): boolean {
+  return (
+    (activeFills.length > 1 ||
+      (activeFills.length === 1 && activeFills[0].type === 'pattern')) &&
+    activeFills.every((fill, index) => {
+      if (
+        index > 0 &&
+        fill.blendMode !== undefined &&
+        fill.blendMode !== 'normal' &&
+        toCSSMixBlendMode(fill.blendMode) === null
+      )
+        return false;
+      if (fill.type === 'solid') return !!toStyleValue(fill.value);
+      if (fill.type === 'gradient')
+        return (
+          !!cssBackgroundGradient(fill.value) &&
+          (fill.opacity === undefined || Number(fill.opacity) === 1)
+        );
+      if (fill.type === 'image')
+        return (
+          !!fill.value.trim() &&
+          ['fill', 'contain', 'cover', 'none'].includes(
+            fill.objectFit ?? 'fill',
+          ) &&
+          (fill.opacity === undefined || Number(fill.opacity) === 1)
+        );
+      if (fill.type === 'pattern')
+        return (
+          !!fill.value.trim() &&
+          !fill.transform &&
+          (fill.opacity === undefined || Number(fill.opacity) === 1)
+        );
+      return false;
+    })
+  );
+}
+
+function supportsPaintOverlays(
+  node: AnyNode,
+  activeFills: SerializedFillLayerItem[],
+): boolean {
+  return (
+    activeFills.length > 0 &&
+    !(activeFills.length === 1 && activeFills[0].type === 'image') &&
+    activeFills.some(
+      (fill) =>
+        (fill.type !== 'solid' &&
+          fill.opacity !== undefined &&
+          Number(fill.opacity) !== 1) ||
+        (fill.type === 'image' && fill.objectFit === 'scale-down') ||
+        (fill.type === 'pattern' && !!fill.transform),
+    ) &&
+    activeFills.every((fill, index) => {
+      if (
+        index > 0 &&
+        fill.blendMode !== undefined &&
+        fill.blendMode !== 'normal' &&
+        toCSSMixBlendMode(fill.blendMode) === null
+      )
+        return false;
+      if (fill.type === 'solid') return !!toStyleValue(fill.value);
+      if (fill.type === 'gradient') return !!cssBackgroundGradient(fill.value);
+      if (fill.type === 'image') return !!fill.value.trim();
+      if (fill.type === 'pattern')
+        return (
+          !!fill.value.trim() &&
+          (!fill.transform ||
+            (typeof node.width === 'number' &&
+              node.width > 0 &&
+              typeof node.height === 'number' &&
+              node.height > 0 &&
+              !!parsePatternTransform(fill.transform)))
+        );
+      return false;
+    })
+  );
+}
+
 function decideRole(node: AnyNode): CodeNodeRole {
   switch (node.type) {
     case 'text':
@@ -232,7 +332,18 @@ function decideRole(node: AnyNode): CodeNodeRole {
       return 'icon';
     case 'g':
       return 'container';
-    case 'rect':
+    case 'rect': {
+      const fills = asArray<SerializedFillLayerItem>(node.fills).filter(
+        (fill) => fill.enabled !== false,
+      );
+      if (fills.some((fill) => fill.type === 'image')) {
+        return supportsCssBackgroundLayers(fills) ||
+          supportsPaintOverlays(node, fills)
+          ? 'container'
+          : 'image';
+      }
+      return 'container';
+    }
     case 'rough-rect': {
       const fills = asArray<SerializedFillLayerItem>(node.fills);
       if (fills.some((l) => l.type === 'image' && l.enabled !== false)) {
@@ -241,9 +352,543 @@ function decideRole(node: AnyNode): CodeNodeRole {
       // flex 容器或有子节点者视作容器
       return 'container';
     }
+    case 'ellipse': {
+      const fills = asArray<SerializedFillLayerItem>(node.fills).filter(
+        (fill) => fill.enabled !== false,
+      );
+      return fills.length === 1 && fills[0].type === 'image'
+        ? 'image'
+        : 'shape';
+    }
     default:
       return 'shape';
   }
+}
+
+function vectorPathData(node: AnyNode): string | undefined {
+  if (node.type === 'path')
+    return typeof node.d === 'string' && node.d.trim() ? node.d : undefined;
+  if (node.type === 'line') {
+    const coords = [node.x1, node.y1, node.x2, node.y2];
+    if (
+      !coords.every(
+        (value) => typeof value === 'number' && Number.isFinite(value),
+      )
+    )
+      return undefined;
+    return `M ${coords[0]} ${coords[1]} L ${coords[2]} ${coords[3]}`;
+  }
+  if (node.type === 'polyline' && typeof node.points === 'string') {
+    const numbers = node.points
+      .trim()
+      .split(/[,\s]+/)
+      .map(Number);
+    if (
+      numbers.length < 4 ||
+      numbers.length % 2 !== 0 ||
+      !numbers.every(Number.isFinite)
+    )
+      return undefined;
+    let d = `M ${numbers[0]} ${numbers[1]}`;
+    for (let i = 2; i < numbers.length; i += 2)
+      d += ` L ${numbers[i]} ${numbers[i + 1]}`;
+    return d;
+  }
+  return undefined;
+}
+
+function vectorMarker(
+  node: AnyNode,
+  side: 'start' | 'end',
+  strokeWidth: number,
+  layerIndex?: number,
+): CodeVectorMarker | undefined {
+  const type = node[side === 'start' ? 'markerStart' : 'markerEnd'];
+  if (!['line', 'triangle', 'diamond'].includes(type as string))
+    return undefined;
+  const factor =
+    typeof node.markerFactor === 'number' &&
+    Number.isFinite(node.markerFactor) &&
+    node.markerFactor > 0
+      ? node.markerFactor
+      : 3;
+  const radius = strokeWidth * factor;
+  const size = radius * factor;
+  const tipX = -radius * Math.cos(Math.PI / 6);
+  const tipY = radius * 0.5;
+  const d =
+    type === 'diamond'
+      ? `M 0 0 L ${-radius * 0.5} ${-radius * 0.4} L ${-radius} 0 L ${
+          -radius * 0.5
+        } ${radius * 0.4} Z`
+      : `M ${tipX} ${-tipY} L 0 0 L ${tipX} ${tipY}${
+          type === 'triangle' ? ' Z' : ''
+        }`;
+  // Use a reversible, CSS-safe encoding so unrelated nodes never share a marker ID.
+  const encodedId = Array.from(node.id as string)
+    .map((character) => character.codePointAt(0)!.toString(16))
+    .join('-');
+  return {
+    id: `ic-marker-${encodedId}-${side}${
+      layerIndex === undefined ? '' : `-${layerIndex}`
+    }`,
+    d,
+    fill: type !== 'line',
+    size,
+    offset: radius,
+    strokeWidth,
+    strokeLinecap: ['butt', 'round', 'square'].includes(
+      node.strokeLinecap as string,
+    )
+      ? (node.strokeLinecap as CodeVectorMarker['strokeLinecap'])
+      : undefined,
+    strokeLinejoin: ['miter', 'round', 'bevel'].includes(
+      node.strokeLinejoin as string,
+    )
+      ? (node.strokeLinejoin as CodeVectorMarker['strokeLinejoin'])
+      : undefined,
+  };
+}
+
+function vectorGradient(
+  node: AnyNode,
+  kind: 'fill' | 'stroke',
+  layers: SerializedFillLayerItem[],
+  min: [number, number],
+  width: number,
+  height: number,
+  idSuffix: string = kind,
+): CodeVectorGradient | undefined {
+  const active = layers.filter((layer) => layer.enabled !== false);
+  const layer = active.length === 1 ? active[0] : undefined;
+  const value =
+    layer?.type === 'gradient' &&
+    (layer.blendMode === undefined || layer.blendMode === 'normal')
+      ? layer.value
+      : active.length === 0 && isCssGradient(node[kind])
+      ? (node[kind] as string)
+      : undefined;
+  if (!value) return undefined;
+  let gradients: ReturnType<typeof parseGradient>;
+  try {
+    gradients = parseGradient(value);
+  } catch {
+    return undefined;
+  }
+  if (gradients?.length !== 1) return undefined;
+  const gradient = gradients[0];
+  if (
+    (gradient.type !== 'linear-gradient' &&
+      gradient.type !== 'radial-gradient') ||
+    gradient.steps.length === 0
+  )
+    return undefined;
+  const stops = gradient.steps.map((step) => ({
+    offset:
+      step.offset.type === '%'
+        ? step.offset.value / 100
+        : step.offset.value <= 1
+        ? step.offset.value
+        : step.offset.value / 100,
+    color: step.color,
+  }));
+  if (
+    !stops.every(
+      (stop) => Number.isFinite(stop.offset) && stop.color.trim() !== '',
+    )
+  )
+    return undefined;
+  const encodedId = Array.from(node.id as string)
+    .map((character) => character.codePointAt(0)!.toString(16))
+    .join('-');
+  const geometry =
+    gradient.type === 'linear-gradient'
+      ? {
+          type: 'linear' as const,
+          ...computeLinearGradient(min, width, height, gradient.angle),
+        }
+      : (() => {
+          const { x, y, r } = computeRadialGradient(
+            min,
+            width,
+            height,
+            gradient.cx,
+            gradient.cy,
+            gradient.size,
+          );
+          return { type: 'radial' as const, cx: x, cy: y, r };
+        })();
+  if (
+    !Object.values(geometry).every((coordinate) =>
+      typeof coordinate === 'number' ? Number.isFinite(coordinate) : true,
+    )
+  )
+    return undefined;
+  return { id: `ic-gradient-${encodedId}-${idSuffix}`, geometry, stops };
+}
+
+function svgImageAlignment(
+  position: string | undefined,
+): `x${'Min' | 'Mid' | 'Max'}Y${'Min' | 'Mid' | 'Max'}` | undefined {
+  if (position === undefined) return 'xMidYMid';
+  const parts = position.trim().toLowerCase().split(/\s+/);
+  if (parts.length < 1 || parts.length > 2) return undefined;
+  const axis = (
+    token: string,
+    horizontal: boolean,
+  ): 'Min' | 'Mid' | 'Max' | undefined => {
+    if (token === 'center' || token === '50%') return 'Mid';
+    if (token === '0%' || token === (horizontal ? 'left' : 'top')) return 'Min';
+    if (token === '100%' || token === (horizontal ? 'right' : 'bottom'))
+      return 'Max';
+    return undefined;
+  };
+  if (parts.length === 1) {
+    const x = axis(parts[0], true);
+    if (x) return `x${x}YMid`;
+    const y = axis(parts[0], false);
+    return y ? `xMidY${y}` : undefined;
+  }
+  const x = axis(parts[0], true);
+  const y = axis(parts[1], false);
+  if (x && y) return `x${x}Y${y}`;
+  // CSS also accepts vertical-first keyword pairs, including `center left`.
+  const reversedY = axis(parts[0], false);
+  const reversedX = axis(parts[1], true);
+  if (
+    reversedX &&
+    reversedY &&
+    ((['top', 'bottom'].includes(parts[0]) &&
+      ['left', 'right', 'center'].includes(parts[1])) ||
+      (parts[0] === 'center' && ['left', 'right'].includes(parts[1])))
+  )
+    return `x${reversedX}Y${reversedY}`;
+  return undefined;
+}
+
+function vectorImage(
+  node: AnyNode,
+  kind: 'fill' | 'stroke',
+  layers: SerializedFillLayerItem[],
+  idSuffix: string = kind,
+): CodeVectorImage | undefined {
+  if (layers.length !== 1 || layers[0].type !== 'image') return undefined;
+  const image = layers[0];
+  if (
+    !image.value.trim() ||
+    (image.blendMode !== undefined && image.blendMode !== 'normal')
+  )
+    return undefined;
+  const fit = image.objectFit ?? 'fill';
+  const encodedId = Array.from(node.id as string)
+    .map((character) => character.codePointAt(0)!.toString(16))
+    .join('-');
+  const id = `ic-image-${encodedId}-${idSuffix}`;
+  const alignment = svgImageAlignment(image.objectPosition);
+  if (alignment && ['fill', 'contain', 'cover'].includes(fit))
+    return {
+      id,
+      href: image.value,
+      rendering: 'pattern',
+      preserveAspectRatio:
+        fit === 'cover'
+          ? `${alignment} slice`
+          : fit === 'contain'
+          ? `${alignment} meet`
+          : 'none',
+    };
+  return {
+    id,
+    href: image.value,
+    rendering: 'foreignObject',
+    objectFit: fit,
+    objectPosition: image.objectPosition ?? '50% 50%',
+  };
+}
+
+function buildVectorPath(node: AnyNode): CodeNode['vectorPath'] {
+  const d = vectorPathData(node);
+  if (!d) return undefined;
+  let bounds: ReturnType<typeof pathGeometryBounds>;
+  try {
+    bounds = pathGeometryBounds(d);
+  } catch {
+    return undefined;
+  }
+  if (
+    ![bounds.minX, bounds.minY, bounds.maxX, bounds.maxY].every(Number.isFinite)
+  )
+    return undefined;
+  const dimension = (raw: unknown, span: number) =>
+    typeof raw === 'number' && Number.isFinite(raw) && raw > 0
+      ? raw
+      : Math.max(1, span);
+  const fills = asArray<SerializedFillLayerItem>(node.fills).filter(
+    (fill) => fill.enabled !== false,
+  );
+  const strokes = asArray<SerializedFillLayerItem>(node.strokes).filter(
+    (stroke) => stroke.enabled !== false,
+  );
+  const fillLayer = fills.find((fill) => fill.type === 'solid');
+  const strokeLayer = strokes.find((stroke) => stroke.type === 'solid');
+  const gradientFillLayer = fills.find((fill) => fill.type === 'gradient');
+  const gradientStrokeLayer = strokes.find(
+    (stroke) => stroke.type === 'gradient',
+  );
+  const imageFillLayer = fills.find((fill) => fill.type === 'image');
+  const imageStrokeLayer = strokes.find((stroke) => stroke.type === 'image');
+  const singleFill =
+    node.type === 'path'
+      ? (fillLayer?.type === 'solid' && toStyleValue(fillLayer.value)) ||
+        (typeof node.fill === 'string' && isGradient(node.fill)
+          ? undefined
+          : toStyleValue(node.fill as string))
+      : undefined;
+  const stroke =
+    (strokeLayer?.type === 'solid' && toStyleValue(strokeLayer.value)) ||
+    (typeof node.stroke === 'string' && isGradient(node.stroke)
+      ? undefined
+      : toStyleValue(node.stroke as string));
+  const strokeWidth =
+    typeof node.strokeWidth === 'number' ? node.strokeWidth : 1;
+  const width = dimension(node.width, bounds.maxX - bounds.minX);
+  const height = dimension(node.height, bounds.maxY - bounds.minY);
+  const viewBoxX = bounds.minX - (bounds.maxX === bounds.minX ? 0.5 : 0);
+  const viewBoxY = bounds.minY - (bounds.maxY === bounds.minY ? 0.5 : 0);
+  const fillLayers =
+    node.type === 'path' &&
+    fills.length > 1 &&
+    fills.every(
+      (layer, index) =>
+        index === 0 ||
+        layer.blendMode === undefined ||
+        layer.blendMode === 'normal' ||
+        toCSSMixBlendMode(layer.blendMode) !== null,
+    )
+      ? fills.map((layer, index): CodeVectorFillLayer => {
+          // Paint parsing is independent of how the layer blends with its backdrop.
+          const paintLayer = { ...layer, blendMode: 'normal' as const };
+          return {
+            fill:
+              layer.type === 'solid' ? toStyleValue(layer.value) : undefined,
+            fillGradient: vectorGradient(
+              node,
+              'fill',
+              [paintLayer],
+              [viewBoxX, viewBoxY],
+              width,
+              height,
+              `fill-${index}`,
+            ),
+            fillImage: vectorImage(node, 'fill', [paintLayer], `fill-${index}`),
+            fillOpacity: toStyleValue(layer.opacity as string | number),
+            blendMode:
+              index > 0
+                ? toCSSMixBlendMode(layer.blendMode) ?? undefined
+                : undefined,
+          };
+        })
+      : undefined;
+  const supportedFillLayers = fillLayers?.every(
+    (layer) => layer.fill || layer.fillGradient || layer.fillImage,
+  )
+    ? fillLayers
+    : undefined;
+  const strokeLayers =
+    strokeWidth > 0 &&
+    strokes.length > 1 &&
+    strokes.every(
+      (layer, index) =>
+        index === 0 ||
+        layer.blendMode === undefined ||
+        layer.blendMode === 'normal' ||
+        toCSSMixBlendMode(layer.blendMode) !== null,
+    )
+      ? strokes.map(
+          (layer, index): CodeVectorStrokeLayer => ({
+            stroke:
+              layer.type === 'solid' ? toStyleValue(layer.value) : undefined,
+            strokeGradient: vectorGradient(
+              node,
+              'stroke',
+              [{ ...layer, blendMode: 'normal' }],
+              [viewBoxX, viewBoxY],
+              width,
+              height,
+              `stroke-${index}`,
+            ),
+            strokeImage: vectorImage(
+              node,
+              'stroke',
+              [{ ...layer, blendMode: 'normal' }],
+              `stroke-${index}`,
+            ),
+            strokeOpacity: toStyleValue(
+              (layer.opacity ?? node.strokeOpacity) as string | number,
+            ),
+            blendMode:
+              index > 0
+                ? toCSSMixBlendMode(layer.blendMode) ?? undefined
+                : undefined,
+            markerStart: vectorMarker(node, 'start', strokeWidth, index),
+            markerEnd: vectorMarker(node, 'end', strokeWidth, index),
+          }),
+        )
+      : undefined;
+  const supportedStrokeLayers = strokeLayers?.every(
+    (layer) => layer.stroke || layer.strokeGradient || layer.strokeImage,
+  )
+    ? strokeLayers
+    : undefined;
+  const fill = supportedFillLayers ? undefined : singleFill;
+  const fillGradient =
+    node.type === 'path' && !supportedFillLayers
+      ? vectorGradient(node, 'fill', fills, [viewBoxX, viewBoxY], width, height)
+      : undefined;
+  const strokeGradient =
+    strokeWidth > 0 && !supportedStrokeLayers
+      ? vectorGradient(
+          node,
+          'stroke',
+          strokes,
+          [viewBoxX, viewBoxY],
+          width,
+          height,
+        )
+      : undefined;
+  const fillImage =
+    node.type === 'path' && !supportedFillLayers
+      ? vectorImage(node, 'fill', fills)
+      : undefined;
+  const strokeImage =
+    strokeWidth > 0 && !supportedStrokeLayers
+      ? vectorImage(node, 'stroke', strokes)
+      : undefined;
+  const alignment = node.strokeAlignment;
+  let strokeAlignment: NonNullable<CodeNode['vectorPath']>['strokeAlignment'];
+  if (
+    node.type === 'path' &&
+    (supportedStrokeLayers || stroke || strokeGradient || strokeImage) &&
+    strokeWidth > 0 &&
+    (alignment === 'inner' || alignment === 'outer')
+  ) {
+    const subpaths = parsePath(d).subPaths;
+    if (subpaths.length > 0 && subpaths.every((subpath) => subpath.autoClose)) {
+      const encodedId = Array.from(node.id as string)
+        .map((character) => character.codePointAt(0)!.toString(16))
+        .join('-');
+      strokeAlignment = {
+        type: alignment,
+        id: `ic-stroke-${encodedId}`,
+      };
+    }
+  }
+  return {
+    d,
+    viewBoxX,
+    viewBoxY,
+    width,
+    height,
+    fill,
+    fillGradient,
+    fillImage,
+    fillLayers: supportedFillLayers,
+    fillOpacity:
+      fill || fillGradient || fillImage
+        ? toStyleValue(
+            (fillLayer?.opacity ??
+              gradientFillLayer?.opacity ??
+              imageFillLayer?.opacity ??
+              node.fillOpacity) as string | number,
+          )
+        : undefined,
+    fillRule:
+      node.type === 'path' && node.fillRule === 'evenodd'
+        ? 'evenodd'
+        : 'nonzero',
+    stroke: strokeWidth > 0 && !supportedStrokeLayers ? stroke : undefined,
+    strokeGradient,
+    strokeImage,
+    strokeLayers: supportedStrokeLayers,
+    strokeOpacity:
+      !supportedStrokeLayers && (stroke || strokeGradient || strokeImage)
+        ? toStyleValue(
+            (strokeLayer?.opacity ??
+              gradientStrokeLayer?.opacity ??
+              imageStrokeLayer?.opacity ??
+              node.strokeOpacity) as string | number,
+          )
+        : undefined,
+    strokeWidth:
+      (supportedStrokeLayers || stroke || strokeGradient || strokeImage) &&
+      strokeWidth > 0
+        ? strokeWidth
+        : undefined,
+    strokeLinecap: ['butt', 'round', 'square'].includes(
+      node.strokeLinecap as string,
+    )
+      ? (node.strokeLinecap as 'butt' | 'round' | 'square')
+      : undefined,
+    strokeLinejoin: ['miter', 'round', 'bevel'].includes(
+      node.strokeLinejoin as string,
+    )
+      ? (node.strokeLinejoin as 'miter' | 'round' | 'bevel')
+      : undefined,
+    strokeMiterlimit:
+      typeof node.strokeMiterlimit === 'number' &&
+      Number.isFinite(node.strokeMiterlimit) &&
+      node.strokeMiterlimit > 0
+        ? node.strokeMiterlimit
+        : undefined,
+    strokeDasharray:
+      typeof node.strokeDasharray === 'string' &&
+      node.strokeDasharray !== '0,0' &&
+      node.strokeDasharray !== '0'
+        ? node.strokeDasharray
+        : undefined,
+    strokeDashoffset:
+      typeof node.strokeDashoffset === 'number' &&
+      Number.isFinite(node.strokeDashoffset)
+        ? node.strokeDashoffset
+        : undefined,
+    strokeAlignment,
+    dropShadow:
+      typeof node.dropShadowColor === 'string' &&
+      node.dropShadowColor.trim() !== '' &&
+      node.dropShadowColor !== 'none'
+        ? {
+            offsetX:
+              typeof node.dropShadowOffsetX === 'number' &&
+              Number.isFinite(node.dropShadowOffsetX)
+                ? node.dropShadowOffsetX
+                : 0,
+            offsetY:
+              typeof node.dropShadowOffsetY === 'number' &&
+              Number.isFinite(node.dropShadowOffsetY)
+                ? node.dropShadowOffsetY
+                : 0,
+            blur:
+              typeof node.dropShadowBlurRadius === 'number' &&
+              Number.isFinite(node.dropShadowBlurRadius) &&
+              node.dropShadowBlurRadius > 0
+                ? node.dropShadowBlurRadius
+                : 0,
+            color: toStyleValue(node.dropShadowColor)!,
+          }
+        : undefined,
+    markerStart:
+      !supportedStrokeLayers &&
+      (stroke || strokeGradient || strokeImage) &&
+      strokeWidth > 0
+        ? vectorMarker(node, 'start', strokeWidth)
+        : undefined,
+    markerEnd:
+      !supportedStrokeLayers &&
+      (stroke || strokeGradient || strokeImage) &&
+      strokeWidth > 0
+        ? vectorMarker(node, 'end', strokeWidth)
+        : undefined,
+  };
 }
 
 /** 把节点上的样式相关字段映射为结构化 {@link StyleIR}。 */
@@ -334,6 +979,86 @@ function buildStyle(
   const fillColor = primaryColorFromLayers(fills);
   const activeFills = fills.filter((fill) => fill.enabled !== false);
   if (
+    (node.type === 'rect' || node.type === 'ellipse') &&
+    supportsCssBackgroundLayers(activeFills)
+  )
+    style.backgroundLayers = activeFills.map((fill, index) => {
+      const blendMode =
+        index > 0 ? toCSSMixBlendMode(fill.blendMode) ?? undefined : undefined;
+      return fill.type === 'gradient'
+        ? {
+            type: 'gradient',
+            value: cssBackgroundGradient(fill.value)!,
+            blendMode,
+          }
+        : fill.type === 'image'
+        ? {
+            type: 'image',
+            value: fill.value,
+            objectFit:
+              fill.objectFit === 'contain' ||
+              fill.objectFit === 'cover' ||
+              fill.objectFit === 'none'
+                ? fill.objectFit
+                : 'fill',
+            objectPosition: fill.objectPosition,
+            blendMode,
+          }
+        : fill.type === 'pattern'
+        ? {
+            type: 'pattern',
+            value: fill.value,
+            repetition: fill.repetition,
+            blendMode,
+          }
+        : {
+            type: 'solid',
+            color: toStyleValue(fill.value as string)!,
+            opacity: toStyleValue(fill.opacity as number | string),
+            blendMode,
+          };
+    });
+  if (
+    (node.type === 'rect' || node.type === 'ellipse') &&
+    supportsPaintOverlays(node, activeFills)
+  ) {
+    style.paintOverlays = activeFills.map((fill, index): CodePaintOverlay => {
+      const shared = {
+        opacity: toStyleValue(fill.opacity as number | string),
+        blendMode:
+          index > 0
+            ? toCSSMixBlendMode(fill.blendMode) ?? undefined
+            : undefined,
+      };
+      if (fill.type === 'solid')
+        return { type: 'solid', color: toStyleValue(fill.value)!, ...shared };
+      if (fill.type === 'gradient')
+        return {
+          type: 'gradient',
+          value: cssBackgroundGradient(fill.value)!,
+          ...shared,
+        };
+      if (fill.type === 'image')
+        return {
+          type: 'image',
+          value: fill.value,
+          objectFit: fill.objectFit,
+          objectPosition: fill.objectPosition,
+          ...shared,
+        };
+      return {
+        type: 'pattern',
+        value: fill.value,
+        repetition: fill.repetition,
+        transform: fill.transform,
+        ...shared,
+      };
+    });
+    style.backgroundLayers = undefined;
+    style.position ??= 'relative';
+    style.isolation = 'isolate';
+  }
+  if (
     fillColor &&
     activeFills.length === 1 &&
     activeFills[0].type === 'solid' &&
@@ -341,13 +1066,15 @@ function buildStyle(
     Number(activeFills[0].opacity) !== 1
   )
     style.solidFillOpacity = toStyleValue(activeFills[0].opacity);
-  if (role === 'text' || role === 'icon') {
-    if (fillColor) style.color = fillColor;
-  } else if (role !== 'image' && fillColor) {
-    style.backgroundColor = fillColor;
-  } else if (role === 'container' || node.type === 'ellipse') {
-    const gradient = singleCssGradientFill(fills);
-    if (gradient) style.backgroundImage = { literal: gradient };
+  if (!style.backgroundLayers && !style.paintOverlays) {
+    if (role === 'text' || role === 'icon') {
+      if (fillColor) style.color = fillColor;
+    } else if (role !== 'image' && fillColor) {
+      style.backgroundColor = fillColor;
+    } else if (role === 'container' || node.type === 'ellipse') {
+      const gradient = singleCssGradientFill(fills);
+      if (gradient) style.backgroundImage = { literal: gradient };
+    }
   }
 
   // 描边 → border
@@ -428,6 +1155,7 @@ function buildStyle(
     if (ls) style.letterSpacing = ls;
     const lh = toStyleValue(node.lineHeight as number);
     if (lh && lh.literal !== 0) style.lineHeight = lh;
+    else style.lineHeightRatio = 1.2;
     style.textDecoration = textDecorationFromNode(node);
   }
 
@@ -464,15 +1192,35 @@ function buildCodeNode(
     );
     if (instance) {
       if (inFreeLayout) positionFreeChild(instance.style, node);
+      else if (node.parentId) instance.style.flexShrink = node.flexShrink ?? 0;
       return instance;
     }
   }
   const role = decideRole(node);
   const children = sortChildren(ctx.childrenByParent.get(node.id) ?? []);
   const style = buildStyle(node, role, children.length > 0);
+  // Yoga uses flex-shrink: 0 by default, while CSS flex items default to 1.
+  if (!inFreeLayout && node.parentId && style.flexShrink === undefined)
+    style.flexShrink = 0;
+  const vectorPath = buildVectorPath(node);
+  if (vectorPath) {
+    style.width = vectorPath.width;
+    style.height = vectorPath.height;
+    style.overflow = 'visible';
+    delete style.backgroundColor;
+    delete style.backgroundImage;
+    delete style.solidFillOpacity;
+    delete style.borderWidth;
+    delete style.borderColor;
+    delete style.boxShadow;
+  }
   if (inFreeLayout) positionFreeChild(style, node);
   else if (children.length > 0 && node.display !== 'flex')
     style.position = 'relative';
+  if (role === 'image' && children.length > 0) {
+    style.position ??= 'relative';
+    style.isolation = 'isolate';
+  }
   const codeNode: CodeNode = {
     role,
     id: node.id,
@@ -480,6 +1228,7 @@ function buildCodeNode(
     element: ctx.semanticElements[node.id],
     style,
     children: [],
+    vectorPath,
   };
 
   if (role === 'text') {
@@ -670,7 +1419,7 @@ function templateDefaultValue(
     return toStyleValue(desc.flexGrow as number) ?? { literal: 0 };
   }
   if (attr === 'flexShrink') {
-    return toStyleValue(desc.flexShrink as number) ?? { literal: 1 };
+    return toStyleValue(desc.flexShrink as number) ?? { literal: 0 };
   }
   if (attr === 'flexBasis') {
     return toStyleValue(desc.flexBasis as number) ?? { literal: 'auto' };
@@ -769,6 +1518,8 @@ export function buildCodeIR(
       variables,
       themeMode,
     );
+  } else if (variablesMode === 'css-var') {
+    working = resolveSerializedNodesTextVariables(nodes, variables, themeMode);
   }
 
   if (
@@ -777,6 +1528,7 @@ export function buildCodeIR(
     hasUnsupportedTransformRefOverrides(working as AnyNode[]) ||
     hasUnsupportedClipRefOverrides(working as AnyNode[]) ||
     hasUnsupportedFreeLayoutRefOverrides(working as AnyNode[]) ||
+    hasUnsupportedVectorRefOverrides(working as AnyNode[]) ||
     hasUnsupportedTextWrapRefOverrides(working as AnyNode[])
   ) {
     const expanded = expandRefSerializedNodes(working, working);
@@ -1155,6 +1907,45 @@ function hasUnsupportedFreeLayoutRefOverrides(nodes: AnyNode[]): boolean {
           ('y' in patch && patch.y !== template.y))
       );
     });
+  });
+}
+
+/** Vector paint and geometry edits need an expanded SVG, not a CSS box prop. */
+function hasUnsupportedVectorRefOverrides(nodes: AnyNode[]): boolean {
+  const byId = new Map(nodes.map((node) => [node.id, node]));
+  const keys = [
+    'd',
+    'points',
+    'x1',
+    'y1',
+    'x2',
+    'y2',
+    'fills',
+    'fill',
+    'fillRule',
+    'strokes',
+    'stroke',
+    'strokeWidth',
+    'strokeLinecap',
+    'strokeLinejoin',
+    'strokeMiterlimit',
+    'strokeDasharray',
+    'strokeDashoffset',
+    'strokeAlignment',
+    ...SHADOW_KEYS,
+    'markerStart',
+    'markerEnd',
+    'markerFactor',
+  ];
+  const changed = (template: AnyNode | undefined, patch: AnyNode) =>
+    ['path', 'line', 'polyline'].includes(template?.type as string) &&
+    keys.some((key) => key in patch);
+  return nodes.some((node) => {
+    if (node.type !== 'ref') return false;
+    if (changed(byId.get(node.ref as string), node)) return true;
+    return Object.entries(
+      (node.descendants ?? {}) as Record<string, AnyNode>,
+    ).some(([id, patch]) => changed(byId.get(id), patch));
   });
 }
 

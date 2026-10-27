@@ -7,7 +7,7 @@ import type {
   SerializedFillLayerItem,
   SerializedNode,
 } from '../types/serialized-node';
-import { ThemeMode } from '../components/Theme';
+import { ThemeMode } from '../format/modes';
 
 export type DesignVariableType = 'color' | 'number' | 'string';
 
@@ -441,17 +441,16 @@ function mapStrokesToCssVarPlaceholders(strokes: unknown): {
   return mapPaintStackToCssVarPlaceholders(strokes);
 }
 
-function mapSerializedNodeToCssVarPlaceholders(
-  node: SerializedNode,
-): SerializedNode {
-  const nodeRec = node as unknown as Record<string, unknown>;
-  const next = { ...nodeRec };
+function mapSerializedFieldsToCssVarPlaceholders(
+  fields: Record<string, unknown>,
+): { next: Record<string, unknown>; changed: boolean } {
+  const next = { ...fields };
   let changed = false;
   for (const key of SERIALIZED_NODE_VARIABLE_KEYS) {
-    if (!Object.prototype.hasOwnProperty.call(node, key)) {
+    if (!Object.prototype.hasOwnProperty.call(fields, key)) {
       continue;
     }
-    const raw = nodeRec[key];
+    const raw = fields[key];
     if (key === 'fills') {
       const { next: nf, changed: cf } = mapFillsToCssVarPlaceholders(raw);
       if (cf) {
@@ -473,7 +472,29 @@ function mapSerializedNodeToCssVarPlaceholders(
       changed = true;
     }
   }
-  return (changed ? next : node) as SerializedNode;
+  return { next, changed };
+}
+
+function mapSerializedNodeToCssVarPlaceholders(
+  node: SerializedNode,
+): SerializedNode {
+  const fields = node as unknown as Record<string, unknown>;
+  const result = mapSerializedFieldsToCssVarPlaceholders(fields);
+  const descendants = fields.descendants;
+  if (node.type === 'ref' && descendants && typeof descendants === 'object') {
+    const patches = descendants as Record<string, Record<string, unknown>>;
+    const mapped = Object.fromEntries(
+      Object.entries(patches).map(([id, patch]) => {
+        const result = mapSerializedFieldsToCssVarPlaceholders(patch);
+        return [id, result.changed ? result.next : patch];
+      }),
+    );
+    if (Object.keys(patches).some((id) => mapped[id] !== patches[id])) {
+      result.next.descendants = mapped;
+      result.changed = true;
+    }
+  }
+  return (result.changed ? result.next : node) as SerializedNode;
 }
 
 /** 将文档变量表写成一段可放入 SVG `<style>` 的 `:root{...}`；多主题时按 `themeMode` 解析为当前一种取值。 */
@@ -513,7 +534,9 @@ export function prepareSerializedNodesForSvgExport(
     return { nodes };
   }
   return {
-    nodes: nodes.map((n) => mapSerializedNodeToCssVarPlaceholders(n)),
+    nodes: resolveSerializedNodesTextVariables(nodes, variables, themeMode).map(
+      (n) => mapSerializedNodeToCssVarPlaceholders(n),
+    ),
     cssRootStyle: buildDesignVariablesCssRootBlock(variables, themeMode),
   };
 }
@@ -585,8 +608,41 @@ export function resolveFillLayerItemsForEcs(
   });
 }
 
+/** CSS custom properties cannot substitute text nodes, so resolve text at export time. */
+export function resolveSerializedNodesTextVariables(
+  nodes: SerializedNode[],
+  variables: DesignVariablesMap | undefined,
+  themeMode?: ThemeMode,
+): SerializedNode[] {
+  if (!variables || Object.keys(variables).length === 0) return nodes;
+  const resolveContent = (fields: Record<string, unknown>) => {
+    const content = fields.content;
+    if (typeof content !== 'string') return fields;
+    const value = resolveDesignVariableValue(content, variables, themeMode);
+    return value === content ? fields : { ...fields, content: String(value) };
+  };
+  return nodes.map((node) => {
+    const fields = node as unknown as Record<string, unknown>;
+    const resolved = resolveContent(fields);
+    if (node.type !== 'ref' || !fields.descendants) {
+      return resolved as unknown as SerializedNode;
+    }
+    const patches = fields.descendants as Record<
+      string,
+      Record<string, unknown>
+    >;
+    const descendants = Object.fromEntries(
+      Object.entries(patches).map(([id, patch]) => [id, resolveContent(patch)]),
+    );
+    if (Object.keys(patches).every((id) => descendants[id] === patches[id])) {
+      return resolved as unknown as SerializedNode;
+    }
+    return { ...resolved, descendants } as SerializedNode;
+  });
+}
+
 /**
- * 浅拷贝每个节点并解析已知字段上的 `$` 引用（用于导出等只读路径）。
+ * 拷贝节点及 ref 后代覆盖项，并解析已知字段上的 `$` 引用（用于导出等只读路径）。
  */
 export function resolveSerializedNodesDesignVariables(
   nodes: SerializedNode[],
@@ -596,15 +652,19 @@ export function resolveSerializedNodesDesignVariables(
   if (!variables || Object.keys(variables).length === 0) {
     return nodes;
   }
-  return nodes.map((node) => {
+  const textResolvedNodes = resolveSerializedNodesTextVariables(
+    nodes,
+    variables,
+    themeMode,
+  );
+  const resolveFields = (fields: Record<string, unknown>) => {
     let changed = false;
-    const nodeRec = node as unknown as Record<string, unknown>;
-    const next = { ...nodeRec };
+    const next = { ...fields };
     for (const key of SERIALIZED_NODE_VARIABLE_KEYS) {
-      if (!Object.prototype.hasOwnProperty.call(node, key)) {
+      if (!Object.prototype.hasOwnProperty.call(fields, key)) {
         continue;
       }
-      const raw = nodeRec[key];
+      const raw = fields[key];
       if (key === 'fills') {
         const { next: nf, changed: cf } = resolveFillsVariableReferences(
           raw,
@@ -639,6 +699,25 @@ export function resolveSerializedNodesDesignVariables(
         changed = true;
       }
     }
-    return (changed ? next : node) as SerializedNode;
+    return { next, changed };
+  };
+  return textResolvedNodes.map((node) => {
+    const fields = node as unknown as Record<string, unknown>;
+    const result = resolveFields(fields);
+    const descendants = fields.descendants;
+    if (node.type === 'ref' && descendants && typeof descendants === 'object') {
+      const patches = descendants as Record<string, Record<string, unknown>>;
+      const mapped = Object.fromEntries(
+        Object.entries(patches).map(([id, patch]) => {
+          const resolved = resolveFields(patch);
+          return [id, resolved.changed ? resolved.next : patch];
+        }),
+      );
+      if (Object.keys(patches).some((id) => mapped[id] !== patches[id])) {
+        result.next.descendants = mapped;
+        result.changed = true;
+      }
+    }
+    return (result.changed ? result.next : node) as SerializedNode;
   });
 }

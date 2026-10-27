@@ -6,11 +6,20 @@
  *   inline style 中保留 `$token`；`resolved` 模式输出字面量；
  * - `iconfont` → `lucide-react`（lucide 族）或 `@iconify/react`（其他族）；
  * - `reusable` → 函数组件定义，`ref` 实例 → 组件调用并以 props 传入覆盖项。
+ * - `css-var` 模式在顶层组件中输出局部变量定义，使其可直接渲染且不会覆盖其他导出组件。
  */
 import { formatNumber } from '../serialize/points';
+import { buildDesignVariablesCssRootBlock } from '../design-variables';
+import { renderVectorSvg } from './render-vector-svg';
+import { renderVectorImageStrokeOverlay } from './render-vector-image-stroke-overlay';
+import { renderVectorMixedStrokes } from './render-vector-mixed-strokes';
+import { renderPaintOverlays } from './emit-paint-overlays';
 import { pascalCase } from './string-utils';
 import {
   combinedImageOpacityCss,
+  paintBackgroundLayersToCss,
+  paintBackgroundLayerLayoutToCss,
+  paintBackgroundBlendModesToCss,
   solidFillColorToCss,
   styleValueToCss,
   textDecorationToCss,
@@ -74,6 +83,14 @@ interface TwResult {
   classes: string[];
   /** preserve-token 模式无法进类名的 token → inline style（值已是 JS 字面量表达式）。 */
   inline: Array<[string, string]>;
+}
+
+function variableScopeClass(css: string): string {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < css.length; i++) {
+    hash = Math.imul(hash ^ css.charCodeAt(i), 0x01000193);
+  }
+  return `ic-codegen-vars-${(hash >>> 0).toString(36)}`;
 }
 
 /** token 在 preserve-token 模式下不能进 arbitrary 类名，需回退 inline。 */
@@ -194,7 +211,8 @@ function genTailwind(
     inline.push(['transform', JSON.stringify(style.transform)]);
     inline.push(['transformOrigin', JSON.stringify('0 0')]);
   }
-  if (style.overflow) classes.push('overflow-hidden');
+  if (style.overflow) classes.push(`overflow-${style.overflow}`);
+  if (style.isolation) classes.push('isolate');
   if (style.objectFit)
     inline.push(['objectFit', JSON.stringify(style.objectFit)]);
   if (style.objectPosition)
@@ -221,11 +239,26 @@ function genTailwind(
     else
       classes.push(`bg-[${tw(styleValueToCss(style.backgroundColor, mode))}]`);
   }
-  if (style.backgroundImage && !skip.has('backgroundImage'))
+  const backgroundLayers = paintBackgroundLayersToCss(style, mode);
+  if (backgroundLayers && !skip.has('backgroundImage'))
+    inline.push(['backgroundImage', JSON.stringify(backgroundLayers)]);
+  else if (style.backgroundImage && !skip.has('backgroundImage'))
     inline.push([
       'backgroundImage',
       JSON.stringify(styleValueToCss(style.backgroundImage, mode)),
     ]);
+  const backgroundLayout = paintBackgroundLayerLayoutToCss(style);
+  if (backgroundLayout) {
+    inline.push(['backgroundSize', JSON.stringify(backgroundLayout.size)]);
+    inline.push([
+      'backgroundPosition',
+      JSON.stringify(backgroundLayout.position),
+    ]);
+    inline.push(['backgroundRepeat', JSON.stringify(backgroundLayout.repeat)]);
+  }
+  const backgroundBlendModes = paintBackgroundBlendModesToCss(style);
+  if (backgroundBlendModes)
+    inline.push(['backgroundBlendMode', JSON.stringify(backgroundBlendModes)]);
   if (style.borderRadius && !skip.has('borderRadius')) {
     if (needsInline(style.borderRadius, mode))
       addInline('borderRadius', style.borderRadius);
@@ -340,6 +373,8 @@ function genTailwind(
     classes.push(
       `leading-[${tw(styleValueToCss(style.lineHeight, mode, true))}]`,
     );
+  else if (style.lineHeightRatio !== undefined && !skip.has('lineHeight'))
+    inline.push(['lineHeight', formatNumber(style.lineHeightRatio)]);
 
   return { classes, inline };
 }
@@ -371,6 +406,15 @@ interface EmitState {
   indent: string;
   lucideIcons: Set<string>;
   usesIconify: boolean;
+  tokenScopeName?: string;
+}
+
+function wrapInTokenScope(body: string, state: EmitState): string {
+  if (!state.tokenScopeName) return body;
+  return `${state.indent.repeat(2)}<${state.tokenScopeName}>\n${body
+    .split('\n')
+    .map((line) => `${state.indent}${line}`)
+    .join('\n')}\n${state.indent.repeat(2)}</${state.tokenScopeName}>`;
 }
 
 function renderAttributes(
@@ -455,12 +499,89 @@ function renderNode(node: CodeNode, state: EmitState, depth: number): string {
       })
       .join(' ');
     const component = `<${node.instanceOf}${props ? ' ' + props : ''} />`;
-    if (!node.style.position) return `${pad}${component}`;
+    if (!node.style.position && node.style.flexShrink === undefined)
+      return `${pad}${component}`;
     const { className, styleExpr } = renderAttributes(node, state);
     return `${pad}<div${className}${styleExpr}>${component}</div>`;
   }
 
-  const { className, styleExpr } = renderAttributes(node, state);
+  const imageWithChildren = node.role === 'image' && node.children.length > 0;
+  const { className, styleExpr } = renderAttributes(
+    imageWithChildren
+      ? {
+          ...node,
+          style: {
+            ...node.style,
+            objectFit: undefined,
+            objectPosition: undefined,
+            imageFillOpacity: undefined,
+          },
+        }
+      : node,
+    state,
+  );
+
+  if (node.vectorPath) {
+    const path = node.vectorPath;
+    const hasChildren = node.children.length > 0;
+    const overlay = renderVectorImageStrokeOverlay(path, {
+      dialect: 'jsx',
+      mode: state.mode,
+      indent: state.indent,
+      depth: depth + 1,
+    });
+    const mixed = renderVectorMixedStrokes(path, {
+      dialect: 'jsx',
+      mode: state.mode,
+      indent: state.indent,
+      depth: depth + 1,
+    });
+    const paintLayers = mixed?.strokes ?? overlay;
+    const needsWrapper = hasChildren || !!paintLayers;
+    const wrapperAttrs =
+      paintLayers && !node.style.position
+        ? renderAttributes(
+            { ...node, style: { ...node.style, position: 'relative' } },
+            state,
+          )
+        : { className, styleExpr };
+    const svgStyle = needsWrapper
+      ? ' style={{ position: "absolute", inset: 0, width: "100%", height: "100%", overflow: "visible", pointerEvents: "none" }}'
+      : `${className}${styleExpr}`;
+    const svg = renderVectorSvg(mixed?.fill ?? path, {
+      dialect: 'jsx',
+      mode: state.mode,
+      indent: state.indent,
+      depth,
+      svgStyle,
+    });
+    if (!needsWrapper) return svg;
+    const tag = node.element?.tag ?? 'div';
+    const semanticAttr =
+      tag === 'button'
+        ? ' type="button"'
+        : tag === 'a' && node.element?.tag === 'a'
+        ? ` href=${JSON.stringify(node.element.href)}`
+        : '';
+    const children = node.children
+      .map((child) => renderNode(child, state, depth + 1))
+      .join('\n');
+    const nestedSvg = svg
+      .split('\n')
+      .map((line) => `${state.indent}${line}`)
+      .join('\n');
+    const artwork = `${nestedSvg}${paintLayers ? `\n${paintLayers}` : ''}`;
+    const shadowedArtwork = mixed?.shadow
+      ? `${state.indent.repeat(
+          depth + 1,
+        )}<div style={{ position: "absolute", inset: 0, overflow: "visible", filter: ${JSON.stringify(
+          mixed.shadow,
+        )} }}>\n${artwork}\n${state.indent.repeat(depth + 1)}</div>`
+      : artwork;
+    return `${pad}<${tag}${semanticAttr}${wrapperAttrs.className}${
+      wrapperAttrs.styleExpr
+    }>\n${shadowedArtwork}${children ? `\n${children}` : ''}\n${pad}</${tag}>`;
+  }
 
   if (node.role === 'icon' && node.icon) {
     return renderIcon(node, state, pad, className, styleExpr);
@@ -475,6 +596,43 @@ function renderNode(node: CodeNode, state: EmitState, depth: number): string {
       : JSON.stringify(
           node.image ? styleValueToCss(node.image, state.mode) : '',
         );
+    if (imageWithChildren) {
+      const tag = node.element?.tag ?? 'div';
+      const semanticAttr =
+        tag === 'button'
+          ? ' type="button"'
+          : tag === 'a' && node.element?.tag === 'a'
+          ? ` href=${JSON.stringify(node.element.href)}`
+          : '';
+      const imageStyle = [
+        'position: "absolute"',
+        'inset: 0',
+        'width: "100%"',
+        'height: "100%"',
+        'zIndex: -1',
+        'borderRadius: "inherit"',
+        'pointerEvents: "none"',
+        ...(node.style.objectFit
+          ? [`objectFit: ${JSON.stringify(node.style.objectFit)}`]
+          : []),
+        ...(node.style.objectPosition
+          ? [`objectPosition: ${JSON.stringify(node.style.objectPosition)}`]
+          : []),
+        ...(node.style.imageFillOpacity
+          ? [
+              `opacity: ${JSON.stringify(
+                styleValueToCss(node.style.imageFillOpacity, state.mode),
+              )}`,
+            ]
+          : []),
+      ].join(', ');
+      const children = node.children
+        .map((child) => renderNode(child, state, depth + 1))
+        .join('\n');
+      return `${pad}<${tag}${semanticAttr}${className}${styleExpr}>\n${state.indent.repeat(
+        depth + 1,
+      )}<img src=${src} alt="" style={{ ${imageStyle} }} />\n${children}\n${pad}</${tag}>`;
+    }
     return `${pad}<img src=${src} alt=${JSON.stringify(
       node.name ?? '',
     )}${className}${styleExpr} />`;
@@ -496,14 +654,25 @@ function renderNode(node: CodeNode, state: EmitState, depth: number): string {
   }
 
   const inner = textExpr(node, state);
+  const paints = renderPaintOverlays(
+    node.style,
+    state.mode,
+    'jsx',
+    state.indent,
+    depth,
+  );
   if (node.children.length === 0) {
+    if (paints)
+      return `${pad}<${tag}${semanticAttr}${className}${styleExpr}>\n${paints}\n${pad}</${tag}>`;
     return `${pad}<${tag}${semanticAttr}${className}${styleExpr}>${inner}</${tag}>`;
   }
   const childrenStr = node.children
     .map((c) => renderNode(c, state, depth + 1))
     .join('\n');
   const leading = inner ? `${state.indent.repeat(depth + 1)}${inner}\n` : '';
-  return `${pad}<${tag}${semanticAttr}${className}${styleExpr}>\n${leading}${childrenStr}\n${pad}</${tag}>`;
+  return `${pad}<${tag}${semanticAttr}${className}${styleExpr}>\n${
+    paints ? `${paints}\n` : ''
+  }${leading}${childrenStr}\n${pad}</${tag}>`;
 }
 
 function renderIcon(
@@ -586,7 +755,7 @@ function renderComponent(def: CodeComponentDef, state: EmitState): string {
     ? `interface ${def.name}Props {\n${propsType}\n}\n\nexport function ${def.name}({ ${defaults} }: ${def.name}Props) {`
     : `export function ${def.name}() {`;
 
-  const body = renderNode(def.root, state, 2);
+  const body = wrapInTokenScope(renderNode(def.root, state, 2), state);
   return `${header}\n${state.indent}return (\n${body}\n${state.indent});\n}`;
 }
 
@@ -596,11 +765,20 @@ export function emitReactTailwind(
   indent = '  ',
   topName = 'Design',
 ): string {
+  const cssVariables =
+    ir.variablesMode === 'css-var' && Object.keys(ir.variables).length > 0
+      ? buildDesignVariablesCssRootBlock(ir.variables, ir.themeMode)
+      : undefined;
+  const scopeClass = cssVariables && variableScopeClass(cssVariables);
+  const tokenScopeName = scopeClass
+    ? `IcDesignTokens_${scopeClass.slice('ic-codegen-vars-'.length)}`
+    : undefined;
   const state: EmitState = {
     mode: ir.variablesMode,
     indent,
     lucideIcons: new Set(),
     usesIconify: false,
+    tokenScopeName,
   };
 
   const componentBlocks = ir.components.map((c) => renderComponent(c, state));
@@ -620,12 +798,35 @@ export function emitReactTailwind(
         .map((n) => renderNode(n, state, 3))
         .join('\n')}\n${indent.repeat(2)}</>`;
 
+  const rootWithVariables = wrapInTokenScope(rootWrapped, state);
+
+  // A reusable component also works on its own; nested instances share the
+  // parent's scope and avoid emitting duplicate style elements.
+  const variableScope =
+    cssVariables && scopeClass && tokenScopeName
+      ? `const ${tokenScopeName}Context = createContext(false);\n\nfunction ${tokenScopeName}({ children }: { children: ReactNode }) {\n${indent}if (useContext(${tokenScopeName}Context)) return <>{children}</>;\n${indent}return (\n${indent.repeat(
+          2,
+        )}<>\n${indent.repeat(3)}<style>{${JSON.stringify(
+          cssVariables.replace(/^:root\{/, `.${scopeClass}{display:contents;`),
+        )}}</style>\n${indent.repeat(
+          3,
+        )}<div className="${scopeClass}">\n${indent.repeat(
+          4,
+        )}<${tokenScopeName}Context.Provider value={true}>{children}</${tokenScopeName}Context.Provider>\n${indent.repeat(
+          3,
+        )}</div>\n${indent.repeat(2)}</>\n${indent});\n}`
+      : undefined;
+
   const topComponent = `export function ${
     pascalCase(topName) || 'Design'
-  }() {\n${indent}return (\n${rootWrapped}\n${indent});\n}`;
+  }() {\n${indent}return (\n${rootWithVariables}\n${indent});\n}`;
 
   // imports（在确定用到哪些图标后再生成）
   const imports: string[] = [];
+  if (variableScope) {
+    imports.push(`import { createContext, useContext } from 'react';`);
+    imports.push(`import type { ReactNode } from 'react';`);
+  }
   if (
     ir.components.some((component) =>
       component.props.some((prop) =>
@@ -668,6 +869,7 @@ export function emitReactTailwind(
 
   const parts: string[] = [];
   if (imports.length) parts.push(imports.join('\n'));
+  if (variableScope) parts.push(variableScope);
   if (componentBlocks.length) parts.push(componentBlocks.join('\n\n'));
   parts.push(topComponent);
   return parts.join('\n\n') + '\n';

@@ -97,10 +97,31 @@ export interface StyleIR {
   /** Local canvas transform; rotation is stored in radians. */
   transform?: string;
   /** Rectangular or elliptical `clipMode: clip` clips descendant content. */
-  overflow?: 'hidden';
+  overflow?: 'hidden' | 'visible';
+  isolation?: 'isolate';
   objectFit?: 'fill' | 'contain' | 'cover' | 'none' | 'scale-down';
   objectPosition?: string;
   backgroundColor?: StyleValue;
+  /** CSS paint layers, ordered from bottom to top. */
+  backgroundLayers?: Array<
+    (
+      | { type: 'solid'; color: StyleValue; opacity?: StyleValue }
+      | { type: 'gradient'; value: string }
+      | {
+          type: 'image';
+          value: string;
+          objectFit?: 'fill' | 'contain' | 'cover' | 'none';
+          objectPosition?: string;
+        }
+      | {
+          type: 'pattern';
+          value: string;
+          repetition?: 'repeat' | 'repeat-x' | 'repeat-y' | 'no-repeat';
+        }
+    ) & { blendMode?: string }
+  >;
+  /** Paints needing independent opacity or image sizing, ordered bottom to top. */
+  paintOverlays?: CodePaintOverlay[];
   /** Opacity of the only enabled solid fill, applied to its paint rather than children. */
   solidFillOpacity?: StyleValue;
   backgroundImage?: StyleValue;
@@ -134,6 +155,8 @@ export interface StyleIR {
   textOverflow?: 'ellipsis' | 'clip';
   letterSpacing?: StyleValue;
   lineHeight?: StyleValue;
+  /** Unitless browser fallback approximating the canvas default text metrics. */
+  lineHeightRatio?: number;
   textDecoration?: {
     line: 'underline' | 'overline' | 'line-through';
     style: 'solid' | 'double' | 'dotted' | 'dashed' | 'wavy';
@@ -141,6 +164,23 @@ export interface StyleIR {
     thickness: number;
   };
 }
+
+export type CodePaintOverlay = (
+  | { type: 'solid'; color: StyleValue }
+  | { type: 'gradient'; value: string }
+  | {
+      type: 'image';
+      value: string;
+      objectFit?: 'fill' | 'contain' | 'cover' | 'none' | 'scale-down';
+      objectPosition?: string;
+    }
+  | {
+      type: 'pattern';
+      value: string;
+      repetition?: 'repeat' | 'repeat-x' | 'repeat-y' | 'no-repeat';
+      transform?: string;
+    }
+) & { opacity?: StyleValue; blendMode?: string };
 
 export type CodeNodeRole = 'container' | 'text' | 'icon' | 'image' | 'shape';
 
@@ -211,12 +251,105 @@ export interface CodeNode {
   icon?: { name: StyleValue; family: string };
   /** `role === 'image'` 的资源 URL。 */
   image?: StyleValue;
+  /** Local SVG geometry for a canvas Path, Line, or Polyline. */
+  vectorPath?: {
+    d: string;
+    viewBoxX: number;
+    viewBoxY: number;
+    width: number;
+    height: number;
+    fill?: StyleValue;
+    fillGradient?: CodeVectorGradient;
+    fillImage?: CodeVectorImage;
+    fillOpacity?: StyleValue;
+    /** Normal-blend fill layers, ordered from bottom to top. */
+    fillLayers?: CodeVectorFillLayer[];
+    fillRule: 'nonzero' | 'evenodd';
+    stroke?: StyleValue;
+    strokeGradient?: CodeVectorGradient;
+    strokeImage?: CodeVectorImage;
+    strokeOpacity?: StyleValue;
+    /** Center-aligned normal-blend stroke layers, ordered bottom to top. */
+    strokeLayers?: CodeVectorStrokeLayer[];
+    strokeWidth?: number;
+    strokeLinecap?: 'butt' | 'round' | 'square';
+    strokeLinejoin?: 'miter' | 'round' | 'bevel';
+    strokeMiterlimit?: number;
+    strokeDasharray?: string;
+    strokeDashoffset?: number;
+    strokeAlignment?: { type: 'inner' | 'outer'; id: string };
+    dropShadow?: {
+      offsetX: number;
+      offsetY: number;
+      blur: number;
+      color: StyleValue;
+    };
+    markerStart?: CodeVectorMarker;
+    markerEnd?: CodeVectorMarker;
+  };
   /** preserve 模式下：该节点是某 `reusable` 组件的实例。 */
   instanceOf?: string;
   /** 实例传入的 props（prop 名 → 取值）。 */
   props?: Record<string, StyleValue>;
   /** 组件 body 内：该节点的某些位置由 prop 驱动（见 {@link CodeBinding}）。 */
   bindings?: CodeBinding[];
+}
+
+export interface CodeVectorMarker {
+  id: string;
+  d: string;
+  fill: boolean;
+  size: number;
+  offset: number;
+  strokeWidth: number;
+  strokeLinecap?: 'butt' | 'round' | 'square';
+  strokeLinejoin?: 'miter' | 'round' | 'bevel';
+}
+
+export interface CodeVectorGradient {
+  id: string;
+  geometry:
+    | { type: 'linear'; x1: number; y1: number; x2: number; y2: number }
+    | { type: 'radial'; cx: number; cy: number; r: number };
+  stops: { offset: number; color: string }[];
+}
+
+export type CodeVectorImage =
+  | {
+      id: string;
+      href: string;
+      rendering: 'pattern';
+      preserveAspectRatio:
+        | 'none'
+        | `x${'Min' | 'Mid' | 'Max'}Y${'Min' | 'Mid' | 'Max'} ${
+            | 'meet'
+            | 'slice'}`;
+    }
+  | {
+      id: string;
+      href: string;
+      rendering: 'foreignObject';
+      objectFit: 'fill' | 'contain' | 'cover' | 'none' | 'scale-down';
+      objectPosition: string;
+    };
+
+export interface CodeVectorFillLayer {
+  fill?: StyleValue;
+  fillGradient?: CodeVectorGradient;
+  fillImage?: CodeVectorImage;
+  fillOpacity?: StyleValue;
+  /** CSS mix-blend-mode applied against the layers below this one. */
+  blendMode?: string;
+}
+
+export interface CodeVectorStrokeLayer {
+  stroke?: StyleValue;
+  strokeGradient?: CodeVectorGradient;
+  strokeImage?: CodeVectorImage;
+  strokeOpacity?: StyleValue;
+  blendMode?: string;
+  markerStart?: CodeVectorMarker;
+  markerEnd?: CodeVectorMarker;
 }
 
 export interface CodeComponentProp {

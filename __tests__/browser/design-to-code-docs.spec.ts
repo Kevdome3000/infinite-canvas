@@ -1,6 +1,147 @@
 import { expect, test } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
+import { PNG } from 'pngjs';
 import type {} from './fixtures/design-to-code-docs';
+
+test('paint overlays render opacity, image scale-down and pattern transforms', async ({
+  page,
+}) => {
+  await page.goto('/design-to-code-docs.html');
+  await expect
+    .poll(
+      () => page.evaluate(() => typeof window.designToCodeDocs?.paintMarkup),
+      {
+        timeout: 30000,
+      },
+    )
+    .toBe('function');
+  const markup = await page.evaluate(() => ({
+    opacity: window.designToCodeDocs.paintMarkup('opacity'),
+    image: window.designToCodeDocs.paintMarkup('scale-down'),
+    pattern: window.designToCodeDocs.paintMarkup('pattern'),
+    rotated: window.designToCodeDocs.paintMarkup('pattern-rotate'),
+  }));
+  const sample = async (html: string, x: number, y: number) => {
+    await page.setContent(html);
+    await page.addStyleTag({ content: 'body { margin: 0; }' });
+    await page.evaluate(() =>
+      Promise.all(
+        Array.from(document.images, (image) => image.decode().catch(() => {})),
+      ),
+    );
+    const png = PNG.sync.read(await page.screenshot());
+    const offset = (y * png.width + x) * 4;
+    return [...png.data.slice(offset, offset + 3)];
+  };
+  const mixed = await sample(markup.opacity, 30, 30);
+  expect(mixed[0]).toBeGreaterThan(100);
+  expect(mixed[2]).toBeGreaterThan(100);
+  expect(mixed[1]).toBeLessThan(20);
+  expect(await sample(markup.image, 30, 30)).toEqual([0, 255, 0]);
+  expect(await sample(markup.image, 5, 5)).toEqual([255, 0, 0]);
+  expect(await sample(markup.pattern, 11, 11)).toEqual([0, 255, 0]);
+  expect(await sample(markup.pattern, 5, 5)).toEqual([255, 0, 0]);
+  expect(await sample(markup.rotated, 35, 4)).toEqual([0, 255, 0]);
+  expect(await sample(markup.rotated, 5, 5)).toEqual([255, 0, 0]);
+});
+
+test('all three editable interface scenes render populated HTML previews', async ({
+  page,
+}) => {
+  test.setTimeout(90000);
+  await page.goto('/design-to-code-docs.html');
+  await expect
+    .poll(() => page.evaluate(() => window.designToCodeDocs.scene()), {
+      timeout: 30000,
+    })
+    .toBe('dashboard');
+
+  for (const [label, id, heading, width, parityIds] of [
+    [
+      '运营数据面板',
+      'dashboard',
+      'Overview',
+      1050,
+      ['brand', 'metric-revenue-trend', 'day-Mon', 'activity-heading'],
+    ],
+    [
+      '订阅定价页',
+      'pricing-page',
+      'A plan for every ambition',
+      1050,
+      ['pricing-brand', 'hero-title', 'plan-growth__plan-card-name'],
+    ],
+    [
+      '移动端结账页',
+      'checkout-screen',
+      'Checkout',
+      390,
+      [
+        'checkout-product-variant',
+        'checkout-shipping-label',
+        'checkout-security-label',
+      ],
+    ],
+  ] as const) {
+    const tab = page.getByRole('button', { name: label });
+    await tab.click();
+    await expect
+      .poll(() => page.evaluate(() => window.designToCodeDocs.scene()))
+      .toBe(id);
+    await expect(tab).toHaveAttribute('aria-pressed', 'true');
+    await page.getByRole('button', { name: 'HTML 预览' }).click();
+    const iframe = page.locator('iframe[title="生成的 HTML 预览"]');
+    await expect(iframe).toHaveAttribute('width', String(width));
+    const preview = page.frameLocator('iframe[title="生成的 HTML 预览"]');
+    await expect(preview.getByRole('heading', { name: heading })).toBeVisible();
+    await expect(preview.getByRole('button').first()).toBeVisible();
+    const canvasPositions = await page.evaluate((ids) => {
+      const nodes = window.designToCodeDocs.nodes();
+      return ids.map((id) => {
+        const node = nodes.find((item) => item.id === id);
+        const bounds = window.designToCodeDocs.nodeBounds(id);
+        if (node?.type !== 'text' || !bounds)
+          throw new Error(`Missing canvas text: ${id}`);
+        return { id, text: node.content, x: bounds.minX, y: bounds.minY };
+      });
+    }, parityIds);
+    const previewPositions = await preview
+      .locator('body')
+      .evaluate((body, expected) => {
+        const root = Array.from(body.children).find(
+          (element) => element instanceof HTMLElement,
+        );
+        if (!root) throw new Error('Missing preview root');
+        const origin = root.getBoundingClientRect();
+        return expected.map(({ id, text }) => {
+          const element = Array.from(body.querySelectorAll('*')).find(
+            (candidate) =>
+              candidate.children.length === 0 &&
+              candidate.textContent?.trim() === text.trim(),
+          );
+          if (!element) throw new Error(`Missing preview text: ${id}`);
+          const rect = element.getBoundingClientRect();
+          return { x: rect.x - origin.x, y: rect.y - origin.y };
+        });
+      }, canvasPositions);
+    for (const [index, canvas] of canvasPositions.entries()) {
+      const previewText = previewPositions[index];
+      expect(Math.abs(previewText.x - canvas.x), canvas.id).toBeLessThan(3);
+      expect(Math.abs(previewText.y - canvas.y), canvas.id).toBeLessThan(8);
+    }
+    const png = PNG.sync.read(await iframe.screenshot({ scale: 'css' }));
+    let painted = 0;
+    const colors = new Set<number>();
+    for (let i = 0; i < png.data.length; i += 16) {
+      const rgb =
+        (png.data[i] << 16) | (png.data[i + 1] << 8) | png.data[i + 2];
+      if (rgb !== 0xffffff) painted++;
+      colors.add(rgb);
+    }
+    expect(painted).toBeGreaterThan((png.width * png.height) / 40);
+    expect(colors.size).toBeGreaterThan(20);
+  }
+});
 
 test('mobile checkout stays editable on the IC canvas and exports current HTML and React', async ({
   page,
@@ -82,11 +223,49 @@ test('mobile checkout stays editable on the IC canvas and exports current HTML a
     .toBe('pricing-page');
   await expect(code).toContainText('PricingPage');
   await expect(code).toContainText('export function PricingPlanCard');
+  await expect(code).toContainText('planCardActionFills="#7969f5"');
+  await expect(code).not.toContainText(
+    'planCardActionFills="$color.highlight"',
+  );
   await expect(code).not.toContainText('pricingPlanCardOpacity');
   expect((await code.innerText()).match(/<PricingPlanCard/g)).toHaveLength(3);
   await page.evaluate(() => window.designToCodeDocs.editPricingAmount('$39'));
   await expect(code).toContainText('$39');
   await expect(code).toContainText('export function PricingPlanCard');
+  const [projectDownload] = await Promise.all([
+    page.waitForEvent('download'),
+    page.getByRole('button', { name: '下载 React 工程' }).click(),
+  ]);
+  expect(projectDownload.suggestedFilename()).toBe('pricing-react.zip');
+  const { unzipSync, strFromU8 } = await import(
+    '../../packages/site/node_modules/fflate/esm/index.mjs'
+  );
+  const project = unzipSync(
+    new Uint8Array(await readFile((await projectDownload.path())!)),
+  );
+  const appSource = strFromU8(project['src/App.tsx']);
+  expect(appSource).toContain('export function PricingPlanCard');
+  expect(appSource).toContain('$39');
+  const mainSource = strFromU8(project['src/main.tsx']);
+  expect(mainSource).toContain('<PricingPage />');
+  expect(mainSource).toContain('ic-starter--pricing');
+  expect(mainSource).toContain("import './responsive.css'");
+  expect(mainSource).toContain("import '@fontsource/inter/400.css'");
+  expect(mainSource).toContain("import '@fontsource/inter/700.css'");
+  expect(strFromU8(project['src/responsive.css'])).toContain(
+    '.ic-starter--pricing section { flex-direction: column',
+  );
+  expect(strFromU8(project['src/index.css'])).toContain(
+    '@import "tailwindcss"',
+  );
+  const manifest = JSON.parse(strFromU8(project['package.json']));
+  expect(manifest.scripts.build).toBe('tsc --noEmit && vite build');
+  expect(manifest.dependencies).toMatchObject({
+    react: '19.2.3',
+    'react-dom': '19.2.3',
+    '@fontsource/inter': '5.3.0',
+  });
+  expect(manifest.devDependencies).toHaveProperty('tailwindcss');
   const [componentDownload] = await Promise.all([
     page.waitForEvent('download'),
     page.getByRole('button', { name: '下载 .ic' }).click(),

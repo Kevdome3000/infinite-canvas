@@ -4,7 +4,7 @@
  */
 import { designTokenKeyToCssCustomProperty } from '../design-variables';
 import { formatNumber } from '../serialize/points';
-import type { CodeVariablesMode, StyleIR, StyleValue } from './types';
+import type { CodeNode, CodeVariablesMode, StyleIR, StyleValue } from './types';
 
 /** 把一个 {@link StyleValue} 渲染为 CSS 值字符串。`px` 决定数字字面量是否补 `px`。 */
 export function styleValueToCss(
@@ -40,6 +40,89 @@ export function solidFillColorToCss(
       ? `calc(${styleValueToCss(opacity, mode)} * 100%)`
       : `${formatNumber(literal * 100)}%`;
   return `color-mix(in srgb, ${cssColor} ${weight}, transparent)`;
+}
+
+/** CSS background images are listed top-first; canvas fill layers are bottom-first. */
+export function paintBackgroundUrlToCss(value: string): string {
+  const escaped = value
+    .replace(/\\/g, '\\\\')
+    .replace(/"/g, '\\"')
+    .replace(/[\n\r\f]/g, '\\A ');
+  return `url("${escaped}")`;
+}
+
+export function paintBackgroundLayersToCss(
+  style: StyleIR,
+  mode: CodeVariablesMode,
+): string | undefined {
+  if (!style.backgroundLayers?.length) return undefined;
+  return [...style.backgroundLayers]
+    .reverse()
+    .map((layer) => {
+      if (layer.type === 'gradient') return layer.value;
+      if (layer.type === 'image' || layer.type === 'pattern')
+        return paintBackgroundUrlToCss(layer.value);
+      const color = solidFillColorToCss(layer.color, layer.opacity, mode);
+      return `linear-gradient(${color}, ${color})`;
+    })
+    .join(', ');
+}
+
+/** Keep each CSS background aligned with its image fit or pattern tiling. */
+export function paintBackgroundLayerLayoutToCss(
+  style: StyleIR,
+): { size: string; position: string; repeat: string } | undefined {
+  if (
+    !style.backgroundLayers?.some(
+      (layer) => layer.type === 'image' || layer.type === 'pattern',
+    )
+  )
+    return undefined;
+  const layers = [...style.backgroundLayers].reverse();
+  return {
+    size: layers
+      .map((layer) => {
+        if (layer.type === 'pattern') return 'auto';
+        if (
+          layer.type !== 'image' ||
+          !layer.objectFit ||
+          layer.objectFit === 'fill'
+        )
+          return '100% 100%';
+        return layer.objectFit === 'none' ? 'auto' : layer.objectFit;
+      })
+      .join(', '),
+    position: layers
+      .map((layer) =>
+        layer.type === 'image' ? layer.objectPosition ?? '50% 50%' : '0% 0%',
+      )
+      .join(', '),
+    repeat: layers
+      .map((layer) =>
+        layer.type === 'pattern' ? layer.repetition ?? 'repeat' : 'no-repeat',
+      )
+      .join(', '),
+  };
+}
+
+export function paintBackgroundBlendModesToCss(
+  style: StyleIR,
+): string | undefined {
+  if (!style.backgroundLayers?.some((layer) => layer.blendMode))
+    return undefined;
+  return [...style.backgroundLayers]
+    .reverse()
+    .map((layer) => layer.blendMode ?? 'normal')
+    .join(', ');
+}
+
+export function vectorDropShadowToCss(
+  shadow: NonNullable<NonNullable<CodeNode['vectorPath']>['dropShadow']>,
+  mode: CodeVariablesMode,
+): string {
+  return `drop-shadow(${formatNumber(shadow.offsetX)}px ${formatNumber(
+    shadow.offsetY,
+  )}px ${formatNumber(shadow.blur)}px ${styleValueToCss(shadow.color, mode)})`;
 }
 
 export function boxToCss(v: [number, number, number, number]): string {
@@ -138,6 +221,7 @@ export function styleIRToCssDeclarations(
     push('transform-origin', '0 0');
   }
   if (style.overflow) push('overflow', style.overflow);
+  if (style.isolation) push('isolation', style.isolation);
   if (style.objectFit) push('object-fit', style.objectFit);
   if (style.objectPosition) push('object-position', style.objectPosition);
   if (style.mixBlendMode) push('mix-blend-mode', style.mixBlendMode);
@@ -147,8 +231,18 @@ export function styleIRToCssDeclarations(
       'background-color',
       solidFillColorToCss(style.backgroundColor, style.solidFillOpacity, mode),
     );
-  if (style.backgroundImage)
+  const backgroundLayers = paintBackgroundLayersToCss(style, mode);
+  if (backgroundLayers) push('background-image', backgroundLayers);
+  else if (style.backgroundImage)
     push('background-image', styleValueToCss(style.backgroundImage, mode));
+  const backgroundLayout = paintBackgroundLayerLayoutToCss(style);
+  if (backgroundLayout) {
+    push('background-size', backgroundLayout.size);
+    push('background-position', backgroundLayout.position);
+    push('background-repeat', backgroundLayout.repeat);
+  }
+  const backgroundBlendModes = paintBackgroundBlendModesToCss(style);
+  if (backgroundBlendModes) push('background-blend-mode', backgroundBlendModes);
   if (style.borderRadius)
     push('border-radius', styleValueToCss(style.borderRadius, mode, true));
   if (style.borderWidth) {
@@ -204,6 +298,8 @@ export function styleIRToCssDeclarations(
     push('letter-spacing', styleValueToCss(style.letterSpacing, mode, true));
   if (style.lineHeight)
     push('line-height', styleValueToCss(style.lineHeight, mode, true));
+  else if (style.lineHeightRatio !== undefined)
+    push('line-height', formatNumber(style.lineHeightRatio));
   if (style.textDecoration)
     push('text-decoration', textDecorationToCss(style.textDecoration, mode));
 

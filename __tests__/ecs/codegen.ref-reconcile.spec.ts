@@ -52,6 +52,213 @@ const source: SerializedNode[] = [
 describe('design-to-code expanded ref reconciliation', () => {
   const baseline = expandRefSerializedNodes(structuredClone(source), source);
 
+  it('expands a line endpoint edit rather than keeping stale component geometry', () => {
+    const nodes = [
+      {
+        id: 'line-template',
+        type: 'line',
+        name: 'Connector',
+        reusable: true,
+        x: 0,
+        y: 0,
+        width: 40,
+        height: 1,
+        x1: 0,
+        y1: 0,
+        x2: 40,
+        y2: 0,
+        zIndex: 0,
+        strokeWidth: 2,
+        strokes: [{ type: 'solid', value: '#000000' }],
+      },
+      {
+        id: 'line-instance',
+        type: 'ref',
+        ref: 'line-template',
+        x: 50,
+        y: 0,
+        zIndex: 1,
+        x2: 25,
+      },
+    ] as SerializedNode[];
+    const react = serializedNodesToCode(nodes);
+    expect(react).not.toContain('<Connector');
+    expect(react).toContain('d={"M 0 0 L 25 0"}');
+  });
+
+  it('expands a marker override rather than keeping stale reusable arrowheads', () => {
+    const nodes = [
+      {
+        id: 'arrow-template',
+        type: 'line',
+        name: 'Arrow',
+        reusable: true,
+        x: 0,
+        y: 0,
+        width: 40,
+        height: 1,
+        x1: 0,
+        y1: 0,
+        x2: 40,
+        y2: 0,
+        zIndex: 0,
+        strokeWidth: 2,
+        strokes: [{ type: 'solid', value: '#000000' }],
+        markerEnd: 'line',
+      },
+      {
+        id: 'arrow-instance',
+        type: 'ref',
+        ref: 'arrow-template',
+        x: 50,
+        y: 0,
+        zIndex: 1,
+        markerEnd: 'triangle',
+      },
+    ] as SerializedNode[];
+    const react = serializedNodesToCode(nodes);
+    expect(react).not.toContain('<Arrow');
+    expect(react).toContain('markerEnd={"url(#ic-marker-61-72-72-6f-77-2d-69-6e-73-74-61-6e-63-65-end)"}');
+    expect(react).toContain(' Z"} fill={"#000000"}');
+  });
+
+  it('expands a path paint override to keep SVG fill on the instance', () => {
+    const nodes = [
+      {
+        id: 'shape-template',
+        type: 'path',
+        name: 'BadgeShape',
+        reusable: true,
+        x: 0,
+        y: 0,
+        width: 40,
+        height: 40,
+        zIndex: 0,
+        d: 'M 0 0 L 40 0 L 40 40 Z',
+        fills: [{ type: 'solid', value: '#ff0000' }],
+      },
+      {
+        id: 'shape-instance',
+        type: 'ref',
+        ref: 'shape-template',
+        x: 50,
+        y: 0,
+        zIndex: 1,
+        fills: [{ type: 'solid', value: '#0000ff' }],
+      },
+    ] as SerializedNode[];
+    const react = serializedNodesToCode(nodes);
+    expect(react).not.toContain('<BadgeShape');
+    expect(react).toContain('fill={"#0000ff"}');
+    const html = serializedNodesToCode(nodes, { framework: 'html-css' });
+    expect(html).toContain('fill="#0000ff"');
+  });
+
+  it('expands a gradient paint override on a reusable path', () => {
+    const nodes = [
+      {
+        id: 'gradient-template',
+        type: 'path',
+        name: 'GradientBadge',
+        reusable: true,
+        x: 0,
+        y: 0,
+        width: 40,
+        height: 40,
+        zIndex: 0,
+        d: 'M 0 0 L 40 0 L 40 40 Z',
+        fills: [{ type: 'solid', value: '#ff0000' }],
+      },
+      {
+        id: 'gradient-instance',
+        type: 'ref',
+        ref: 'gradient-template',
+        x: 50,
+        y: 0,
+        zIndex: 1,
+        fills: [
+          {
+            type: 'gradient',
+            value: 'linear-gradient(90deg, #ffffff 0%, #000000 100%)',
+          },
+        ],
+      },
+    ] as SerializedNode[];
+    const react = serializedNodesToCode(nodes);
+    expect(react).not.toContain('<GradientBadge');
+    expect(react).toContain('<linearGradient');
+    expect(react).toContain('fill={"url(#ic-gradient-');
+    const html = serializedNodesToCode(nodes, { framework: 'html-css' });
+    expect(html).toContain('<linearGradient');
+    expect(html).toContain('fill="url(#ic-gradient-');
+  });
+
+  it('expands a reusable path when stroke alignment changes', () => {
+    const nodes = [
+      {
+        id: 'outline-template',
+        type: 'path',
+        name: 'Outline',
+        reusable: true,
+        x: 0,
+        y: 0,
+        width: 40,
+        height: 40,
+        zIndex: 0,
+        d: 'M 0 0 L 40 0 L 40 40 Z',
+        strokeWidth: 2,
+        strokes: [{ type: 'solid', value: '#000000' }],
+      },
+      {
+        id: 'outline-instance',
+        type: 'ref',
+        ref: 'outline-template',
+        x: 50,
+        y: 0,
+        zIndex: 1,
+        strokeAlignment: 'inner',
+      },
+    ] as SerializedNode[];
+    const react = serializedNodesToCode(nodes);
+    expect(react).not.toContain('<Outline');
+    expect(react).toContain('<clipPath');
+    expect(react).toContain('strokeWidth={4}');
+  });
+
+  it('expands a reusable path when its vector shadow changes', () => {
+    const nodes = [
+      {
+        id: 'shadow-template',
+        type: 'path',
+        name: 'ShadowShape',
+        reusable: true,
+        x: 0,
+        y: 0,
+        width: 40,
+        height: 40,
+        zIndex: 0,
+        d: 'M 0 0 L 40 0 L 40 40 Z',
+        fills: [{ type: 'solid', value: '#ff0000' }],
+        dropShadowColor: '#000000',
+        dropShadowOffsetX: 2,
+        dropShadowOffsetY: 2,
+        dropShadowBlurRadius: 2,
+      },
+      {
+        id: 'shadow-instance',
+        type: 'ref',
+        ref: 'shadow-template',
+        x: 50,
+        y: 0,
+        zIndex: 1,
+        dropShadowBlurRadius: 8,
+      },
+    ] as SerializedNode[];
+    const react = serializedNodesToCode(nodes);
+    expect(react).not.toContain('<ShadowShape');
+    expect(react).toContain('drop-shadow(2px 2px 8px #000000)');
+  });
+
   it('keeps a child visibility edit as a component prop', () => {
     const current = structuredClone(baseline);
     current.find((node) => node.id === 'growth__price')!.visibility = 'hidden';
@@ -232,6 +439,48 @@ describe('design-to-code expanded ref reconciliation', () => {
     expect(react).toContain('backgroundImage: statusDotFills');
     expect(react).toContain('rounded-[50%]');
     expect(react).toContain('statusDotFills="radial-gradient(green, blue)"');
+  });
+
+  it('binds a positioned conic gradient edit on a reusable ellipse', () => {
+    const nodes = [
+      {
+        id: 'conic-template',
+        name: 'ConicBadge',
+        type: 'ellipse',
+        x: 0,
+        y: 0,
+        width: 40,
+        height: 40,
+        zIndex: 0,
+        reusable: true,
+        fills: [
+          {
+            type: 'gradient',
+            value: 'conic-gradient(circle at 25% 75%, red, blue)',
+          },
+        ],
+      },
+      {
+        id: 'conic-instance',
+        type: 'ref',
+        ref: 'conic-template',
+        x: 50,
+        y: 0,
+        zIndex: 1,
+        fills: [
+          {
+            type: 'gradient',
+            value: 'conic-gradient(circle at 25% 75%, green, blue)',
+          },
+        ],
+      },
+    ] as SerializedNode[];
+    const react = serializedNodesToCode(nodes);
+    expect(react).toContain('backgroundImage: conicBadgeFills');
+    expect(react).toContain(
+      'conicBadgeFills="conic-gradient(at 25% 75%, green, blue)"',
+    );
+    expect(react).not.toContain('conic-gradient(circle');
   });
 
   it('expands a rotated instance instead of dropping its transform', () => {
@@ -555,6 +804,74 @@ describe('design-to-code expanded ref reconciliation', () => {
     });
     expect(changedFitHtml).toContain('object-fit: cover');
     expect(changedFitHtml).toContain('object-position: left top');
+  });
+
+  it('expands a reusable rectangle when a solid fill layer changes', () => {
+    const templateFills = [
+      { type: 'solid', value: '#ff0000' },
+      { type: 'solid', value: '#0000ff', opacity: 0.5 },
+    ];
+    const nodes: SerializedNode[] = [
+      {
+        id: 'layered-template',
+        type: 'rect',
+        name: 'LayeredCard',
+        x: 0,
+        y: 0,
+        width: 100,
+        height: 80,
+        zIndex: 0,
+        reusable: true,
+        fills: templateFills,
+      } as SerializedNode,
+      {
+        id: 'layered-instance',
+        type: 'ref',
+        ref: 'layered-template',
+        x: 120,
+        y: 0,
+        zIndex: 1,
+        fills: [templateFills[0], { type: 'solid', value: '#00ff00' }],
+      } as SerializedNode,
+    ];
+    const react = serializedNodesToCode(nodes);
+    expect(react).not.toContain('export function LayeredCard');
+    expect(react).toContain('backgroundImage:');
+    expect(react).toContain('#00ff00');
+    const html = serializedNodesToCode(nodes, { framework: 'html-css' });
+    expect(html).toContain('background-image:');
+    expect(html).toContain('#00ff00');
+  });
+
+  it('expands a reusable rectangle when its pattern repeat changes', () => {
+    const nodes = [
+      {
+        id: 'pattern-template',
+        type: 'rect',
+        name: 'PatternCard',
+        x: 0,
+        y: 0,
+        width: 100,
+        height: 80,
+        zIndex: 0,
+        reusable: true,
+        fills: [{ type: 'pattern', value: '/tile.png', repetition: 'repeat' }],
+      },
+      {
+        id: 'pattern-instance',
+        type: 'ref',
+        ref: 'pattern-template',
+        x: 120,
+        y: 0,
+        zIndex: 1,
+        fills: [{ type: 'pattern', value: '/tile.png', repetition: 'repeat-y' }],
+      },
+    ] as SerializedNode[];
+    const react = serializedNodesToCode(nodes);
+    expect(react).not.toContain('export function PatternCard');
+    expect(react).toContain('backgroundRepeat: "repeat-y"');
+    const html = serializedNodesToCode(nodes, { framework: 'html-css' });
+    expect(html).toContain('background-repeat: repeat-y');
   });
 
   it('combines image fill opacity with node opacity in flat and reusable exports', () => {

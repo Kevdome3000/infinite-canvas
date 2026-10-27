@@ -11,6 +11,10 @@ import {
 } from '../design-variables';
 import type { ThemeMode } from '../../components/Theme';
 import { formatNumber } from '../serialize/points';
+import { renderVectorSvg } from './render-vector-svg';
+import { renderVectorImageStrokeOverlay } from './render-vector-image-stroke-overlay';
+import { renderVectorMixedStrokes } from './render-vector-mixed-strokes';
+import { renderPaintOverlays } from './emit-paint-overlays';
 import { styleIRToCssDeclarations, styleValueToCss } from './emit-style';
 import type { CodeIR, CodeNode, CodeVariablesMode } from './types';
 
@@ -55,7 +59,82 @@ function styleAttr(node: CodeNode, state: HtmlState): string {
 
 function renderNode(node: CodeNode, state: HtmlState, depth: number): string {
   const pad = state.indent.repeat(depth);
-  const style = styleAttr(node, state);
+  const imageWithChildren = node.role === 'image' && node.children.length > 0;
+  const style = styleAttr(
+    imageWithChildren
+      ? {
+          ...node,
+          style: {
+            ...node.style,
+            objectFit: undefined,
+            objectPosition: undefined,
+            imageFillOpacity: undefined,
+          },
+        }
+      : node,
+    state,
+  );
+  if (node.vectorPath) {
+    const path = node.vectorPath;
+    const hasChildren = node.children.length > 0;
+    const overlay = renderVectorImageStrokeOverlay(path, {
+      dialect: 'html',
+      mode: state.mode,
+      indent: state.indent,
+      depth: depth + 1,
+    });
+    const mixed = renderVectorMixedStrokes(path, {
+      dialect: 'html',
+      mode: state.mode,
+      indent: state.indent,
+      depth: depth + 1,
+    });
+    const paintLayers = mixed?.strokes ?? overlay;
+    const needsWrapper = hasChildren || !!paintLayers;
+    const wrapperStyle =
+      paintLayers && !node.style.position
+        ? styleAttr(
+            { ...node, style: { ...node.style, position: 'relative' } },
+            state,
+          )
+        : style;
+    const svgStyle = needsWrapper
+      ? ' style="position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none"'
+      : style;
+    const svg = renderVectorSvg(mixed?.fill ?? path, {
+      dialect: 'html',
+      mode: state.mode,
+      indent: state.indent,
+      depth,
+      svgStyle,
+    });
+    if (!needsWrapper) return svg;
+    const tag = node.element?.tag ?? 'div';
+    const semanticAttr =
+      tag === 'button'
+        ? ' type="button"'
+        : tag === 'a' && node.element?.tag === 'a'
+        ? ` href="${escapeAttr(node.element.href)}"`
+        : '';
+    const children = node.children
+      .map((child) => renderNode(child, state, depth + 1))
+      .join('\n');
+    const nestedSvg = svg
+      .split('\n')
+      .map((line) => `${state.indent}${line}`)
+      .join('\n');
+    const artwork = `${nestedSvg}${paintLayers ? `\n${paintLayers}` : ''}`;
+    const shadowedArtwork = mixed?.shadow
+      ? `${state.indent.repeat(
+          depth + 1,
+        )}<div style="position: absolute; inset: 0; overflow: visible; filter: ${escapeAttr(
+          mixed.shadow,
+        )}">\n${artwork}\n${state.indent.repeat(depth + 1)}</div>`
+      : artwork;
+    return `${pad}<${tag}${semanticAttr}${wrapperStyle}>\n${shadowedArtwork}${
+      children ? `\n${children}` : ''
+    }\n${pad}</${tag}>`;
+  }
   const tag = node.element?.tag ?? (node.role === 'text' ? 'span' : 'div');
   const semanticAttr =
     tag === 'button'
@@ -73,6 +152,39 @@ function renderNode(node: CodeNode, state: HtmlState, depth: number): string {
 
   if (node.role === 'image') {
     const src = node.image ? styleValueToCss(node.image, state.mode) : '';
+    if (imageWithChildren) {
+      const imageCss = [
+        'position: absolute',
+        'inset: 0',
+        'width: 100%',
+        'height: 100%',
+        'z-index: -1',
+        'border-radius: inherit',
+        'pointer-events: none',
+        ...(node.style.objectFit
+          ? [`object-fit: ${node.style.objectFit}`]
+          : []),
+        ...(node.style.objectPosition
+          ? [`object-position: ${node.style.objectPosition}`]
+          : []),
+        ...(node.style.imageFillOpacity
+          ? [
+              `opacity: ${styleValueToCss(
+                node.style.imageFillOpacity,
+                state.mode,
+              )}`,
+            ]
+          : []),
+      ].join('; ');
+      const children = node.children
+        .map((child) => renderNode(child, state, depth + 1))
+        .join('\n');
+      return `${pad}<${tag}${semanticAttr}${style}>\n${state.indent.repeat(
+        depth + 1,
+      )}<img src="${escapeAttr(src)}" alt="" style="${escapeAttr(
+        imageCss,
+      )}" />\n${children}\n${pad}</${tag}>`;
+    }
     return `${pad}<img src="${escapeAttr(src)}" alt="${escapeAttr(
       node.name ?? '',
     )}"${style} />`;
@@ -90,14 +202,25 @@ function renderNode(node: CodeNode, state: HtmlState, depth: number): string {
     return `${pad}<${tag}${semanticAttr}${style}>${text}</${tag}>`;
   }
 
+  const paints = renderPaintOverlays(
+    node.style,
+    state.mode,
+    'html',
+    state.indent,
+    depth,
+  );
   if (node.children.length === 0) {
+    if (paints)
+      return `${pad}<${tag}${semanticAttr}${style}>\n${paints}\n${pad}</${tag}>`;
     return `${pad}<${tag}${semanticAttr}${style}>${text}</${tag}>`;
   }
   const children = node.children
     .map((c) => renderNode(c, state, depth + 1))
     .join('\n');
   const leading = text ? `${state.indent.repeat(depth + 1)}${text}\n` : '';
-  return `${pad}<${tag}${semanticAttr}${style}>\n${leading}${children}\n${pad}</${tag}>`;
+  return `${pad}<${tag}${semanticAttr}${style}>\n${
+    paints ? `${paints}\n` : ''
+  }${leading}${children}\n${pad}</${tag}>`;
 }
 
 /** 把 Code IR 输出为 HTML + CSS 源码字符串。 */
