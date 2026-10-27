@@ -2920,7 +2920,9 @@ export class Select extends System {
             !e.has(UI) &&
             (!e.has(ComputedVisibility) || e.read(ComputedVisibility).visible) &&
             e.has(Children) &&
-            e.read(Children).parent.has(Camera),
+            // Children refs can clear before a detached transient leaves RBush.
+            // Such an entity is not a direct child of this camera.
+            e.read(Children).parent?.has(Camera),
         )
         .map((e) => api.getNodeByEntity(e));
       api.selectNodes(selecteds);
