@@ -1785,13 +1785,20 @@ export class Select extends System {
     requestTransformerRefreshForCanvas(api.getCanvas());
   }
 
-  private handleBrushing(api: API, viewportX: number, viewportY: number) {
+  private handleBrushing(
+    api: API,
+    viewportX: number,
+    viewportY: number,
+    pointerDown?: readonly number[],
+  ) {
     const camera = api.getCamera();
     const selection = this.selections.get(camera.__id);
-
-    const { pointerDownViewportX, pointerDownViewportY } = camera.read(
-      ComputedCameraControl,
-    );
+    const control = camera.read(ComputedCameraControl);
+    // CameraControl clears its gesture coordinates before Select on release.
+    const [pointerDownViewportX, pointerDownViewportY] = pointerDown ?? [
+      control.pointerDownViewportX,
+      control.pointerDownViewportY,
+    ];
 
     // Use a threshold to avoid showing the selection brush when the pointer is moved a little.
     const shouldShowSelectionBrush =
@@ -2463,6 +2470,26 @@ export class Select extends System {
           const start = api.viewport2Canvas({ x: sx, y: sy });
           const end = api.viewport2Canvas({ x: ex, y: ey });
           this.handleSelectedMoving(api, start.x, start.y, end.x, end.y);
+        }
+      }
+
+      // A release can consume the final move before an input point reaches
+      // Select. Build/update the marquee from that last position as well.
+      if (
+        input.pointerUpTrigger &&
+        inputPoints.length === 0 &&
+        (selection.mode === SelectionMode.READY_TO_BRUSH ||
+          selection.mode === SelectionMode.BRUSH) &&
+        !input.pointerCancelled &&
+        input.key !== 'Escape' &&
+        !is3DGizmoDragging(canvas) &&
+        layersCropping.length === 0
+      ) {
+        const [sx, sy] = input.pointerDownViewport;
+        const [ex, ey] = input.pointerViewport;
+        if (distanceBetweenPoints(sx, sy, ex, ey) > 10) {
+          this.handleBrushing(api, ex, ey, [sx, sy]);
+          selection.mode = SelectionMode.BRUSH;
         }
       }
 
