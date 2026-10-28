@@ -149,7 +149,7 @@ function svgStrokeDashes(element: SVGElement): number[] | null {
   if (value.toLowerCase() === 'none') return [];
   const parts = value.trim().split(/[\s,]+/);
   const dashes = parts.map((part) => Number(part.replace(/px$/, '')));
-  if (parts.some((part) => !/^(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?(?:px)?$/i.test(part)) ||
+  if (parts.some((part) => !/^(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?(?:px)?$/i.test(part)) ||
     dashes.some((dash) => !Number.isFinite(dash) || dash < 0)) return null;
   return dashes.every((dash) => dash === 0) ? null : dashes;
 }
@@ -188,7 +188,7 @@ function expandSvgStrokeNodes(
       ? Number(widthText.replace(/px$/, '')) : NaN;
     const dashes = svgStrokeDashes(element);
     const dashOffsetText = inheritedSvgAttribute(element, 'stroke-dashoffset', '0');
-    const dashOffset = /^-?(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?(?:px)?$/i.test(dashOffsetText)
+    const dashOffset = /^-?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?(?:px)?$/i.test(dashOffsetText)
       ? Number(dashOffsetText.replace(/px$/, '')) : NaN;
     const linecap = inheritedSvgAttribute(element, 'stroke-linecap', 'butt') as CanvasLineCap;
     const linejoin = inheritedSvgAttribute(element, 'stroke-linejoin', 'miter') as CanvasLineJoin;
@@ -883,7 +883,7 @@ function deserializeSvgRadialGradient(
       (gradient.getAttribute('spreadMethod') ?? 'pad') !== 'pad') return;
   const length = (value: string | null) => {
     if (value === null ||
-        !/^[-+]?(?:\d+\.?\d*|\.\d+)(?:e[-+]?\d+)?(?:px)?$/i.test(value)) return;
+        !/^[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[-+]?\d+)?(?:px)?$/i.test(value)) return;
     const number = Number(value.replace(/px$/i, ''));
     return Number.isFinite(number) ? number : undefined;
   };
@@ -926,7 +926,7 @@ function svgRadialFillBounds(
 ): { x: number; y: number; width: number; height: number } | undefined {
   const numericLength = (value: string | null, fallback = 0) => {
     if (value === null) return fallback;
-    if (!/^[-+]?(?:\d+\.?\d*|\.\d+)(?:e[-+]?\d+)?(?:px)?$/i.test(value)) return;
+    if (!/^[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[-+]?\d+)?(?:px)?$/i.test(value)) return;
     const number = Number(value.replace(/px$/i, ''));
     return Number.isFinite(number) ? number : undefined;
   };
