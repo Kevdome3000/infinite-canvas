@@ -27,6 +27,9 @@
     "deploy": "npx wrangler pages deploy ./packages/site/docs/.vitepress/dist",
     "cov": "jest -c ./jest.ecs.config.js --coverage",
     "test:ecs": "jest -c ./jest.ecs.config.js --coverage",
+    "bench:path-extrusion": "node node_modules/typescript/bin/tsc -p packages/ecs/tsconfig.build.json --module commonjs --outDir packages/ecs/lib && node scripts/bench-path-extrusion.cjs",
+    "bench:svg-import": "jest -c jest.ecs.config.js --runTestsByPath scripts/svg-import.bench.spec.ts --testMatch '**/scripts/*.bench.spec.ts' --runInBand --coverage=false",
+    "bench:svg-import:browser": "playwright test -c playwright.svg-import-bench.config.ts",
     "dev:react-tests": "vite --config __tests__/react/browser/vite.config.ts",
     "test:react:browser": "playwright test -c playwright.react.config.ts",
     "test:react:browser:webkit": "playwright test -c playwright.react-webkit.config.ts",
@@ -102,7 +105,7 @@
       "esbuild": "^0.25.12",
       "playwright": "1.60.0",
       "lodash-es": ">=4.18.0",
-      "qs": "^6.16.0",
+      "qs": "^6.16.1",
       "rollup": ">=4.59.0",
       "tar": "^7.5.21",
       "canvas": "^3.2.1",
@@ -167,6 +170,7 @@
     },
     "patchedDependencies": {
       "braces@3.0.3": "patches/braces@3.0.3.patch",
+      "deepmerge@4.3.1": "patches/deepmerge@4.3.1.patch",
       "http-cache-semantics@4.1.1": "patches/http-cache-semantics@4.1.1.patch",
       "sprintf-js@1.0.3": "patches/sprintf-js@1.0.3.patch"
     }

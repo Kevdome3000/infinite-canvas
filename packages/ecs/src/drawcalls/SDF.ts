@@ -54,7 +54,12 @@ import {
   filterRasterPostEffects,
   getRasterFilterPadding,
 } from '../utils/filter';
-import { scheduleFillImageSvgRerasterIfNeeded } from '../utils/fillImageSvgReraster';
+import {
+  isLikelySvgResourceUrl,
+  prepareSvgPatternFill,
+  scheduleFillImageSvgRerasterIfNeeded,
+} from '../utils/fillImageSvgReraster';
+import { svgFillImageZoomBucket } from '../utils/fillImageTextureSize';
 import {
   getFillLayerDecodedBitmap,
   getOrScheduleFillLayerPatternSource,
@@ -74,6 +79,7 @@ import {
 } from '../utils/solidShapeRasterForFilter';
 import {
   Circle,
+  ComputedCamera,
   Ellipse,
   FillLayers,
   FillTexture,
@@ -312,6 +318,12 @@ export class SDF extends Drawcall {
         width,
         height,
         rasterOpts.objectFit,
+        isLikelySvgResourceUrl(layer.value) &&
+          this.api?.getCamera()?.has(ComputedCamera)
+          ? svgFillImageZoomBucket(
+              this.api.getCamera().read(ComputedCamera).zoom,
+            )
+          : 1,
       );
       const fromUrl = rasterizeFillLayerImageUrlForTexture(
         layer.value,
@@ -343,14 +355,26 @@ export class SDF extends Drawcall {
       return raw;
     }
     if (layer.type === 'pattern') {
-      const pw = Math.max(1, Math.ceil(width));
-      const ph = Math.max(1, Math.ceil(height));
+      const prepared = typeof layer.value === 'string' &&
+        isLikelySvgResourceUrl(layer.value)
+        ? prepareSvgPatternFill({
+            entity: instance,
+            url: layer.value,
+            geomW: width,
+            geomH: height,
+            zoom: this.api?.getCamera()?.has(ComputedCamera)
+              ? this.api.getCamera().read(ComputedCamera).zoom : 1,
+            onDecoded: () => safeAddComponent(instance, MaterialDirty),
+          })
+        : undefined;
+      const pw = prepared?.width ?? Math.max(1, Math.ceil(width));
+      const ph = prepared?.height ?? Math.max(1, Math.ceil(height));
       const image =
-        typeof layer.value === 'string'
+        prepared?.image ?? (typeof layer.value === 'string'
           ? getOrScheduleFillLayerPatternSource(layer.value, () =>
               safeAddComponent(instance, MaterialDirty),
             )
-          : layer.value;
+          : layer.value);
       const canvas = this.texturePool.getOrCreatePattern({
         pattern: {
           image,
@@ -359,6 +383,8 @@ export class SDF extends Drawcall {
         },
         width: pw,
         height: ph,
+        rasterScale: prepared?.rasterScale,
+        tileScale: prepared?.tileScale,
       });
       const texture = this.device.createTexture({
         format: Format.U8_RGBA_NORM,

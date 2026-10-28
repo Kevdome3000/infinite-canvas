@@ -116,6 +116,7 @@ import {
   FillLayers,
   Font,
   GlobalTransform,
+  GlobalRenderOrder,
   Grid,
   Highlighted,
   Landmark,
@@ -3306,6 +3307,10 @@ export class API {
       const meshes = mesh
         ? [mesh, ...(entity.has(Mesh3DNode) ? getMesh3DNodeParts(entity) : [])]
         : [];
+      const painterOrder =
+        entity.has(Extrude3D) && entity.has(GlobalRenderOrder)
+          ? entity.read(GlobalRenderOrder).value
+          : undefined;
       return meshes.flatMap((part, index) => {
         if (
           !part.alive ||
@@ -3370,6 +3375,7 @@ export class API {
             mesh: meshData,
             material,
             transform,
+            painterOrder,
           },
         ];
       });

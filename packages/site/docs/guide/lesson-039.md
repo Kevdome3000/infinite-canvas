@@ -9,6 +9,7 @@ import CubePerspective from '../components/CubePerspective.vue'
 import Lighting from '../components/Lighting.vue'
 import GltfDuck from '../components/GltfDuck.vue'
 import SvgExtrusion from '../components/SvgExtrusion.vue'
+import IconExtrusion from '../components/IconExtrusion.vue'
 </script>
 
 # Lesson 39 - 3D Mesh Rendering
@@ -213,6 +214,10 @@ buffers during pose/material edits. Only `Mesh3D` writes invalidate geometry;
 when editing arrays directly, acquire the component with `entity.write(Mesh3D)`
 first. The cache consumes those writes after companion synchronization, retains
 them across skipped draws, and uploads the replacement once on the next draw.
+Meshes with identical geometry arrays share the uploaded geometry within one
+canvas, while each mesh keeps its own model uniform and draw bindings. An
+in-place geometry edit uploads a new generation; other instances retain their
+previous GPU snapshot until they are updated or removed.
 Each canvas owns its cache and scene uniforms. Removing a mesh or moving it to
 another canvas releases the old buffers, and disposing the canvas releases its
 resources before the device. Failed allocations are rolled back and can be
@@ -345,13 +350,41 @@ All subpaths must be closed. Open paths, stroke layers, multiple or non-solid
 fills, non-manifold contours and singular transforms remain visible in 2D. The
 Path keeps its original document node and supports gizmo edits, undo and reload.
 
+### Turning icons into 3D {#icon-to-3d}
+
+<IconExtrusion />
+
+In the App, select an Icon and open **3D → Convert icon to 3D**. Choose a depth and
+a material preset (matte, glossy or metal). The conversion expands SVG strokes,
+including their caps and joins, into closed contours. Filled parts and holes become
+editable Paths inside one group. Select the group to change depth or material for
+all parts; select a Path to edit its outline or bevel. Undo restores the IconFont.
+The conversion is a snapshot of the icon geometry.
+
+After registering an icon set with `registerIconifyIconSet`, code can use the same
+conversion:
+
+```ts
+const result = iconFontToExtrudedPaths(iconNode, {
+    depth: 40,
+    bevelSize: 2,
+    metallic: 1,
+    roughness: 0.25,
+});
+if (result) api.updateNodes([result.group, ...result.paths]);
+```
+
+`metallic` and `roughness` are PBR parameters between 0 and 1. These presets use
+the existing lighting pipeline. Transparent glass and refraction are not yet
+supported. SVG filters, gradients and unsupported paints may require manual
+outline cleanup before extrusion.
+
 `sideColor` is an optional CSS color for the walls; the front and back keep the
 source fill. Omitting it makes all faces use the source fill color. The side
 color is a paint change, so editing it reuses the existing mesh geometry.
 
 SVG `<path>`, `<polygon>`, `<rect>`, `<circle>` and `<ellipse>` elements, plus
-`<polyline>` elements whose first and last points coincide, can be
-imported as extrusion sources with
+closed `<polyline>` elements, can be imported as filled extrusion sources with
 `svgElementsToExtrudedNodes`. The helper preserves other imported shapes in 2D;
 invalid depth is rejected instead of silently changing it to a default.
 
@@ -377,22 +410,60 @@ side color blank to use the shape's fill.
 For a Path that cannot produce a mesh, the App disables the extrusion action
 and shows the closed outline, fill and stroke requirements.
 
-The converter accepts closed contours with one solid fill and no visible stroke;
-SVG's `stroke="none"` placeholder is ignored. It preserves `fill-rule`, including
-`evenodd` holes, and inherits fill colors from SVG groups. Plain rectangles stay
-editable Rect nodes; rounded rectangles, ellipses and closed polylines become
-editable Paths. Open polylines keep their 2D form.
+The converter accepts closed contours with one solid fill. A solid SVG stroke on
+`<path>`, `<line>`, `<polyline>`, `<polygon>`, `<rect>`, `<circle>` or `<ellipse>` is
+expanded into a closed, editable Path. Stroke-only open lines and paths can
+therefore be extruded. When a shape has both fill and stroke, the stroke becomes
+a separate Path above the filled source; both retain the SVG group transform and
+can be exported to GLB. Round and square caps and round, bevel and miter joins
+are preserved. SVG's `stroke="none"` placeholder is ignored. The converter
+preserves `fill-rule`, including `evenodd` holes, and inherits paint and stroke
+width from SVG groups. Plain filled rectangles stay editable Rect nodes; rounded
+rectangles, ellipses and closed polylines become editable Paths.
 Inline `style` declarations for fill, stroke, opacity, fill rule and stroke
 geometry override presentation attributes. `fill="currentColor"` and
 `stroke="currentColor"` resolve against the nearest `color` on the shape, group,
 `<use>` instance or SVG root; absent color defaults to black. A stroke supplied
-through `style` keeps that shape in 2D. External CSS stylesheets are not parsed.
+through `style` can also be expanded. External CSS stylesheets are not parsed.
 For extrusion, rounded rectangles preserve independent SVG `rx` and `ry` values
 as elliptical corner arcs. A missing radius defaults to the other, and each
 radius is clamped to half of its corresponding dimension. The ordinary 2D Rect
 importer still stores a single corner radius.
-Open contours, stroked shapes, gradients, paint servers and unsupported SVG
-shapes remain in 2D.
+Resolvable positive-length SVG dash patterns, including odd-length patterns and
+`stroke-dashoffset`, are expanded into separate editable solid contours.
+A zero-length dash with a round cap creates an extruded dot. A
+`non-scaling-stroke` keeps its specified width through SVG group transforms and
+`viewBox` scaling: the importer projects the centerline first, then expands it
+into an editable 3D outline. This width is baked at import time, so subsequent
+editor zoom scales the 3D mesh normally. Non-scaling strokes under clip paths
+or sliced viewports, zero-length gaps, zero-length dashes with other caps,
+gradients, paint servers and unsupported SVG shapes remain in 2D.
+`<pattern>` fills with integer pixel tiles and `patternUnits="userSpaceOnUse"`
+are imported as repeating 2D fills. The tile can contain basic SVG shapes and
+local `<use>` references to those shapes. A local `href` on a pattern can inherit
+tile content and attributes from another pattern. External references, cyclic
+references, linked images and paint servers inside tiles remain unsupported.
+Numeric `x` and `y` pattern origins remain
+aligned when the same pattern fills shapes at different positions, including
+fills inherited from a group. Inherited pattern fills become editable fills on
+the individual child shapes. Supported
+`patternTransform` functions (`matrix`, `translate`, `scale`, `rotate` and `skew`)
+remain editable on the imported fill.
+As the canvas zooms in, SVG pattern tiles are redrawn from their vector source.
+The tile spacing stays fixed in canvas coordinates, with raster size capped at
+the texture limit.
+Circular `<radialGradient>` fills on rectangles are also retained in 2D when they
+use `userSpaceOnUse`, explicit numeric center and radius, and a centered focal
+point. Other self-contained radial gradients on rectangles, circles, ellipses,
+paths and polygons, including elliptical gradients, shifted focal points and
+gradient transforms, use a rasterized SVG image fill. The shape remains editable,
+while its gradient stops are baked into that image rather than separately editable
+paint controls.
+SVG image fills are redrawn from the vector source as you zoom in, up to the
+texture size limit, so their edges stay sharper at higher magnification.
+If a stroke cannot generate a valid closed mesh, its original 2D node is kept.
+Expanded stroke contours retain six decimal places while their coordinates are
+normalized, so very thin details do not collapse before the final mesh check.
 Local `<use href="#id">` and legacy `xlink:href` references to supported shapes or
 groups create independent instances, including forward and repeated references.
 Instance pixel offsets, transform and inherited fill are applied before extrusion;
@@ -446,12 +517,35 @@ Choose **Nested SVG viewport sample** to compare an inline SVG viewport and a
 second instance referenced with `<use>`; their extruded outlines are clipped
 to each viewport.
 Choose **Paint style + currentColor sample** to compare inherited and
-instance-specific colors, an inline fill override and a styled stroke that
-stays in 2D.
+instance-specific colors, an inline fill override and a styled stroke.
+Choose **Stroke caps + joins sample** to compare round and square caps, a
+filled shape with a separate 3D outline, a non-scaling stroke under a group
+transform, an extruded dashed stroke and round dots.
 Choose **Clip paths + repeated use sample** to inspect two independently
 clipped instances with holes and a shape clipped by an object-bounds union.
 Choose **Group bounds + clip use sample** to inspect an object-bounds clip on a
 transformed group whose two windows reuse one local definition.
+
+SVG preflight checks whether each contour can form a mesh. The resulting CPU
+geometry is kept in a recent cache of at most 256 meshes and 8 MiB of geometry
+arrays, so it can be reused when the asynchronous canvas update creates the 3D
+companions. Older entries are evicted; GPU geometry has its own per-canvas cache.
+Run `pnpm bench:svg-import:browser` to inspect import and edit timings for the
+repository's [Ghostscript Tiger SVG](/Ghostscript_Tiger.svg) and other
+representative artwork. You can also download that SVG and use **Upload SVG**
+above to inspect the editable layers and compare different zoom levels.
+When imported SVG layers overlap, their extruded front faces retain the SVG
+paint order, including layers inside nested groups. Later layers remain visible
+over earlier ones in the linked 3D view.
+GLB export lists the extrusion nodes in the same front-to-back traversal order,
+which our glTF importer retains. For opaque, flat extrusions on one plane, the
+export also separates overlapping layers in depth by at most 5% of the
+thinnest extrusion. This gives glTF viewers distinct depth-buffer values without
+moving the editable shapes in the canvas. Each nonintersecting stack is handled
+independently, so a distant 3D mesh does not disable the spacing. A stack whose
+projected bounds overlap a tilted or transparent extrusion, another elevation, or a standalone
+3D mesh keeps its authored transforms. Extremely large or distant models can
+still lose small depth differences to the viewer's depth-buffer precision.
 
 Set `extrude3d.bevelSize` (in canvas units) for a bevel on both ends of
 Path and Rect extrusions. The demo exposes this as **Bevel**. Holes, multiple

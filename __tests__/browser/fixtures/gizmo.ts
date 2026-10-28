@@ -35,7 +35,9 @@ import { MESH_SCENE_UNIFORM_FLOATS } from '../../../packages/ecs/src/systems/mes
 import { MESH_MODEL_UNIFORM_FLOATS } from '../../../packages/ecs/src/systems/mesh3d/mesh-model-uniforms';
 import { getMeshPipeline3D } from '../../../packages/ecs/src/systems/mesh3d-bridge';
 import { buildPickSceneForViewport } from '../../../packages/ecs/src/utils/pick3d-probe';
+import { recentPathExtrusionMeshCacheStats } from '../../../packages/ecs/src/utils/path-extrusion-mesh';
 import { projectMesh3DViewportBounds } from '../../../packages/ecs/src/utils/isometric-marquee';
+import { getFillLayerDecodedBitmap } from '../../../packages/ecs/src/utils/fill-layer-image-url-raster';
 
 let api: API;
 const params = new URLSearchParams(location.search);
@@ -110,6 +112,93 @@ const harness = {
   api: () => api,
   backend: () => api.getCanvas().read(GPUResource).device.queryVendorInfo().platformString,
   dispose: () => app.exit(),
+  svgFillRasterSize: (url: string) => {
+    const bitmap = getFillLayerDecodedBitmap(url);
+    return bitmap ? { width: bitmap.width, height: bitmap.height } : undefined;
+  },
+  profileSvgImport: (source: string) => {
+    const parseStart = performance.now();
+    const svg = new DOMParser().parseFromString(source, 'image/svg+xml')
+      .documentElement as unknown as SVGSVGElement;
+    const parsedMs = performance.now() - parseStart;
+    const importStart = performance.now();
+    const nodes = svgElementsToExtrudedNodes(svg, 24);
+    const importedMs = performance.now() - importStart;
+    const paths = nodes.filter((node) => node.type === 'path');
+    return {
+      parsedMs,
+      importedMs,
+      nodes: nodes.length,
+      extrudedNodes: nodes.filter(
+        (node) => 'extrude3d' in node && node.extrude3d,
+      ).length,
+      uniquePaths: new Set(paths.map((node) => node.d)).size,
+      longestPath: paths.reduce((max, node) => Math.max(max, node.d.length), 0),
+    };
+  },
+  showSvgArtwork: async (
+    source: string,
+    center = { x: 100, y: 100 },
+  ) => {
+    const nodes = importExtrudedSvg(source, 24, center);
+    await api.edit((editor) => editor.replaceDocument(nodes, 'remote'));
+    await settleECSFrames(api, 3);
+    return {
+      nodes: nodes.length,
+      extrudedNodes: nodes.filter((node) => 'extrude3d' in node && node.extrude3d).length,
+    };
+  },
+  profileSvgArtworkEdit: async (source: string) => {
+    const cacheBefore = recentPathExtrusionMeshCacheStats();
+    const importStart = performance.now();
+    const nodes = importExtrudedSvg(source, 24, { x: 100, y: 100 });
+    const parsedMs = performance.now() - importStart;
+    const cacheAfterImport = recentPathExtrusionMeshCacheStats();
+    await api.edit((editor) => editor.replaceDocument(nodes, 'remote'));
+    const replacedMs = performance.now() - importStart;
+    const cacheAfterReplace = recentPathExtrusionMeshCacheStats();
+    await settleECSFrames(api, 3);
+    const settledMs = performance.now() - importStart;
+    api.clearHistory();
+    const node = api
+      .getNodes()
+      .find((item) => 'extrude3d' in item && item.extrude3d);
+    if (!node) throw new Error('No extruded node to edit');
+    const originalX = node.x ?? 0;
+    const editStart = performance.now();
+    await api.edit((editor) =>
+      editor.updateNode(editor.getNodeById(node.id), { x: originalX + 10 }),
+    );
+    const editedMs = performance.now() - editStart;
+    await settleECSFrames(api, 3);
+    const editSettledMs = performance.now() - editStart;
+    const exportStart = performance.now();
+    const glb = api.export({ format: ExportFormat.GLB, download: false });
+    const exportedMs = performance.now() - exportStart;
+    const undoStart = performance.now();
+    api.undo();
+    await settleECSFrames(api, 3);
+    const undoSettledMs = performance.now() - undoStart;
+    const restoredX = api.getNodeById(node.id)?.x;
+    if (restoredX !== originalX)
+      throw new Error(`SVG edit did not undo: ${restoredX} !== ${originalX}`);
+    return {
+      nodes: nodes.length,
+      parsedMs,
+      replacedMs,
+      settledMs,
+      editedMs,
+      editSettledMs,
+      exportedMs,
+      glbBytes: glb.byteLength,
+      undoSettledMs,
+      restoredX,
+      cacheBefore,
+      cacheAfterImport,
+      cacheAfterReplace,
+      cacheAfterEdit: recentPathExtrusionMeshCacheStats(),
+    };
+  },
   camera3DState: () => {
     const camera = api.getCanvas().read(Camera3D);
     return { eye: [...camera.eye], center: [...camera.center] };

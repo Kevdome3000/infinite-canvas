@@ -62,7 +62,7 @@ function sliceViewport(root: SVGSVGElement): Point[] | undefined {
   );
 }
 
-function sourceTransform(
+export function sourceTransform(
   element: SVGElement,
   root: SVGSVGElement | undefined,
 ): {
@@ -289,6 +289,7 @@ export function reprojectSvgExtrusion(
   depth: number,
   rectRadii: Map<string, { rx: number; ry: number }>,
   clipDefinitions: Map<string, SvgClipDefinition | undefined>,
+  alreadyProjected: Set<string> = new Set(),
 ): SerializedNode[] {
   const viewport = root ? rootViewBox(root) : identity();
   const slice = root ? sliceViewport(root) : undefined;
@@ -298,6 +299,7 @@ export function reprojectSvgExtrusion(
   const boundsCache = new Map<SVGElement, ReturnType<typeof contourBounds>>();
   return nodes.map((node, index) => {
     if (!('extrude3d' in node) || !node.extrude3d) return node;
+    if (alreadyProjected.has(node.id)) return node;
     const element = nodeElements.get(node.id);
     if (!element) return node;
     const { matrix, hasShear, clipViewports, clipReferences } = sourceTransform(element, root);
@@ -317,7 +319,10 @@ export function reprojectSvgExtrusion(
         plainByElement = new Map();
         for (const candidate of plainNodes) {
           const sourceElement = nodeElements.get(candidate.id);
-          if (sourceElement) plainByElement.set(sourceElement, candidate);
+          // A filled shape may also have a generated stroke sibling. The
+          // SVG objectBoundingBox still belongs to the original shape.
+          if (sourceElement && !plainByElement.has(sourceElement))
+            plainByElement.set(sourceElement, candidate);
         }
       }
       const plain = plainNodes[index];
@@ -384,7 +389,7 @@ export function reprojectSvgExtrusion(
           rotation: 0,
           scaleX: 1,
           scaleY: 1,
-          extrude3d: depth,
+          extrude3d: node.extrude3d,
         } as PathSerializedNode;
       }
       if (clippedViewport.kind === 'polygon') {
@@ -416,7 +421,7 @@ export function reprojectSvgExtrusion(
             rotation: 0,
             scaleX: 1,
             scaleY: 1,
-            extrude3d: depth,
+            extrude3d: node.extrude3d,
           } as PathSerializedNode;
         }
       }
@@ -461,7 +466,7 @@ export function reprojectSvgExtrusion(
         rotation: 0,
         scaleX: 1,
         scaleY: 1,
-        extrude3d: depth,
+        extrude3d: node.extrude3d,
       } as PathSerializedNode;
     } catch {
       return { ...node, extrude3d: undefined };

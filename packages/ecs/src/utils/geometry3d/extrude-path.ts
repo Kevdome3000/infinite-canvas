@@ -303,25 +303,24 @@ export function extrudePathContours(
   // Triangles on the same cap share positions, normals and UVs. Keep front and
   // back separate because their normals point in opposite directions; walls
   // also need separate vertices for their flat, outward-facing normals.
-  const capVertices = [new Map<string, number>(), new Map<string, number>()];
-  const capVertex = (point: Point, front: boolean): number => {
-    const vertices = capVertices[front ? 0 : 1];
-    const key = `${Math.fround(point[0])},${Math.fround(point[1])}`;
-    const existing = vertices.get(key);
+  const capVertices = new Map<number, Map<number, [number, number]>>();
+  const capVertexPair = (point: Point): [number, number] => {
+    const x = Math.fround(point[0]);
+    const y = Math.fround(point[1]);
+    let column = capVertices.get(x);
+    const existing = column?.get(y);
     if (existing !== undefined) return existing;
     const [u, v] = capUv(point);
-    const index = addVertex(
-      point[0],
-      point[1],
-      front ? halfDepth : -halfDepth,
-      0,
-      0,
-      front ? 1 : -1,
-      u,
-      v,
-    );
-    vertices.set(key, index);
-    return index;
+    const pair: [number, number] = [
+      addVertex(point[0], point[1], halfDepth, 0, 0, 1, u, v),
+      addVertex(point[0], point[1], -halfDepth, 0, 0, -1, u, v),
+    ];
+    if (!column) {
+      column = new Map();
+      capVertices.set(x, column);
+    }
+    column.set(y, pair);
+    return pair;
   };
 
   for (let i = 0; i < triangles.length; i += 6) {
@@ -333,13 +332,16 @@ export function extrudePathContours(
       return fail('tessellation-failed');
     }
     const [first, second, third] = cross > 0 ? [a, b, c] : [a, c, b];
+    const [frontFirst, backFirst] = capVertexPair(first);
+    const [frontSecond, backSecond] = capVertexPair(second);
+    const [frontThird, backThird] = capVertexPair(third);
     indices.push(
-      capVertex(first, true),
-      capVertex(second, true),
-      capVertex(third, true),
-      capVertex(third, false),
-      capVertex(second, false),
-      capVertex(first, false),
+      frontFirst,
+      frontSecond,
+      frontThird,
+      backThird,
+      backSecond,
+      backFirst,
     );
   }
 
@@ -574,23 +576,39 @@ export function extrudePathContours(
   // A self crossing can create two solid lobes sharing a vertical edge. The
   // resulting mesh is pinched, so reject it rather than return invalid volume.
   // This also catches cracks between the independently tessellated caps/walls.
-  const edges = new Map<string, { count: number; balance: number }>();
-  const pointKeys: string[] = [];
-  const pointKey = (index: number): string => {
-    const existing = pointKeys[index];
+  const vertexCount = positions.length / 3;
+  const edges = new Map<number | string, { count: number; balance: number }>();
+  const coordinateIds = new Map<string, number>();
+  const pointIds: number[] = [];
+  const pointId = (index: number): number => {
+    const existing = pointIds[index];
     if (existing !== undefined) return existing;
     const offset = index * 3;
-    return (pointKeys[index] = `${Math.fround(positions[offset])},${Math.fround(
+    const key = `${Math.fround(positions[offset])},${Math.fround(
       positions[offset + 1],
-    )},${Math.fround(positions[offset + 2])}`);
+    )},${Math.fround(positions[offset + 2])}`;
+    let id = coordinateIds.get(key);
+    if (id === undefined) {
+      id = coordinateIds.size;
+      coordinateIds.set(key, id);
+    }
+    pointIds[index] = id;
+    return id;
   };
+  // Intern the float32 coordinates once, then use compact numeric edge keys.
+  // Fall back to strings only when packing two IDs could exceed safe integers.
+  const numericEdgeKeys = vertexCount <= Math.floor(Math.sqrt(Number.MAX_SAFE_INTEGER));
   for (let i = 0; i < indices.length; i += 3) {
     for (let j = 0; j < 3; j++) {
-      const a = pointKey(indices[i + j]);
-      const b = pointKey(indices[i + ((j + 1) % 3)]);
+      const a = pointId(indices[i + j]);
+      const b = pointId(indices[i + ((j + 1) % 3)]);
       if (a === b) return fail('non-manifold');
       const forward = a < b;
-      const key = forward ? `${a}|${b}` : `${b}|${a}`;
+      const low = forward ? a : b;
+      const high = forward ? b : a;
+      const key = numericEdgeKeys
+        ? low * vertexCount + high
+        : `${low}|${high}`;
       const edge = edges.get(key) ?? { count: 0, balance: 0 };
       edge.count++;
       edge.balance += forward ? 1 : -1;

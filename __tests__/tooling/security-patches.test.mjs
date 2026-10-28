@@ -20,6 +20,10 @@ const yamlFile = resolveFrom(packages, 'read-yaml-file');
 const yaml = resolveFrom(yamlFile, 'js-yaml');
 const argparse = resolveFrom(yaml, 'argparse');
 const { sprintf, vsprintf } = createRequire(argparse)('sprintf-js');
+const jest = require.resolve('jest/package.json');
+const jestCore = resolveFrom(jest, '@jest/core');
+const jestConfig = resolveFrom(jestCore, 'jest-config');
+const deepmerge = createRequire(jestConfig)('deepmerge');
 
 test('installed tooling mitigations are registered without suppressing audit findings', () => {
   const { pnpm } = JSON.parse(
@@ -28,6 +32,7 @@ test('installed tooling mitigations are registered without suppressing audit fin
   assert.deepEqual(pnpm.auditConfig?.ignoreCves ?? [], []);
   for (const [name, version] of [
     ['braces', '3.0.3'],
+    ['deepmerge', '4.3.1'],
     ['http-cache-semantics', '4.1.1'],
     ['sprintf-js', '1.0.3'],
   ]) {
@@ -36,6 +41,7 @@ test('installed tooling mitigations are registered without suppressing audit fin
     assert(readFileSync(new URL(`../../${patch}`, import.meta.url)).length > 0);
     const parent = {
       braces: micromatch,
+      deepmerge: jestConfig,
       'http-cache-semantics': fetch,
       'sprintf-js': argparse,
     }[name];
@@ -46,6 +52,41 @@ test('installed tooling mitigations are registered without suppressing audit fin
       'Review the local patch and mitigation evidence when upgrading this dependency',
     );
   }
+});
+
+test('deepmerge rejects prototype keys while merging Jest configuration', () => {
+  const unsafe = JSON.parse(
+    '{"__proto__":{"polluted":true},"constructor":{"prototype":{"polluted":true}},"prototype":{"polluted":true},"testMatch":["**/*.test.ts"]}',
+  );
+  for (const [target, source] of [
+    [{}, unsafe],
+    [unsafe, {}],
+    [unsafe, unsafe],
+  ]) {
+    const merged = deepmerge(target, source);
+    assert.equal(Object.getPrototypeOf(merged), Object.prototype);
+    assert.equal(merged.polluted, undefined);
+    assert.equal(Object.hasOwn(merged, '__proto__'), false);
+    assert.equal(Object.hasOwn(merged, 'constructor'), false);
+    assert.equal(Object.hasOwn(merged, 'prototype'), false);
+    assert(merged.testMatch.every((pattern) => pattern === '**/*.test.ts'));
+    assert(merged.testMatch.length >= 1);
+  }
+  const nested = deepmerge({}, { globals: unsafe }).globals;
+  assert.equal(Object.getPrototypeOf(nested), Object.prototype);
+  assert.equal(Object.hasOwn(nested, '__proto__'), false);
+  assert.equal(Object.hasOwn(nested, 'constructor'), false);
+  assert.equal(Object.hasOwn(nested, 'prototype'), false);
+  assert.deepEqual(
+    deepmerge(
+      { globals: { __DEV__: true }, testMatch: ['a'] },
+      {
+        globals: { __TEST__: true },
+        testMatch: ['b'],
+      },
+    ),
+    { globals: { __DEV__: true, __TEST__: true }, testMatch: ['a', 'b'] },
+  );
 });
 
 test('the Zod 3 audit exception stays scoped to the local Shadcn converter', () => {

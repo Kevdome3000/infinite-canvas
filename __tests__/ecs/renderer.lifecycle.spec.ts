@@ -34,6 +34,10 @@ jest.mock('../../packages/ecs/src/components', () => ({
 }));
 jest.mock('../../packages/ecs/src/utils', () => ({}));
 jest.mock('../../packages/ecs/src/history', () => ({}));
+// SVG rasterization has its own behavioral suites; keep renderer lifecycle isolated.
+jest.mock('../../packages/ecs/src/utils/fillImageSvgReraster', () => ({
+  isLikelySvgResourceUrl: jest.fn(),
+}));
 jest.mock('../../packages/ecs/src/systems/Transform', () => ({}));
 jest.mock('../../packages/ecs/src/systems/SetupDevice', () => ({
   SetupDevice: class {},

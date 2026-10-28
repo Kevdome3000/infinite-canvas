@@ -8,27 +8,17 @@ export const ko = defineConfig({
   keywords: ['무한 캔버스', '캔버스', 'webgl', 'webgpu', 'ecs'],
   themeConfig: {
     nav: [
-      { text: 'App', link: 'https://app.infinitecanvas.cc/' },
+      { text: '앱', link: 'https://app.infinitecanvas.cc/' },
       {
         text: '가이드',
         link: '/ko/guide/lesson-001',
         activeMatch: '/ko/guide/',
       },
-      {
-        text: '예제',
-        link: '/ko/example/solar-system',
-        activeMatch: '/ko/example/',
-      },
-      {
-        text: '레퍼런스',
-        link: '/ko/reference/canvas',
-        activeMatch: '/ko/reference/',
-      },
-      {
-        text: '실험실',
-        link: '/ko/experiment/particles',
-        activeMatch: '/ko/experiment/',
-      },
+      // Example, reference, and experiment pages are not translated.
+      // These links open the English locale so the sidebar never 404s.
+      { text: '예제 (EN)', link: '/example/solar-system' },
+      { text: '레퍼런스 (EN)', link: '/reference/canvas' },
+      { text: '실험 (EN)', link: '/experiment/particles' },
     ],
 
     sidebar: {
@@ -51,15 +41,30 @@ export const ko = defineConfig({
                 text: '강의 001 - 캔버스 초기화',
                 link: 'lesson-001',
               },
-              { text: '강의 002 - 원 그리기', link: 'lesson-002' },
+              {
+                text: '강의 002 - 원 그리기',
+                link: 'lesson-002',
+              },
               {
                 text: '강의 003 - 씬 그래프와 변환',
                 link: 'lesson-003',
               },
-              { text: '강의 004 - 카메라', link: 'lesson-004' },
-              { text: '강의 005 - 그리드', link: 'lesson-005' },
-              { text: '강의 006 - 이벤트 시스템', link: 'lesson-006' },
-              { text: '강의 007 - Web UI', link: 'lesson-007' },
+              {
+                text: '강의 004 - 카메라',
+                link: 'lesson-004',
+              },
+              {
+                text: '강의 005 - 그리드',
+                link: 'lesson-005',
+              },
+              {
+                text: '강의 006 - 이벤트 시스템',
+                link: 'lesson-006',
+              },
+              {
+                text: '강의 007 - Web UI',
+                link: 'lesson-007',
+              },
               {
                 text: '강의 008 - 성능 최적화',
                 link: 'lesson-008',
@@ -69,14 +74,17 @@ export const ko = defineConfig({
                 link: 'lesson-009',
               },
               {
-                text: '강의 010 - 이미지 가져오기 및 내보내기',
+                text: '강의 010 - 이미지 가져오기와 내보내기',
                 link: 'lesson-010',
               },
               {
                 text: '강의 011 - 테스트와 서버 사이드 렌더링',
                 link: 'lesson-011',
               },
-              { text: '강의 012 - 폴리라인 그리기', link: 'lesson-012' },
+              {
+                text: '강의 012 - 폴리라인 그리기',
+                link: 'lesson-012',
+              },
               {
                 text: '강의 013 - 패스 그리기와 스케치 스타일',
                 link: 'lesson-013',
@@ -85,13 +93,22 @@ export const ko = defineConfig({
                 text: '강의 014 - 캔버스 모드와 보조 UI',
                 link: 'lesson-014',
               },
-              { text: '강의 015 - 텍스트 렌더링', link: 'lesson-015' },
+              {
+                text: '강의 015 - 텍스트 렌더링',
+                link: 'lesson-015',
+              },
               {
                 text: '강의 016 - 텍스트 고급 기능',
                 link: 'lesson-016',
               },
-              { text: '강의 017 - 그라디언트와 패턴', link: 'lesson-017' },
-              { text: '강의 018 - ECS로 리팩토링', link: 'lesson-018' },
+              {
+                text: '강의 017 - 그라디언트와 패턴',
+                link: 'lesson-017',
+              },
+              {
+                text: '강의 018 - ECS로 리팩터링',
+                link: 'lesson-018',
+              },
               {
                 text: '강의 019 - 히스토리',
                 link: 'lesson-019',
@@ -137,371 +154,47 @@ export const ko = defineConfig({
                 link: 'lesson-029',
               },
               {
-                text: '강의 030 - 후처리 및 렌더 그래프',
+                text: '강의 030 - 후처리와 렌더 그래프',
                 link: 'lesson-030',
               },
-            ],
-          },
-        ],
-      },
-      '/ko/reference/': {
-        base: '/ko/reference/',
-        items: [
-          {
-            text: '환경 어댑터',
-            link: 'environment',
-          },
-          {
-            text: '앱 생성',
-            link: 'create-app',
-          },
-          {
-            text: 'API',
-            items: [
               {
-                text: '캔버스',
-                link: 'canvas',
+                text: '강의 031 - 도형 간 바인딩',
+                link: 'lesson-031',
               },
               {
-                text: '카메라',
-                link: 'camera',
+                text: '강의 032 - 텍스트로 다이어그램 만들기',
+                link: 'lesson-032',
               },
               {
-                text: '펜',
-                link: 'pen',
+                text: '강의 033 - 레이아웃 엔진',
+                link: 'lesson-033',
               },
               {
-                text: '이미지 내보내기',
-                link: 'export-image',
+                text: '강의 034 - Group, Frame 과 클리핑',
+                link: 'lesson-034',
               },
               {
-                text: 'AI',
-                link: 'ai',
+                text: '강의 035 - 타일 기반 렌더링',
+                link: 'lesson-035',
+              },
+              {
+                text: '강의 036 - 애니메이션',
+                link: 'lesson-036',
+              },
+              {
+                text: '강의 037 - Radiance Cascades를 이용한 GI',
+                link: 'lesson-037',
+              },
+              {
+                text: '강의 038 - 디자인에서 코드로',
+                link: 'lesson-038',
+              },
+              {
+                text: '강의 039 - 3D 메시 렌더링',
+                link: 'lesson-039',
               },
             ],
           },
-          {
-            text: '필터',
-            items: [
-              {
-                text: '효과 및 LUT',
-                link: 'filter',
-              },
-            ],
-          },
-          {
-            text: '플러그인',
-            items: [
-              { text: '채팅', link: 'chat' },
-              { text: 'fal.ai', link: 'fal' },
-              { text: 'Segment Anything Model', link: 'sam' },
-              { text: 'LaMa', link: 'lama' },
-              { text: 'UpscalerJS', link: 'upscaler' },
-              { text: 'Laser pointer', link: 'laser-pointer' },
-              { text: 'Lasso', link: 'lasso' },
-            ],
-          },
-          {
-            text: '도형',
-            items: [
-              { text: '도형', link: 'shape' },
-              { text: '그룹', link: 'group' },
-              { text: '원', link: 'circle' },
-              { text: '타원', link: 'ellipse' },
-              { text: '사각형', link: 'rect' },
-              { text: '폴리라인', link: 'polyline' },
-              { text: '패스', link: 'path' },
-              { text: '텍스트', link: 'text' },
-              { text: '러프 원', link: 'rough-circle' },
-              { text: '러프 타원', link: 'rough-ellipse' },
-              { text: '러프 사각형', link: 'rough-rect' },
-              { text: '러프 폴리라인', link: 'rough-polyline' },
-              { text: '러프 패스', link: 'rough-path' },
-            ],
-          },
-        ],
-      },
-      '/ko/example/': {
-        base: '/ko/example/',
-        items: [
-          {
-            text: '예제',
-            items: [
-              { text: 'WebGPU', link: 'webgpu' },
-              { text: '태양계', link: 'solar-system' },
-              {
-                text: '컬링으로 드로우 콜 줄이기',
-                link: 'culling',
-              },
-              {
-                text: '인스턴싱으로 드로우 콜 줄이기',
-                link: 'instanced',
-              },
-              {
-                text: 'RBush로 피킹 성능 최적화',
-                link: 'picking',
-              },
-              {
-                text: '사각형 렌더링',
-                link: 'rect',
-              },
-              {
-                text: '그림자가 있는 둥근 사각형 렌더링',
-                link: 'rounded-rectangle-shadow',
-              },
-              {
-                text: 'WebWorker에서 캔버스 렌더링',
-                link: 'webworker',
-              },
-              {
-                text: '캔버스 내용을 이미지로 내보내기',
-                link: 'exporter',
-              },
-              {
-                text: 'SVG 가져오기',
-                link: 'import-svg',
-              },
-              {
-                text: '위키피디아 데이터맵',
-                link: 'wikipedia-datamap',
-              },
-              {
-                text: '러프 도형',
-                link: 'rough',
-              },
-              {
-                text: '와이어프레임',
-                link: 'wireframe',
-              },
-              {
-                text: '패스에 구멍 뚫기',
-                link: 'holes',
-              },
-              {
-                text: '채우기 규칙 (Fill rule)',
-                link: 'fill-rule',
-              },
-              {
-                text: 'Vector Network 큐브 (모서리 드래그)',
-                link: 'vector-network-cube',
-              },
-              {
-                text: '텍스트',
-                items: [
-                  {
-                    text: 'SDF를 이용한 텍스트 그리기',
-                    link: 'sdf-text',
-                  },
-                  {
-                    text: '비트맵 폰트를 이용한 텍스트 그리기',
-                    link: 'bitmap-font',
-                  },
-                  {
-                    text: 'MSDF를 이용한 텍스트 그리기',
-                    link: 'msdf-text',
-                  },
-                  {
-                    text: '이모지 그리기',
-                    link: 'emoji',
-                  },
-                  {
-                    text: '양방향 텍스트 그리기',
-                    link: 'bidi',
-                  },
-                  {
-                    text: 'HarfBuzz를 이용한 쉐이핑',
-                    link: 'harfbuzz',
-                  },
-                  {
-                    text: 'Opentype.js를 이용한 쉐이핑',
-                    link: 'opentype',
-                  },
-                  {
-                    text: '텍스트 베이스라인',
-                    link: 'text-baseline',
-                  },
-                  {
-                    text: '텍스트 그림자',
-                    link: 'text-dropshadow',
-                  },
-                  {
-                    text: '텍스트 테두리',
-                    link: 'text-stroke',
-                  },
-                  {
-                    text: '텍스트 장식',
-                    link: 'text-decoration',
-                  },
-                  {
-                    text: '텍스트 패스',
-                    link: 'text-path',
-                  },
-                  {
-                    text: '물리 기반 텍스트',
-                    link: 'physical-text',
-                  },
-                  {
-                    text: '웹 폰트 로드',
-                    link: 'web-font-loader',
-                  },
-                  {
-                    text: 'TeX 수식 렌더링',
-                    link: 'tex-math',
-                  },
-                  {
-                    text: '텍스트 에디터',
-                    link: 'text-editor',
-                  },
-                ],
-              },
-              {
-                text: 'Web Animations API',
-                link: 'web-animations-api',
-              },
-              {
-                text: '캔버스 모드 선택',
-                link: 'canvas-mode-select',
-              },
-              {
-                text: 'z-index 조절 (맨 앞으로 가져오기/맨 뒤로 보내기)',
-                link: 'zindex',
-              },
-              {
-                text: '이미지 드래그 앤 드롭',
-                link: 'dragndrop-image',
-              },
-              {
-                text: '선언적 그라디언트',
-                link: 'declarative-gradient',
-              },
-              {
-                text: '패턴',
-                link: 'pattern',
-              },
-              {
-                text: '이미지 처리',
-                link: 'image-processing',
-              },
-              {
-                text: '마인드맵과 레이아웃',
-                items: [
-                  {
-                    text: '마인드맵',
-                    link: 'mindmap',
-                  },
-                  {
-                    text: '트리',
-                    link: 'tree',
-                  },
-                  {
-                    text: 'FlexTree',
-                    link: 'flextree',
-                  },
-                  {
-                    text: '그래프 간 바인딩',
-                    link: 'binding',
-                  },
-                ],
-              },
-              {
-                text: '그리기 도구',
-                items: [
-                  {
-                    text: '사각형 도구',
-                    link: 'draw-rect',
-                  },
-                  {
-                    text: '화살표 도구',
-                    link: 'draw-arrow',
-                  },
-                  {
-                    text: '연필 도구',
-                    link: 'pencil',
-                  },
-                  {
-                    text: '연필 도구 (자유 곡선)',
-                    link: 'pencil-freehand',
-                  },
-                  {
-                    text: '붓 도구',
-                    link: 'brush-with-stamp',
-                  },
-                  {
-                    text: '레이저 포인터',
-                    link: 'laser-pointer',
-                  },
-                  {
-                    text: '로프 도구',
-                    link: 'lasso',
-                  },
-                ],
-              },
-              {
-                text: 'HTML 및 임베디드 콘텐츠',
-                items: [
-                  {
-                    text: 'HTML 콘텐츠',
-                    link: 'html',
-                  },
-                  {
-                    text: 'YouTube',
-                    link: 'iframe',
-                  },
-                ],
-              },
-              {
-                text: '협업',
-                items: [
-                  {
-                    text: 'Loro',
-                    link: 'loro',
-                  },
-                  {
-                    text: 'Yjs',
-                    link: 'yjs',
-                  },
-                  {
-                    text: 'Liveblocks',
-                    link: 'liveblocks',
-                  },
-                  {
-                    text: 'Perfect Cursors',
-                    link: 'perfect-cursors',
-                  },
-                  {
-                    text: '댓글 오버레이',
-                    link: 'comments-overlay',
-                  },
-                ],
-              },
-            ],
-          },
-        ],
-      },
-      '/ko/experiment/': {
-        base: '/ko/experiment/',
-        items: [
-          { text: 'WebGPU를 이용한 파티클 그리기', link: 'particles' },
-          { text: '프로그래밍 방식의 그라디언트', link: 'gradient' },
-          { text: '메쉬 그라디언트', link: 'mesh-gradient' },
-          { text: '보로노이', link: 'voronoi' },
-          { text: '프랙탈 브라운 운동 (FBM)', link: 'fractal-brownian-motion' },
-          { text: '도메인 워핑 (Domain Warping)', link: 'domain-warping' },
-          {
-            text: '피타고라스의 정리',
-            link: 'pythagorean-theorem',
-          },
-          { text: '텍스트 예술 효과', link: 'signature' },
-          { text: '캔버스와 채팅의 만남', link: 'when-canvas-meets-chat' },
-          {
-            text: 'WebWorker에서 SAM을 이용한 이미지 세그먼테이션',
-            link: 'sam-in-worker',
-          },
-          {
-            text: 'WebWorker에서 LaMa를 이용한 객체 제거',
-            link: 'lama-in-worker',
-          },
-          { text: '오디오 시각화', link: 'audio-visualizer' },
         ],
       },
     },
@@ -511,5 +204,71 @@ export const ko = defineConfig({
         'https://github.com/xiaoiver/infinite-canvas-tutorial/tree/master/packages/site/docs/:path',
       text: 'GitHub에서 이 페이지 수정하기',
     },
+
+    docFooter: {
+      prev: '이전 페이지',
+      next: '다음 페이지',
+    },
+
+    outline: {
+      label: '페이지 탐색',
+    },
+
+    lastUpdated: {
+      text: '마지막 업데이트',
+      formatOptions: {
+        dateStyle: 'short',
+        timeStyle: 'medium',
+      },
+    },
+
+    langMenuLabel: '언어',
+    returnToTopLabel: '맨 위로',
+    sidebarMenuLabel: '메뉴',
+    darkModeSwitchLabel: '테마',
+    lightModeSwitchTitle: '라이트 모드로 전환',
+    darkModeSwitchTitle: '다크 모드로 전환',
   },
 });
+
+export const search = {
+  placeholder: '문서 검색',
+  translations: {
+    button: {
+      buttonText: '문서 검색',
+      buttonAriaLabel: '문서 검색',
+    },
+    modal: {
+      searchBox: {
+        resetButtonTitle: '검색어 지우기',
+        resetButtonAriaLabel: '검색어 지우기',
+        cancelButtonText: '취소',
+        cancelButtonAriaLabel: '취소',
+      },
+      startScreen: {
+        recentSearchesTitle: '최근 검색',
+        noRecentSearchesText: '최근 검색 없음',
+        saveRecentSearchButtonTitle: '최근 검색에 저장',
+        removeRecentSearchButtonTitle: '최근 검색에서 제거',
+        favoriteSearchesTitle: '즐겨찾기',
+        removeFavoriteSearchButtonTitle: '즐겨찾기에서 제거',
+      },
+      errorScreen: {
+        titleText: '결과를 가져올 수 없습니다',
+        helpText: '네트워크 연결을 확인해 주세요',
+      },
+      footer: {
+        selectText: '선택',
+        navigateText: '이동',
+        closeText: '닫기',
+        searchByText: '검색 제공',
+      },
+      noResultsScreen: {
+        noResultsText: '관련 결과 없음',
+        suggestedQueryText: '이런 검색을 시도해 보세요',
+        reportMissingResultsText: '이 검색에는 결과가 있어야 하나요?',
+        reportMissingResultsLinkText: '피드백 보내기',
+      },
+    },
+  },
+};

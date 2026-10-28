@@ -3,6 +3,7 @@ import {
   Pen,
   GPUResource,
   svgElementsToExtrudedNodes,
+  svgElementsToSerializedNodes,
   type API,
   type SerializedNode,
 } from '@infinite-canvas-tutorial/ecs';
@@ -104,6 +105,19 @@ const groupedClippingSample = [
   '</g></svg>',
 ].join('');
 
+const strokeSample = [
+  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 310">',
+  '<g fill="none" stroke="#2563eb" stroke-width="16">',
+  '<path id="round-line" d="M40 70 L130 70 L130 145" stroke-linecap="round" stroke-linejoin="round"/>',
+  '<path id="square-line" d="M185 70 L275 70 L275 145" stroke-linecap="square" stroke-linejoin="bevel"/>',
+  '</g>',
+  '<path id="filled-outline" d="M335 60 H420 V145 H335 Z" fill="#f97316" stroke="#1e293b" stroke-width="12"/>',
+  '<g transform="scale(2 0.5)"><path id="non-scaling-3d" d="M45 350 H195" fill="none" stroke="#be185d" stroke-width="10" vector-effect="non-scaling-stroke"/></g>',
+  '<path id="dashed-3d" d="M45 230 H430" fill="none" stroke="#64748b" stroke-width="12" stroke-dasharray="18 12" stroke-dashoffset="6" stroke-linecap="round"/>',
+  '<path id="dotted-3d" d="M45 275 H430" fill="none" stroke="#0f766e" stroke-width="12" stroke-dasharray="0 26" stroke-linecap="round"/>',
+  '</svg>',
+].join('');
+
 const wrapper = ref<HTMLElement | null>(null);
 const depth = ref(35);
 const bevelSize = ref(2);
@@ -131,7 +145,9 @@ async function render() {
   if (!api) return;
   try {
     const svg = parseSVG();
-    const imported = svgElementsToExtrudedNodes(svg, depth.value);
+    const imported = show3D.value
+      ? svgElementsToExtrudedNodes(svg, depth.value)
+      : svgElementsToSerializedNodes(Array.from(svg.children) as SVGElement[]);
     const nodes: SerializedNode[] = imported.map((node) => {
       if (!show3D.value) {
         const { extrude3d: _extrude3d, ...flat } = node as SerializedNode & {
@@ -143,7 +159,10 @@ async function render() {
         ? {
             ...node,
             extrude3d: {
-              depth: depth.value,
+              depth: typeof node.extrude3d === 'object'
+                ? node.extrude3d.depth ?? depth.value
+                : depth.value,
+              ...(typeof node.extrude3d === 'object' ? { z: node.extrude3d.z } : {}),
               bevelSize: bevelSize.value,
               bevelSegments: bevelSegments.value,
               rotation: [0.4, -0.35, 0],
@@ -161,7 +180,7 @@ async function render() {
         (node.type === 'path' || node.type === 'rect') && node.extrude3d,
     ).length;
     status.value = show3D.value
-      ? `${count} closed shapes extruded; unsupported shapes stay in 2D.`
+      ? `${count} filled regions and stroke outlines extruded; unsupported shapes stay in 2D.`
       : 'All imported shapes are in 2D.';
   } catch (error) {
     status.value = error instanceof Error ? error.message : 'SVG import failed';
@@ -244,6 +263,12 @@ function loadGroupedClippingSample() {
   void render();
 }
 
+function loadStrokeSample() {
+  svgSource = strokeSample;
+  show3D.value = true;
+  void render();
+}
+
 onMounted(async () => {
   const canvas = wrapper.value;
   if (!canvas) return;
@@ -281,7 +306,7 @@ onUnmounted(() => {
     <div class="svg-extrusion-controls">
       <label>
         <input v-model="show3D" type="checkbox" @change="render" />
-        Extrude filled shapes
+        Extrude supported shapes
       </label>
       <label>
         Depth {{ depth }}
@@ -350,6 +375,9 @@ onUnmounted(() => {
       </button>
       <button type="button" @click="loadGroupedClippingSample">
         Group bounds + clip use sample
+      </button>
+      <button type="button" @click="loadStrokeSample">
+        Stroke caps + joins sample
       </button>
       <button type="button" :disabled="!show3D" @click="downloadGlb">
         Download GLB

@@ -110,3 +110,34 @@ it('infers translucent extrusion sides while retaining opaque caps and saved opt
   await settle();
   expect(material(reloaded, node.id).alphaMode).toBe('blend');
 });
+
+
+it('syncs extrusion PBR edits alongside inferred alpha and restores them through history', async () => {
+  const node: SerializedNode = {
+    ...extrusion(),
+    extrude3d: { depth: 20, metallic: 0.2, roughness: 0.8 },
+  };
+  await world.reset(api, [node]);
+  await settle();
+  api.clearHistory();
+  await world.edit(api, (editor) => editor.updateNode(editor.getNodeById(node.id), {
+    extrude3d: { depth: 20, metallic: 0.9, roughness: 0.3 },
+  }));
+  await settle();
+  expect(material(api, node.id).alphaMode).toBe('blend');
+  expect(material(api, node.id).metallic).toBeCloseTo(0.9);
+  expect(material(api, node.id).roughness).toBeCloseTo(0.3);
+  expect(exported().materials[0].pbrMetallicRoughness.metallicFactor).toBeCloseTo(0.9);
+  expect(exported().materials[0].pbrMetallicRoughness.roughnessFactor).toBeCloseTo(0.3);
+  const saved = structuredClone(api.getNodes());
+  await world.reset(reloaded, saved);
+  await settle();
+  expect(material(reloaded, node.id).alphaMode).toBe('blend');
+  expect(material(reloaded, node.id).metallic).toBeCloseTo(0.9);
+  expect(material(reloaded, node.id).roughness).toBeCloseTo(0.3);
+  await world.history(api, 'undo');
+  await settle();
+  expect(material(api, node.id).alphaMode).toBe('blend');
+  expect(material(api, node.id).metallic).toBeCloseTo(0.2);
+  expect(material(api, node.id).roughness).toBeCloseTo(0.8);
+});

@@ -84,6 +84,9 @@ export class SyncExtrude3D extends System {
     for (const entity of this.sources.current) {
       const extrude = entity.read(Extrude3D);
       const meshEntity = extrude.meshEntity;
+      // Creating a companion gizmo can invalidate Becsy's component view.
+      // Capture the material values before that work changes the world.
+      const { metallic, roughness } = extrude;
       if (!meshEntity || !isEntityAlive(meshEntity)) {
         continue;
       }
@@ -127,6 +130,8 @@ export class SyncExtrude3D extends System {
         baseColor,
         sideColor,
         alphaMode: inferMaterial3DAlphaMode(baseColor, sideColor),
+        metallic,
+        roughness,
         toneSteps: entity.read(Extrude3D).toneSteps,
         outlineWidth: entity.read(Extrude3D).outlineWidth,
         outlineColor: extrudeMaterialOutlineColorFromEntity(entity),
