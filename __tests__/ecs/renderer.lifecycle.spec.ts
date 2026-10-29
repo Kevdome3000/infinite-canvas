@@ -38,6 +38,9 @@ jest.mock('../../packages/ecs/src/history', () => ({}));
 jest.mock('../../packages/ecs/src/utils/fillImageSvgReraster', () => ({
   isLikelySvgResourceUrl: jest.fn(),
 }));
+jest.mock('../../packages/ecs/src/history/ElementsChange', () => ({
+  safeAddComponent: jest.fn(),
+}));
 jest.mock('../../packages/ecs/src/systems/Transform', () => ({}));
 jest.mock('../../packages/ecs/src/systems/SetupDevice', () => ({
   SetupDevice: class {},

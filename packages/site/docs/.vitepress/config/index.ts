@@ -8,12 +8,17 @@ import { RssPlugin } from 'vitepress-plugin-rss';
 import wasm from 'vite-plugin-wasm';
 import topLevelAwait from 'vite-plugin-top-level-await';
 import { adsenseClient, shared } from './shared';
+import { rssFeedSizeGuardPlugin, rssPluginOptions } from './rss-feed.mjs';
 import { en } from './en';
 import { zh } from './zh';
 import { ko } from './ko';
 import { ja } from './ja';
+import { zhHant } from './zh-Hant';
+import { es } from './es';
+import { ptBR } from './pt-BR';
 import { resolve } from 'path';
 import { writeAdsTxt } from '../adsense-ads-txt';
+import { buildWorkflowExample, workflowExample } from './workflow-example';
 
 export default defineConfig({
   markdown: {
@@ -28,8 +33,9 @@ export default defineConfig({
   },
   cleanUrls: true,
   extends: config,
-  buildEnd(siteConfig) {
+  async buildEnd(siteConfig) {
     writeAdsTxt(siteConfig.outDir);
+    await buildWorkflowExample(siteConfig.outDir);
   },
   ...shared,
   locales: {
@@ -38,8 +44,11 @@ export default defineConfig({
       ...en,
     },
     zh: { label: '简体中文', ...zh },
+    'zh-Hant': { label: '繁體中文', ...zhHant },
     ko: { label: '한국어', ...ko },
     ja: { label: '日本語', ...ja },
+    es: { label: 'Español', ...es },
+    'pt-BR': { label: 'Português (Brasil)', ...ptBR },
   },
   vue: {
     template: {
@@ -84,21 +93,14 @@ export default defineConfig({
       ],
     },
     plugins: [
+      workflowExample(),
       VueMacros({
         plugins: {
           vueJsx: vueJsx(),
         },
       }),
-      RssPlugin({
-        title: 'An infinite canvas tutorial',
-        baseUrl: 'https://infinitecanvas.cc',
-        copyright: 'Copyright (c) 2024-present xiaoiver',
-        author: {
-          name: 'xiaoiver',
-          email: 'pyqiverson@gmail.com',
-          link: 'https://github.com/xiaoiver',
-        },
-      }),
+      RssPlugin(rssPluginOptions),
+      rssFeedSizeGuardPlugin(),
       wasm(),
       topLevelAwait(),
     ],
