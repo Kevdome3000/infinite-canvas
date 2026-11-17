@@ -10,7 +10,8 @@ jobs:
   component-testing-webcomponents:
     name: Component Testing WebComponents
     timeout-minutes: 60
-    runs-on: ubuntu-latest
+    # Keep the browser test OS stable rather than inheriting ubuntu-latest upgrades.
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v3
       - uses: pnpm/action-setup@v4
