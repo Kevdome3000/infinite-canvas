@@ -20,6 +20,7 @@ import {
   ComputedPoints,
   ComputedRough,
   ComputedTextMetrics,
+  ComputedLOD,
   AnimationExportOutput,
   Culled,
   DropShadow,
@@ -233,6 +234,16 @@ export class MeshPipeline extends System {
         ).trackWrites,
   );
 
+  private batchingFlags = this.query(
+    (q) => q.addedOrChanged.with(Renderable).trackWrites,
+  );
+  private batchTransforms = this.query(
+    (q) => q.addedOrChanged.with(GlobalTransform).trackWrites,
+  );
+  private batchOrders = this.query(
+    (q) => q.addedOrChanged.with(GlobalRenderOrder).trackWrites,
+  );
+
   private lines = this.query((q) => q.added.and.removed.with(Line));
   private polylines = this.query((q) => q.added.and.removed.with(Polyline));
   private paths = this.query((q) => q.added.and.removed.with(Path));
@@ -242,6 +253,22 @@ export class MeshPipeline extends System {
 
   private toBeDeleted = this.query(
     (q) => q.addedOrChanged.with(ToBeDeleted).trackWrites,
+  );
+
+  private screenRedraw = new WeakSet<Entity>();
+
+  private renderableCameras = new WeakMap<Entity, Entity>();
+
+  private textMetrics = this.query(
+    (q) => q.addedOrChanged.with(ComputedTextMetrics).trackWrites,
+  );
+
+  private lodHierarchy = this.query(
+    (q) => q.changed.with(Children).trackWrites,
+  );
+
+  private lods = this.query(
+    (q) => q.addedChangedOrRemoved.with(ComputedLOD).trackWrites,
   );
 
   private culleds = this.query(
@@ -369,14 +396,25 @@ export class MeshPipeline extends System {
     if (previous === bucket) return;
     this.svgFillRasterZoomBuckets.set(camera, bucket);
     // The shared SVG bitmap cache retains its larger raster when zoom falls.
-    if (previous === undefined || bucket < previous || !camera.has(Parent)) return;
+    if (previous === undefined || bucket < previous || !camera.has(Parent))
+      return;
     const visit = (entity: Entity) => {
-      if (entity.has(Renderable) && entity.has(FillLayers) &&
-          (entity.has(Rect) || entity.has(Circle) || entity.has(Ellipse) ||
-            entity.has(Path) || entity.has(Polyline) || entity.has(VectorNetwork)) &&
-          getEnabledFillLayers(entity).some((fill) =>
+      if (
+        entity.has(Renderable) &&
+        entity.has(FillLayers) &&
+        (entity.has(Rect) ||
+          entity.has(Circle) ||
+          entity.has(Ellipse) ||
+          entity.has(Path) ||
+          entity.has(Polyline) ||
+          entity.has(VectorNetwork)) &&
+        getEnabledFillLayers(entity).some(
+          (fill) =>
             (fill.type === 'image' || fill.type === 'pattern') &&
-            typeof fill.value === 'string' && isLikelySvgResourceUrl(fill.value)))
+            typeof fill.value === 'string' &&
+            isLikelySvgResourceUrl(fill.value),
+        )
+      )
         safeAddComponent(entity, MaterialDirty);
       if (entity.has(Parent))
         for (const child of entity.read(Parent).children) visit(child);
@@ -418,6 +456,7 @@ export class MeshPipeline extends System {
             ComputedRough,
             Text,
             ComputedTextMetrics,
+            ComputedLOD,
             FillLayers,
             FillTexture,
             FractionalIndex,
@@ -500,9 +539,12 @@ export class MeshPipeline extends System {
     if (!canvas.has(RasterScreenshotRequest)) {
       return;
     }
-    const req = canvas.read(RasterScreenshotRequest);
+    // Component views are transient; rendering and async preload may rebind them.
+    const { nodes, rainWarmupSec, rainCaptureTimeSec } = canvas.read(
+      RasterScreenshotRequest,
+    );
     const { api } = canvas.read(Canvas);
-    const rainUrls = this.collectRainUrlsForRasterExport(api, req.nodes);
+    const rainUrls = this.collectRainUrlsForRasterExport(api, nodes);
     if (rainUrls.length > 0) {
       try {
         await Promise.all([
@@ -513,12 +555,12 @@ export class MeshPipeline extends System {
         console.warn('rain: preload drop textures before export failed', err);
       }
     }
-    const warmupSec = Math.max(0, req.rainWarmupSec ?? 0);
-    const captureRaw = req.rainCaptureTimeSec ?? 0;
+    const warmupSec = Math.max(0, rainWarmupSec ?? 0);
+    const captureRaw = rainCaptureTimeSec ?? 0;
     const captureTimeSec =
       captureRaw > 0 && Number.isFinite(captureRaw) ? captureRaw : warmupSec;
     const useRainWarmup =
-      warmupSec > 0 && this.rasterExportHasRainFx(api, req.nodes);
+      warmupSec > 0 && this.rasterExportHasRainFx(api, nodes);
     if (useRainWarmup) {
       setRainFxExportContext({
         kind: 'png',
@@ -535,14 +577,22 @@ export class MeshPipeline extends System {
             }
           : {}),
       });
+    } catch (error) {
+      console.error('Raster screenshot export failed', error);
+      this.clearFailedScreenshotRequest(canvas);
     } finally {
       if (useRainWarmup) {
         clearRainFxExportContext();
       }
-      if (req.nodes.length > 0) {
+      if (nodes.length > 0) {
         this.releasePartialRasterRenderer(canvas);
       }
     }
+  }
+
+  @co private *clearFailedScreenshotRequest(canvas: Entity): Generator {
+    safeRemoveComponent(canvas, RasterScreenshotRequest);
+    yield;
   }
 
   @co private *setScreenshotTrigger(
@@ -751,7 +801,17 @@ export class MeshPipeline extends System {
     }
 
     const { swapChain, device, renderCache, renderGraph } = gpuResource;
-    const { uniformBuffer, gridRenderer, batchManager, filters } = renderer;
+    const { uniformBuffer, gridRenderer, filters } = renderer;
+    const batchManager = raster
+      ? new BatchManager(
+          device,
+          swapChain,
+          renderCache,
+          gpuResource.texturePool,
+          api,
+          'export',
+        )
+      : renderer.batchManager;
 
     try {
       if (raster) batchManager.hideUIs();
@@ -811,7 +871,14 @@ export class MeshPipeline extends System {
         ? 'Main Render Pass (3D + 2D)'
         : 'Main Render Pass';
 
-      if (shouldRenderPartially) {
+      if (raster && !shouldRenderPartially) {
+        for (const entity of collectDescendantsWithPartialExportGeometry(
+          camera,
+        )) {
+          if (!entity.has(Culled) && !entity.has(ToBeDeleted))
+            batchManager.add(entity);
+        }
+      } else if (shouldRenderPartially) {
         const { api } = canvas.read(Canvas);
         const clipParents = new Set<Entity>();
         nodes.forEach((node: SerializedNode) => {
@@ -842,8 +909,9 @@ export class MeshPipeline extends System {
             // same frame. Never resurrect a hidden or retiring shape.
             const retiring = entity.has(ToBeDeleted);
             const culled = entity.has(Culled);
-            if (type === 'remove' || culled || retiring) {
-              batchManager.remove(entity, retiring || !culled);
+            const moved = getSceneRoot(entity) !== camera;
+            if (type === 'remove' || culled || retiring || moved) {
+              batchManager.remove(entity, retiring || moved || !culled);
             } else {
               batchManager.add(entity);
             }
@@ -851,6 +919,8 @@ export class MeshPipeline extends System {
           this.pendingRenderables.delete(camera);
         }
       }
+
+      if (raster) batchManager.hideUIs();
 
       const shadowFrames = composite3D
         ? mesh3d!.scheduleShadowPass(builder, canvas)
@@ -923,7 +993,12 @@ export class MeshPipeline extends System {
         this.setScreenshotTrigger(canvas, dataURL, download);
       }
     } finally {
-      if (raster) batchManager.showUIs();
+      if (raster) {
+        batchManager.destroy();
+        this.screenRedraw.add(camera);
+      } else {
+        this.screenRedraw.delete(camera);
+      }
       // Animation exporters retain this renderer for subsequent frames and release in their own finally.
       if (shouldRenderPartially && request)
         this.releasePartialRasterRenderer(canvas);
@@ -1085,8 +1160,33 @@ export class MeshPipeline extends System {
       ...this.paths.added,
       ...this.vectorNetworks.added,
       ...this.culleds.removed,
+      ...this.lods.addedChangedOrRemoved,
+      ...this.textMetrics.addedOrChanged,
+      ...this.lodHierarchy.changed.filter((e) => e.has(ComputedLOD)),
+      ...this.batchingFlags.addedOrChanged,
+      ...this.batchTransforms.addedOrChanged.filter((e) =>
+        entityMatchesRenderableQuery(e),
+      ),
+      ...this.batchOrders.addedOrChanged.filter((e) =>
+        entityMatchesRenderableQuery(e),
+      ),
     ]).forEach((entity) => {
       const camera = getSceneRoot(entity);
+
+      const oldCamera = this.renderableCameras.get(entity);
+      if (oldCamera && oldCamera !== camera) {
+        if (!this.pendingRenderables.has(oldCamera))
+          this.pendingRenderables.set(oldCamera, []);
+        this.pendingRenderables
+          .get(oldCamera)!
+          .push({ type: 'remove', entity });
+      }
+      this.renderableCameras.set(entity, camera);
+
+      if (this.textMetrics.addedOrChanged.includes(entity)) {
+        safeAddComponent(entity, GeometryDirty);
+        safeAddComponent(entity, MaterialDirty);
+      }
 
       // TODO: batchable
 
@@ -1148,6 +1248,36 @@ export class MeshPipeline extends System {
         entity,
       });
     });
+
+    // Style changes can keep the same renderer constructor but change batch eligibility.
+    const reassigned = new Set<Entity>([
+      ...this.fillLayers.addedChangedOrRemoved,
+      ...this.strokeLayers.addedChangedOrRemoved,
+      ...this.fillTextures.addedChangedOrRemoved,
+      ...this.strokes.addedChangedOrRemoved,
+      ...this.opacities.addedChangedOrRemoved,
+      ...this.sizeAttenuations.addedChangedOrRemoved,
+      ...this.strokeAttenuations.addedChangedOrRemoved,
+      ...this.dropShadows.addedChangedOrRemoved,
+      ...this.innerShadows.addedChangedOrRemoved,
+      ...this.wireframes.addedChangedOrRemoved,
+      ...this.roughs.addedChangedOrRemoved,
+      ...this.filters.addedChangedOrRemoved,
+      ...this.nodeLayerBlendModes.addedChangedOrRemoved,
+      ...this.clipModes.addedChangedOrRemoved,
+    ]);
+    const queue = (entity: Entity) => {
+      if (entityMatchesRenderableQuery(entity)) {
+        const camera = getSceneRoot(entity);
+        if (!this.pendingRenderables.has(camera))
+          this.pendingRenderables.set(camera, []);
+        this.pendingRenderables.get(camera)!.push({ type: 'add', entity });
+      }
+      // Effect/clip ancestors can change eligibility of otherwise untouched children.
+      if (entity.has(Parent))
+        for (const child of entity.read(Parent).children) queue(child);
+    };
+    reassigned.forEach(queue);
 
     // Handle some special cases.
     [
@@ -1293,6 +1423,7 @@ export class MeshPipeline extends System {
       cameras.forEach((camera) => {
         if (this.cameras.addedOrChanged.includes(camera))
           this.updateSvgFillRasterZoom(camera);
+        if (this.screenRedraw.has(camera)) toRender = true;
         if (!toRender && this.pendingRenderables.get(camera)) {
           const pendingRenderables = this.pendingRenderables.get(camera);
           toRender = !!pendingRenderables.length;
