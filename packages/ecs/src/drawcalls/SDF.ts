@@ -17,17 +17,14 @@ import {
   Bindings,
   type RenderPipeline,
 } from '@infinite-canvas-tutorial/device-api';
-import { mat3 } from 'gl-matrix';
 import { Entity } from '@lastolivegames/becsy';
 import { Drawcall, ZINDEX_FACTOR, STENCIL_CLIP_REF } from './Drawcall';
 import { vert, frag, Location } from '../shaders/sdf';
 import {
-  paddingMat3,
   parseColor,
   parseGradient,
   isMeshGradientGradient,
   parseEffect,
-  getNodeLayerBlendMode,
   isNonNormalNodeLayerBlend,
 } from '../utils';
 import {
@@ -89,7 +86,6 @@ import {
   GlobalRenderOrder,
   GlobalTransform,
   InnerShadow,
-  Mat3,
   MaterialDirty,
   Rect,
   SizeAttenuation,
@@ -541,8 +537,8 @@ export class SDF extends Drawcall {
       return false;
     }
 
-    const bm0 = getNodeLayerBlendMode(this.api, this.shapes[0]);
-    const bm1 = getNodeLayerBlendMode(this.api, shape);
+    const bm0 = node0?.blendMode;
+    const bm1 = node1?.blendMode;
     if ((bm0 ?? 'normal') !== (bm1 ?? 'normal')) {
       return false;
     }
@@ -1169,17 +1165,6 @@ export class SDF extends Drawcall {
       const multi = getMultiFillLayers(shape);
       if (multi && !this.#usePrecomposedMultiFill) {
         const { matrix } = shape.read(GlobalTransform);
-        const u_ModelMatrix = [
-          matrix.m00,
-          matrix.m01,
-          matrix.m02,
-          matrix.m10,
-          matrix.m11,
-          matrix.m12,
-          matrix.m20,
-          matrix.m21,
-          matrix.m22,
-        ] as mat3;
         const needLayerTex = fillLayersNeedFillImage(multi);
 
         if (this.useWireframe && this.geometryDirty) {
@@ -1196,14 +1181,10 @@ export class SDF extends Drawcall {
             kind: 'fill-layer',
             layerIndex: i,
           });
-          this.#uniformBuffer.setSubData(
-            0,
-            new Uint8Array(
-              new Float32Array([
-                ...paddingMat3(Mat3.fromGLMat3(u_ModelMatrix)),
-                ...buffer,
-              ]).buffer,
-            ),
+          const u_ModelMatrix = this.objectUniforms.update(
+            this.#uniformBuffer,
+            matrix,
+            buffer,
           );
           const uniformLegacyObject: Record<string, unknown> = {
             u_ModelMatrix,
@@ -1286,14 +1267,10 @@ export class SDF extends Drawcall {
             kind: 'stroke-pass',
             skipFillImageSample: needLayerTex,
           });
-          this.#uniformBuffer.setSubData(
-            0,
-            new Uint8Array(
-              new Float32Array([
-                ...paddingMat3(Mat3.fromGLMat3(u_ModelMatrix)),
-                ...buffer2,
-              ]).buffer,
-            ),
+          const u_ModelMatrix = this.objectUniforms.update(
+            this.#uniformBuffer,
+            matrix,
+            buffer2,
           );
           const uniformLegacyObject2: Record<string, unknown> = {
             u_ModelMatrix,
@@ -1353,26 +1330,11 @@ export class SDF extends Drawcall {
 
       const { matrix } = this.shapes[0].read(GlobalTransform);
       const [buffer, legacyObject] = this.generateBuffer(this.shapes[0], 0, 1);
-      const u_ModelMatrix = [
-        matrix.m00,
-        matrix.m01,
-        matrix.m02,
-        matrix.m10,
-        matrix.m11,
-        matrix.m12,
-        matrix.m20,
-        matrix.m21,
-        matrix.m22,
-      ] as mat3;
 
-      this.#uniformBuffer.setSubData(
-        0,
-        new Uint8Array(
-          new Float32Array([
-            ...paddingMat3(Mat3.fromGLMat3(u_ModelMatrix)),
-            ...buffer,
-          ]).buffer,
-        ),
+      const u_ModelMatrix = this.objectUniforms.update(
+        this.#uniformBuffer,
+        matrix,
+        buffer,
       );
       const uniformLegacyObject: Record<string, unknown> = {
         u_ModelMatrix,
@@ -1506,7 +1468,7 @@ export class SDF extends Drawcall {
       g: fg,
       b: fb,
       opacity: fo,
-    } = parseColor(fill != null && fill !== '' ? fill : 'transparent');
+    } = this.getUniformColor(fill != null && fill !== '' ? fill : 'transparent');
 
     const opacity = this.getOpacity(shape);
 
@@ -1533,7 +1495,7 @@ export class SDF extends Drawcall {
       g: sg,
       b: sb,
       opacity: so,
-    } = parseColor(strokeColor ?? 'transparent');
+    } = this.getUniformColor(strokeColor ?? 'transparent');
     const { strokeColorAlphaMul, strokeUniformOpacityMul } =
       strokePaintAlphaMultipliers(shape);
     const {
@@ -1541,7 +1503,7 @@ export class SDF extends Drawcall {
       g: isg,
       b: isb,
       opacity: iso,
-    } = parseColor(innerShadowColor);
+    } = this.getUniformColor(innerShadowColor);
 
     if (this.#blurRaster) {
       const b = this.#blurRaster.bounds;

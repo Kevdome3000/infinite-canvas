@@ -364,3 +364,32 @@ without persisting those geometry fields to the document. The tests check safe
 cancellation, preserved layout, ignored late release, and a fresh drag followed
 by Escape back to the computed origin. Both browsers run these cases; ECS tests
 also cover ancestor changes, per-axis rollback and independent canvases.
+
+The Path instancing documentation fixture mounts the actual bilingual Vue demo
+with both Core and ECS canvases. It starts the shared example world with an
+explicit capacity of 16,384 entities; the production example and App defaults
+are unchanged. Counters wrap only each canvas's own WebGL context and device
+frame methods, and restore them on unmount. Regression checks compare real
+submissions, original document data, raster exports and teardown. The external
+Core device retains its startup fallback resources; lifecycle checks snapshot
+that baseline and require every later native allocation to be released. The ECS
+world also retains its shared export device until the world exits; each ECS
+canvas releases all of its own native resources.
+
+## Supported fork scope
+
+The Tolaria fork intentionally retires `packages/core` and old lesson packages
+(`fork-removed-core-lessons` in the consumer's sync manifest). Source remains
+available upstream; this fork does not certify those targets. The newly imported
+`core-path-instances` and `path-instancing-demo` browser cases and HTML entrypoints
+are retained as reference material and excluded explicitly from the supported
+Chromium/WebKit fixture selection. The latter demo's shared Vue component also
+imports Core. The corresponding Core unit/benchmark and full documentation-site
+build are not covered by ECS/browser acceptance; they are unverified, not passing.
+All applicable ECS rendering, instancing, LOD and interaction cases remain selected.
+
+The coalesced marquee release path retains the fork's cancellation, Escape,
+cropping and 3D-gizmo admission guards. It consumes the captured pointer-down
+position once before gesture finalization; ordinary drag frames and final-release
+selection use the same geometry calculation. Run the selection interaction,
+marquee-release, release-frame and detached-marquee suites together after changes.

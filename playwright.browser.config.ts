@@ -10,6 +10,9 @@ export default defineConfig({
     'isometric-touch-webkit.spec.ts',
     '**/text-path.spec.ts',
     '**/dash-rendering.spec.ts',
+    // Reference-only comparisons require the intentionally retired Core package.
+    '**/core-path-instances.spec.ts',
+    '**/path-instancing-demo.spec.ts',
   ],
   outputDir: '.test-results/browser',
   timeout: 30000,

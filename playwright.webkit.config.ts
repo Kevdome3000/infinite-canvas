@@ -17,12 +17,18 @@ export default defineConfig({
     'isometric-touch-webkit.spec.ts',
     'ecs-dash-rendering.spec.ts',
     'path-rendering.spec.ts',
+    'path-instances.spec.ts',
+    'core-path-instances.spec.ts',
+    'path-instancing-demo.spec.ts',
     'ecs-path-fill.spec.ts',
     'ecs-filter-chain.spec.ts',
     'filter-alpha.spec.ts',
     'filter-blur.spec.ts',
     'ecs-text.spec.ts',
     'text-lod-demo.spec.ts',
+    'text-proxy-instancing.spec.ts',
+    'polyline-lod.spec.ts',
+    'object-uniforms.spec.ts',
     'ecs-text-resize.spec.ts',
     'ecs-text-path.spec.ts',
     'ecs-blend-mode.spec.ts',
@@ -59,7 +65,13 @@ export default defineConfig({
       (file === 'lottie.spec.ts' ? group === 'lottie' : group === 'other'),
   ),
   // Equivalent ECS suites remain in testMatch above.
-  testIgnore: ['**/text-path.spec.ts', '**/dash-rendering.spec.ts'],
+  testIgnore: [
+    '**/text-path.spec.ts',
+    '**/dash-rendering.spec.ts',
+    // Core comparisons remain reference-only; all supported ECS cases stay selected.
+    '**/core-path-instances.spec.ts',
+    '**/path-instancing-demo.spec.ts',
+  ],
   outputDir: '.test-results/webkit',
   timeout: 60000,
   use: {

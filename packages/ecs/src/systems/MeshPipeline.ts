@@ -75,6 +75,9 @@ import {
   Material3D,
   Transform3D,
   Selected3D,
+  Selected,
+  Highlighted,
+  Editable,
   Light3D,
 } from '../components';
 import {
@@ -206,6 +209,12 @@ export class MeshPipeline extends System {
   private setupDevice = this.attach(SetupDevice);
 
   private canvases = this.query((q) => q.current.with(Canvas).read);
+  private canvasSettings = this.query(
+    (q) => q.addedOrChanged.with(Canvas).trackWrites,
+  );
+  private polylineInteractions = [Selected, Highlighted, Editable].map((type) =>
+    this.query((q) => q.addedChangedOrRemoved.with(type).trackWrites),
+  );
 
   /** Canvas gained {@link GPUResource} this frame (async SetupDevice). */
   private gpuReadyCanvases = this.query(
@@ -246,7 +255,9 @@ export class MeshPipeline extends System {
 
   private lines = this.query((q) => q.added.and.removed.with(Line));
   private polylines = this.query((q) => q.added.and.removed.with(Polyline));
-  private paths = this.query((q) => q.added.and.removed.with(Path));
+  private paths = this.query(
+    (q) => q.addedOrChanged.and.removed.with(Path).trackWrites,
+  );
   private vectorNetworks = this.query((q) =>
     q.added.and.removed.with(VectorNetwork),
   );
@@ -814,6 +825,9 @@ export class MeshPipeline extends System {
       : renderer.batchManager;
 
     try {
+      batchManager.setPathInstancingEnabled(
+        !raster && canvas.read(Canvas).pathInstancing,
+      );
       if (raster) batchManager.hideUIs();
       const { width, height } = swapChain.getCanvas();
       if (width <= 0 || height <= 0) {
@@ -828,6 +842,9 @@ export class MeshPipeline extends System {
         swapChain,
         exportViewOverride,
       );
+      // Render precision is pass-local: both whole and partial raster exports stay full.
+      legacyObject.u_PolylineLOD = !raster && canvas.read(Canvas).polylineLOD;
+      legacyObject.u_PolylineLODDPR = canvas.read(Canvas).devicePixelRatio;
       renderer.uniformLegacyObject = legacyObject;
 
       uniformBuffer.setSubData(0, new Uint8Array(buffer.buffer));
@@ -1157,12 +1174,14 @@ export class MeshPipeline extends System {
       ...this.renderables.changed,
       ...this.polylines.added,
       ...this.lines.added,
-      ...this.paths.added,
+      ...this.paths.addedOrChanged,
       ...this.vectorNetworks.added,
       ...this.culleds.removed,
       ...this.lods.addedChangedOrRemoved,
       ...this.textMetrics.addedOrChanged,
-      ...this.lodHierarchy.changed.filter((e) => e.has(ComputedLOD)),
+      ...this.lodHierarchy.changed.filter(
+        (e) => e.has(ComputedLOD) || e.has(Path),
+      ),
       ...this.batchingFlags.addedOrChanged,
       ...this.batchTransforms.addedOrChanged.filter((e) =>
         entityMatchesRenderableQuery(e),
@@ -1182,6 +1201,10 @@ export class MeshPipeline extends System {
           .push({ type: 'remove', entity });
       }
       this.renderableCameras.set(entity, camera);
+
+      if (this.paths.addedOrChanged.includes(entity)) {
+        safeAddComponent(entity, GeometryDirty);
+      }
 
       if (this.textMetrics.addedOrChanged.includes(entity)) {
         safeAddComponent(entity, GeometryDirty);
@@ -1411,6 +1434,11 @@ export class MeshPipeline extends System {
         return;
       }
       let toRender =
+        this.canvasSettings.addedOrChanged.includes(canvas) ||
+        (canvas.read(Canvas).polylineLOD &&
+          this.polylineInteractions.some(
+            (q) => q.addedChangedOrRemoved.length > 0,
+          )) ||
         this.grids.addedChangedOrRemoved.includes(canvas) ||
         this.themes.addedChangedOrRemoved.includes(canvas) ||
         this.dirtyMaterials.added.length > 0 ||

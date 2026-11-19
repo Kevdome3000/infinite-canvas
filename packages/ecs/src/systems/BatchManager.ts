@@ -24,6 +24,7 @@ import {
   Mesh,
   SDFText,
   TextProxy,
+  PathInstances,
   StampBrush,
   // Custom as CustomDrawcall,
 } from '../drawcalls';
@@ -55,7 +56,7 @@ import { sortByFractionalIndex } from './Sort';
 import { safeRemoveComponent } from '../history';
 import { API } from '../API';
 import {
-  getNodeLayerBlendMode,
+  getRenderNodeLayerBlendMode,
   isNonNormalNodeLayerBlend,
 } from '../utils/nodeLayerBlend';
 import { NodeLayerBlendCompositor } from '../utils/nodeLayerBlendGpu';
@@ -135,6 +136,7 @@ export class BatchManager {
   #instancesCache = new Map<string, Drawcall[][]>();
   #ctorIds = new Map<typeof Drawcall, number>();
   #dirty = false;
+  #pathInstancing = false;
   #changed = new Set<Entity>();
   #ordered = false;
   #hideUIs = false;
@@ -148,7 +150,17 @@ export class BatchManager {
     private readonly intent: 'screen' | 'export' = 'screen',
   ) {}
 
+  setPathInstancingEnabled(enabled: boolean) {
+    enabled = enabled && this.intent === 'screen';
+    if (enabled !== this.#pathInstancing) {
+      this.#pathInstancing = enabled;
+      this.#dirty = true;
+    }
+  }
+
   private collectDrawcallCtors(shape: Entity) {
+    if (this.#pathInstancing && this.batchKey(shape, [PathInstances]) !== null)
+      return [PathInstances];
     return getDrawcallCtors(shape, this.intent).filter((Ctor) => {
       // Not every renderer needs a geometry-specific channel check.
       return (
@@ -216,7 +228,7 @@ export class BatchManager {
       !shape.read(Renderable).batchable ||
       ctors.length !== 1 ||
       shape.has(UI) ||
-      isNonNormalNodeLayerBlend(getNodeLayerBlendMode(this.api, shape))
+      isNonNormalNodeLayerBlend(getRenderNodeLayerBlendMode(shape))
     )
       return null;
     const Ctor = ctors[0];
@@ -259,8 +271,12 @@ export class BatchManager {
     if (this.#ordered) entries.sort(([a], [b]) => sortByFractionalIndex(a, b));
     const nextPools = new Map<string, Drawcall[][]>();
     const cursors = new Map<string, number>();
-    const plans: { key: string | null; calls: Drawcall[]; shapes: Entity[] }[] =
-      [];
+    const plans: {
+      key: string | null;
+      calls: Drawcall[];
+      shapes: Entity[];
+      instances: number;
+    }[] = [];
     for (const [shape, explicit] of entries) {
       const ctors = explicit ? [] : this.collectDrawcallCtors(shape);
       const key = explicit ? null : this.batchKey(shape, ctors);
@@ -271,14 +287,16 @@ export class BatchManager {
           this.#nonBatchableDrawcallsCache.delete(shape);
         }
       }
+      const instances = key === null ? 1 : ctors[0].instanceCount(shape);
       const previous = plans[plans.length - 1];
       if (
         key !== null &&
         previous?.key === key &&
-        previous.shapes.length <
+        previous.instances + instances <=
           (previous.calls[0].instanceCapacity ?? Infinity)
       ) {
         previous.shapes.push(shape);
+        previous.instances += instances;
         if (this.#changed.has(shape))
           previous.calls[0].dirtyInstances.add(shape);
         continue;
@@ -295,14 +313,17 @@ export class BatchManager {
       } else {
         calls = explicit ?? this.getOrCreateNonBatchableDrawcalls(shape, ctors);
       }
-      plans.push({ key, calls, shapes: [shape] });
+      plans.push({ key, calls, shapes: [shape], instances });
     }
     const retained = new Set([...nextPools.values()].flat());
     for (const [key, groups] of this.#instancesCache) {
       for (const group of groups) {
         if (retained.has(group)) continue;
         // One empty page per supported key is enough for culling/reentry reuse.
-        if (key && !nextPools.has(key)) {
+        if (
+          key && !nextPools.has(key) &&
+          (group[0].constructor as typeof Drawcall).retainEmptyPage
+        ) {
           group.forEach((d) => {
             d.shapes = [];
             d.dirtyInstances.clear();
@@ -576,7 +597,7 @@ export class BatchManager {
               renderPass,
               backdrop,
               src,
-              getNodeLayerBlendMode(this.api, shape),
+              getRenderNodeLayerBlendMode(shape),
               width,
               height,
               shape.has(Opacity) ? shape.read(Opacity).opacity : 1,

@@ -28,10 +28,12 @@ import {
   fillLayersShouldPrecompose,
   getEnabledFillLayers,
   uid,
-  getNodeLayerBlendMode,
+  getRenderNodeLayerBlendMode,
   isNonNormalNodeLayerBlend,
 } from '../utils';
 import { Location } from '../shaders/wireframe';
+import { ObjectUniforms } from '../utils/object-uniforms';
+import { parseColor } from '../utils/color';
 import { TexturePool } from '../resources';
 import {
   Opacity,
@@ -93,6 +95,13 @@ export abstract class Drawcall {
   /** null means this renderer has no verified multi-object drawing path. */
   static batchKey(_shape: Entity): string | null {
     return null;
+  }
+  /** Geometry-specific keys can be unbounded; such renderers retire empty pages. */
+  static retainEmptyPage = true;
+
+  /** Number of native instance rows used by one scene object. */
+  static instanceCount(_shape: Entity): number {
+    return 1;
   }
   get instanceCapacity() {
     return this.maxInstances;
@@ -184,6 +193,24 @@ export abstract class Drawcall {
    * Used by off-screen raster bakes so glyph size attenuation matches the main pass.
    */
   protected sceneZoomScale = 1;
+  protected readonly objectUniforms = new ObjectUniforms();
+  private readonly uniformColors = new Map<
+    string,
+    Readonly<{ r: number; g: number; b: number; opacity: number }>
+  >();
+
+  /** Color parsing is pure for a resolved paint string. Keep a bounded local cache. */
+  protected getUniformColor(value: string) {
+    let color = this.uniformColors.get(value);
+    if (!color) {
+      const { r, g, b, opacity } = parseColor(value);
+      color = { r, g, b, opacity };
+      this.uniformColors.set(value, color);
+      if (this.uniformColors.size > 16)
+        this.uniformColors.delete(this.uniformColors.keys().next().value);
+    }
+    return color;
+  }
 
   protected getPostChain(): DrawcallPostChain | null {
     if (!this.#postChain && getFilterBackend()) {
@@ -205,6 +232,8 @@ export abstract class Drawcall {
 
   destroy() {
     this.dirtyInstances.clear();
+    this.objectUniforms.clear();
+    this.uniformColors.clear();
     if (this.program) {
       this.indexBuffer?.destroy();
       this.vertexBuffers.forEach((buffer) => buffer.destroy());
@@ -318,7 +347,7 @@ export abstract class Drawcall {
       return false;
     }
     return isNonNormalNodeLayerBlend(
-      getNodeLayerBlendMode(this.api, this.shapes[0]),
+      getRenderNodeLayerBlendMode(this.shapes[0]),
     );
   }
 

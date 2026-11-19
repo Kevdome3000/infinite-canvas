@@ -466,3 +466,57 @@ it('removes input listeners when a canvas is destroyed during a drag', async () 
   expect(api.getAppState().layersSelected).toEqual(['a']);
   expect(node()).toMatchObject({ x: 30, y: 30 });
 });
+
+it.each(['mouse', 'touch', 'pen'] as const)(
+  'commits a %s marquee when the drag and release arrive before the next frame',
+  async (pointerType) => {
+    world.dispatch(api, 'pointerdown', 5, 5, { pointerType });
+    world.dispatch(api, 'pointermove', 100, 90, { pointerType });
+    world.dispatch(api, 'pointerup', 100, 90, { pointerType });
+    await world.frames();
+    expect(api.getAppState().layersSelected).toEqual(['a']);
+    expect(tf().selecteds).toHaveLength(1);
+    expect(api.getCanvas().read(Canvas).inputPoints).toHaveLength(0);
+  },
+);
+it('uses the release position when the last move and release share a frame', async () => {
+  await world.reset(api, [rect(), rect('b', { x: 130, width: 40 })]);
+  await world.pointer(api, 'pointerdown', 5, 5);
+  world.dispatch(api, 'pointermove', 100, 90);
+  world.dispatch(api, 'pointerup', 190, 100);
+  await world.frames();
+  expect([...api.getAppState().layersSelected].sort()).toEqual(['a', 'b']);
+});
+it.each(['pointerup', 'pointercancel'])(
+  'does not commit a sub-threshold/cancelled fast marquee on %s',
+  async (release) => {
+    const end = release === 'pointerup' ? 8 : 100;
+    world.dispatch(api, 'pointerdown', 5, 5);
+    world.dispatch(api, 'pointermove', end, end);
+    world.dispatch(api, release, end, end);
+    await world.frames();
+    expect(api.getAppState().layersSelected).toEqual([]);
+    expect(api.getCanvas().read(Canvas).inputPoints).toHaveLength(0);
+  },
+);
+
+it('does not revive a fast marquee when Escape and release arrive in the same frame', async () => {
+  world.dispatch(api, 'pointerdown', 5, 5);
+  world.dispatch(api, 'pointermove', 100, 90);
+  api.getCanvasElement().dispatchEvent(
+    new world.window.KeyboardEvent('keydown', {
+      bubbles: true,
+      cancelable: true,
+      key: 'Escape',
+    }),
+  );
+  world.dispatch(api, 'pointerup', 100, 90);
+  await world.frames();
+  expect(api.getAppState().layersSelected).toEqual([]);
+  expect(tf().selecteds).toHaveLength(0);
+  expect(api.isUndoStackEmpty()).toBe(true);
+  expect(node()).toMatchObject({ x: 30, y: 30, width: 60, height: 40 });
+  expect(api.getCanvas().read(Canvas).inputPoints).toHaveLength(0);
+  await world.click(api, 45, 45);
+  expect(api.getAppState().layersSelected).toEqual(['a']);
+});

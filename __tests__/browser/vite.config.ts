@@ -29,7 +29,14 @@ export default defineConfig({
   optimizeDeps: {
     // Match the active browser fixture graph. Playwright's retired-suite
     // exclusions do not constrain Vite's default scan of every HTML entry.
-    entries: ['**/*.html', '!text-path.html', '!dash.html'],
+    entries: [
+      '**/*.html',
+      '!text-path.html',
+      '!dash.html',
+      // The reference comparison imports intentionally retired Core source.
+      '!core-path-instances.html',
+      '!path-instancing-demo.html',
+    ],
     exclude: ['loro-crdt'],
     include: ['react', 'react/jsx-runtime', 'react-dom', 'react-dom/client'],
     esbuildOptions: { target: 'esnext' },

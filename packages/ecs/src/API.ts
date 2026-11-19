@@ -1096,6 +1096,20 @@ export class API {
     });
   }
 
+  /** Runtime only; original points, interaction and exports keep full precision. */
+  setPolylineLODEnabled(enabled: boolean) {
+    this.runAtNextTick(() => {
+      this.#canvas.write(Canvas).polylineLOD = enabled;
+    });
+  }
+
+  /** Experimental screen-only Path fill instancing; disabled by default. */
+  setPathInstancingEnabled(enabled: boolean) {
+    this.runAtNextTick(() => {
+      this.#canvas.write(Canvas).pathInstancing = enabled;
+    });
+  }
+
   getCanvas() {
     return this.#canvas;
   }

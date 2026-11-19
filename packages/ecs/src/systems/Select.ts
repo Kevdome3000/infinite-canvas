@@ -1823,6 +1823,7 @@ export class Select extends System {
       // Select elements in the brush
       this.applyBrushSelection(api, selection, false);
     }
+    return shouldShowSelectionBrush;
   }
 
   execute() {
@@ -2487,8 +2488,7 @@ export class Select extends System {
       ) {
         const [sx, sy] = input.pointerDownViewport;
         const [ex, ey] = input.pointerViewport;
-        if (distanceBetweenPoints(sx, sy, ex, ey) > 10) {
-          this.handleBrushing(api, ex, ey, [sx, sy]);
+        if (this.handleBrushing(api, ex, ey, [sx, sy])) {
           selection.mode = SelectionMode.BRUSH;
         }
       }
